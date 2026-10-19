@@ -237,4 +237,27 @@ describe("MicCapture recording handoff", () => {
     await stopping;
     expect(chunks).toEqual([222]);
   });
+
+  it("drops the old recording's audio while a restart is still resuming", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const audio = stubAudio();
+    audio.resolveModule();
+    const chunks: number[] = [];
+    const mic = new MicCapture((c) => chunks.push(new Int16Array(c)[0]), { keepOpenMs: 60_000 });
+    expect(await mic.start()).toBe(true);
+    const node = audio.nodes[0];
+    node.manualFlush = true;
+    void mic.stop(); // cancel
+
+    // The restart waits on resume(); stale audio arrives meanwhile.
+    let resume!: () => void;
+    const ctx = (mic as unknown as { ctx: { resume: () => Promise<void> } }).ctx;
+    ctx.resume = () => new Promise<void>((r) => (resume = r));
+    const restarting = mic.start();
+    node.emit({ id: 1, pcm: new Int16Array([111]).buffer });
+    resume();
+    expect(await restarting).toBe(true);
+    node.emit({ id: 2, pcm: new Int16Array([222]).buffer });
+    expect(chunks).toEqual([222]);
+  });
 });

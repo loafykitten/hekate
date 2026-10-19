@@ -256,13 +256,18 @@ export class MicCapture {
     const ctx = this.ctx;
     const node = this.node;
     if (!ctx || !node) return false;
+    // Switch recordings before anything awaits: from here on a previous (perhaps cancelled)
+    // recording's late chunks are dropped.
+    const id = ++this.recordingId;
+    this.forwarding = id;
     setAudioSession("play-and-record");
     await ctx.resume().catch(() => {});
-    if (generation !== this.generation) return false; // stopped while resuming
+    if (generation !== this.generation) {
+      if (this.forwarding === id) this.forwarding = undefined;
+      return false; // stopped while resuming
+    }
     this.smoothed = 0;
     this._active = true;
-    const id = ++this.recordingId;
-    this.forwarding = id; // from now on, a previous recording's late chunks are dropped
     node.port.postMessage({ start: id });
     return true;
   }

@@ -8,21 +8,54 @@ import tempfile,sys
 sys.dont_write_bytecode=True;tempfile.tempdir=str(TMP)
 sys.path.insert(0,str(PIPE))
 import build_nukorio as b
-import bpy, numpy as np, json, math, struct, copy
+import bpy, numpy as np, json, math, struct, copy, zipfile, hashlib, shutil
 from mathutils import Matrix,Vector,Quaternion
 bpy.context.preferences.filepaths.temporary_directory=str(TMP)
 CLIPS=[('idle','Idle.fbx',121,True,'idle'),('idle_2','Idle-2.fbx',251,True,'idle'),('talking','Talking.fbx',156,True,'talk'),('waving','Waving.fbx',143,False,'gesture'),('thankful','Thankful.fbx',91,False,'gesture'),('acknowledging','Acknowledging.fbx',59,False,'gesture'),('dismissing','Dismissing Gesture.fbx',68,False,'gesture'),('excited','Excited.fbx',198,False,'gesture'),('no','No.fbx',151,False,'gesture'),('smh','Smh.fbx',220,False,'gesture'),('standing_pose','Female Standing Pose.fbx',2,True,'pose')]
+ROUND3_CLIPS=list(CLIPS)
+PACK='Gestures Pack Basic.zip'
+GESTURES=[
+ ('nod_yes','head nod yes.fbx',73,'gesture',False,'strong','A small nod: agreeing or saying yes.'),
+ ('hard_nod','hard head nod.fbx',50,'gesture',False,'strong','A firm nod: emphatic agreement.'),
+ ('long_nod','lengthy head nod.fbx',52,'gesture',False,'strong','A slow nod: acknowledging a point thoughtfully.'),
+ ('sarcastic_nod','sarcastic head nod.fbx',66,'gesture',False,'strong','An exaggerated nod: dry or skeptical agreement.'),
+ ('head_shake_no','shaking head no.fbx',52,'gesture',False,'strong','A quick head shake: saying no or disagreeing.'),
+ ('annoyed_head_shake','annoyed head shake.fbx',74,'gesture',False,'strong','An irritated head shake: frustration or disbelief.'),
+ ('thoughtful_head_shake','thoughtful head shake.fbx',93,'gesture',False,'strong','A measured head shake: considering and rejecting an idea.'),
+ ('look_away','look away gesture.fbx',55,'gesture',True,'strong','A brief glance aside: pausing or quietly looking around.'),
+ ('angry','angry gesture.fbx',66,'gesture',False,'strong','A tense arm gesture: expressing anger or firm objection.'),
+ ('cocky','being cocky.fbx',87,'gesture',False,'strong','A confident head tilt and arm gesture: playful bravado.'),
+ ('happy_hands','happy hand gesture.fbx',83,'gesture',False,'strong','An upbeat hand gesture: delight or encouragement.'),
+ ('relieved_sigh','relieved sigh.fbx',91,'gesture',True,'strong','A settling breath and lowered shoulders: relief or a quiet pause.'),
+ ('weight_shift','weight shift.fbx',284,'idle',True,'moderate','A slow shift of weight: settling comfortably while waiting.'),
+]
+CLIPS += [(name,PACK+'!'+member,count,False,cat) for name,member,count,cat,_,_,_ in GESTURES]
 C=Matrix(((1,0,0),(0,0,1),(0,-1,0))).to_quaternion()
 
 def inputs():
  hashes=json.loads((PIPE/'mixamo-inputs.json').read_text())
- assert set(hashes)=={x[1] for x in CLIPS}
+ members={x[1] for x in GESTURES}|{'X Bot.fbx'}
+ assert set(hashes)=={x[1] for x in ROUND3_CLIPS}|{PACK}|{PACK+'!'+m for m in members}
  assert b.sha(b.SRC)==b.SOURCE_SHA
- for f,h in hashes.items():assert b.sha(b.ROOT/'mixamo'/f)==h,('Mixamo input mismatch',f)
+ for f in [x[1] for x in ROUND3_CLIPS]+[PACK]:
+  assert b.sha(b.ROOT/'mixamo'/f)==hashes[f],('Mixamo input mismatch',f)
+ with zipfile.ZipFile(b.ROOT/'mixamo'/PACK) as archive:
+  for member in sorted(members):
+   assert archive.namelist().count(member)==1,('Duplicate or missing pack member',member)
+   assert hashlib.sha256(archive.read(member)).hexdigest()==hashes[PACK+'!'+member],('Mixamo member mismatch',member)
  return {'blend':b.SOURCE_SHA,**hashes}
 
 def load(f):
- b.clear();bpy.ops.import_scene.fbx(filepath=str(b.ROOT/'mixamo'/f),use_anim=True)
+ if '!' in f:
+  # Never trust an extracted cache, and never extract archive-controlled paths.
+  hashes=inputs();pack,member=f.split('!',1)
+  assert pack==PACK and f in hashes and Path(member).name==member
+  with zipfile.ZipFile(b.ROOT/'mixamo'/pack) as archive:data=archive.read(member)
+  assert hashlib.sha256(data).hexdigest()==hashes[f],('Mixamo member mismatch',member)
+  folder=TMP/'gesture-pack';folder.mkdir(exist_ok=True)
+  path=folder/member;path.write_bytes(data)
+ else:path=b.ROOT/'mixamo'/f
+ b.clear();bpy.ops.import_scene.fbx(filepath=str(path),use_anim=True)
  return next(o for o in bpy.context.scene.objects if o.type=='ARMATURE')
 
 def smooth(t):return t*t*(3-2*t)
@@ -150,6 +183,9 @@ def retarget():
     n='toes_01.'+s;fr['q'][n]=wq[parents[n]].inverted()@rq[n]
   tracks[name]=frames
   stats[name]={'frames':count,'duration_seconds':(count-1)/30,'name':name,'file':'mixamo/'+file,'source_sha256':hashes[file],'loop':loop,'category':cat,'head_motion':'strong' if name in ['idle','acknowledging','no','smh','thankful','excited','talking'] else 'moderate','description':f'Mixamo {name.replace("_"," ")}; fixed foot contacts, centered hips, three-digit hands.'}
+  stats[name]['idle_variation']=False
+  for new_name,member,_,_,idle_variation,head_motion,description in GESTURES:
+   if name==new_name:stats[name].update(idle_variation=idle_variation,head_motion=head_motion,description=description)
   print('RETARGET',name,flush=True)
  b.write_json(TMP/'animation-metadata.json',{'inputs':hashes,'animations':list(stats.values()),'leg_scale':scale})
  return tracks
@@ -172,12 +208,13 @@ def reduce_keys(values,quat,tolerance):
  visit(0,len(values)-1)
  return sorted(keep)
 
-def append(tracks,variant):
+def append(tracks,variant,gestures=False):
  path=b.STAGE/f'renamon-{variant}.glb';doc,original=b.read_glb(path)
- assert not doc.get('animations'),'Animation stage expects calibrated round-2 input'
- baseline=json.loads((PIPE/'visual-baseline.json').read_text())
+ baseline=json.loads((PIPE/('animation-visual-baseline.json' if gestures else 'visual-baseline.json')).read_text())
+ if gestures:assert [c['name'] for c in doc['animations']]==[c[0] for c in ROUND3_CLIPS]
+ else:assert not doc.get('animations'),'Animation stage expects calibrated round-2 input'
  assert b.sha(path)==baseline['files'][variant]
- data=bytearray(original);doc['animations']=[];indices={n['name']:i for i,n in enumerate(doc['nodes'])}
+ data=bytearray(original);doc.setdefault('animations',[]);indices={n['name']:i for i,n in enumerate(doc['nodes'])}
  def add(values,kind):
   while len(data)%4:data.append(0)
   arr=np.asarray(values,dtype='<f4');offset=len(data);data.extend(arr.tobytes());view=len(doc['bufferViews']);doc['bufferViews'].append({'buffer':0,'byteOffset':offset,'byteLength':arr.nbytes})
@@ -205,6 +242,13 @@ def append(tracks,variant):
 
 def build():
  tracks=retarget()
- for v in ['desktop','phone']:append(tracks,v)
+ old_names={c[0] for c in ROUND3_CLIPS}
+ for v in ['desktop','phone']:
+  append({n:f for n,f in tracks.items() if n in old_names},v)
+  path=b.STAGE/f'renamon-{v}.glb'
+  # Reproduce the delivered round-3 bytes before appending any new motion.
+  assert b.sha(path)==json.loads((PIPE/'animation-visual-baseline.json').read_text())['files'][v],('Round-3 clip drift',v)
+  ref=TMP/'round3';ref.mkdir(exist_ok=True);shutil.copy2(path,ref/path.name)
+  append({n:f for n,f in tracks.items() if n not in old_names},v,gestures=True)
 
 if __name__=='__main__':build()

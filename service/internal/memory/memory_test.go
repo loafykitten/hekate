@@ -392,6 +392,7 @@ func TestPromptContext(t *testing.T) {
 	f.svc.SetProfile(ctx, "diet", "vegetarian")    //nolint:errcheck // fixture setup
 	f.svc.SetProfile(ctx, "pronouns", "they/them") //nolint:errcheck // fixture setup
 	soon, _, _ := f.svc.Save(ctx, NewMemory{Kind: "follow_up", Content: "Job interview at Acme", FollowUpAt: "2026-10-20T08:00"})
+	due, _, _ := f.svc.Save(ctx, NewMemory{Kind: "follow_up", Content: "How the dentist visit went", FollowUpAt: "2026-10-19T09:00"})
 	f.svc.Save(ctx, NewMemory{Kind: "follow_up", Content: "Ask about the trip to Lisbon", FollowUpAt: "2026-11-30"}) //nolint:errcheck // fixture setup
 	pinned := f.save(t, "fact", "Allergic to penicillin", 5)
 	related := f.save(t, "preference", "Enjoys Lisbon food markets", 3)
@@ -405,8 +406,9 @@ func TestPromptContext(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Profile:\n- diet: vegetarian\n- pronouns: they/them",
-		"Worth asking about now",
-		"- [" + soon.ID + "] (follow_up) Job interview at Acme (ask on 2026-10-20T08:00:00-05:00)",
+		"Worth asking about now (follow-ups that are due; after you have asked, clear follow_up_at or update the memory):\n- [" + due.ID + "] (follow_up) How the dentist visit went",
+		// Tomorrow's is context, not something to ask about (and use up) today.
+		"Coming up soon (not yet: don't ask about these or clear them; just keep them in mind):\n- [" + soon.ID + "] (follow_up) Job interview at Acme (ask on 2026-10-20T08:00:00-05:00)",
 		"Never forget:\n- [" + pinned.ID + "] (fact) Allergic to penicillin",
 		"- [" + related.ID + "] (preference) Enjoys Lisbon food markets",
 		"Interview prep notes live in the blue folder",

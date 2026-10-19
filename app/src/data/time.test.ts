@@ -28,6 +28,7 @@ import {
   setZone,
   timestampFromInputs,
   dueFromInputs,
+  localTimeExists,
 } from "./time";
 
 const NY = { tz: "America/New_York", locale: "en-US" };
@@ -275,5 +276,15 @@ describe("dueFromInputs", () => {
     expect(dueFromInputs("", "", "2026-10-20", z)).toBeNull();
     expect(dueFromInputs("2026-10-21", "", "2026-10-20", z)).toBe("2026-10-21");
     expect(toMs(dueFromInputs("2026-10-20", "10:00", "2026-10-20T09:00:00-05:00", z) ?? "")).toBe(Date.parse("2026-10-20T10:00:00-05:00"));
+  });
+});
+
+describe("spring-forward gap", () => {
+  const z = { tz: "America/Chicago" };
+  it("refuses a local time that doesn't exist instead of moving it", () => {
+    expect(fromDateTimeInputs("2027-03-14", "02:30", z)).toBe("");
+    expect(localTimeExists("2027-03-14", "02:30", z)).toBe(false);
+    expect(localTimeExists("2027-03-14", "03:30", z)).toBe(true);
+    expect(fromDateTimeInputs("2027-03-14", "03:30", z)).toBe("2027-03-14T03:30:00-05:00");
   });
 });

@@ -59,6 +59,16 @@ func (s *Service) PromptContextFor(ctx context.Context, now time.Time, userText 
 		return out
 	}
 	followUps = take(followUps, maxFollowUps)
+	// Only follow-ups whose time has come are to be asked about; the rest of
+	// the next day is context (asking early would use them up too soon).
+	var dueNow, upcoming []Memory
+	for _, m := range followUps {
+		if at, err := time.Parse(time.RFC3339, deref(m.FollowUpAt)); err == nil && at.After(now) {
+			upcoming = append(upcoming, m)
+		} else {
+			dueNow = append(dueNow, m)
+		}
+	}
 	pinned = take(pinned, maxPinned)
 	recalled = take(recalled, maxRecalled)
 
@@ -81,7 +91,8 @@ func (s *Service) PromptContextFor(ctx context.Context, now time.Time, userText 
 			b.WriteString("- " + line(m, withFollowUp) + "\n")
 		}
 	}
-	section("Worth asking about now (follow-ups that are due; after you have asked, clear follow_up_at or update the memory):", followUps, true)
+	section("Worth asking about now (follow-ups that are due; after you have asked, clear follow_up_at or update the memory):", dueNow, true)
+	section("Coming up soon (not yet: don't ask about these or clear them; just keep them in mind):", upcoming, true)
 	section("Never forget:", pinned, false)
 	section("Remembered notes that may relate to what they just said:", recalled, false)
 	return strings.TrimSpace(b.String()), nil
@@ -94,4 +105,11 @@ func line(m Memory, withFollowUp bool) string {
 		s += " (ask on " + *m.FollowUpAt + ")"
 	}
 	return s
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

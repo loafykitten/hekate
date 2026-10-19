@@ -286,8 +286,19 @@ export function fromDateTimeInputs(date: string, time: string, z: Zone = {}): st
   const m = /^(\d{2}):(\d{2})/.exec(time);
   if (!m) return "";
   const [y, mo, d] = parseKey(date);
-  return toRfc3339(zonedToMs(y, mo, d, Number(m[1]), Number(m[2]), resolveZone(z).tz), z);
+  const out = toRfc3339(zonedToMs(y, mo, d, Number(m[1]), Number(m[2]), resolveZone(z).tz), z);
+  // A time skipped when clocks spring forward (02:30 on that night) doesn't exist; resolving it
+  // would silently save a different time, so it's refused (see localTimeExists).
+  if (toDateInput(out, z) !== date || toTimeInput(out, z) !== `${m[1]}:${m[2]}`) return "";
+  return out;
 }
+
+// False when date+time falls in the hour skipped by a spring-forward clock change.
+export function localTimeExists(date: string, time: string, z: Zone = {}): boolean {
+  return !DATE_ONLY.test(date) || !/^\d{2}:\d{2}/.test(time) || fromDateTimeInputs(date, time, z) !== "";
+}
+
+export const SKIPPED_TIME_HINT = "That time is skipped when the clocks spring forward. Pick another.";
 
 // Minutes from `nowMs` until 9:00 tomorrow in the zone (for "snooze until tomorrow morning").
 export function minutesUntilTomorrowMorning(nowMs: number, z: Zone = {}): number {

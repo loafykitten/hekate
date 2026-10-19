@@ -80,7 +80,7 @@ function Notifications() {
         <div className={styles.settingRow}>
           <div className={styles.settingLabel}>
             <strong>Push notifications</strong>
-            <span>Reminders and morning briefings reach this device even when Hekate is closed.</span>
+            <span>Reminders reach this device even when Hekate is closed.</span>
           </div>
           <Pill tone={status.tone}>{status.label}</Pill>
         </div>

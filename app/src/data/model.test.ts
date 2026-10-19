@@ -46,6 +46,7 @@ const approval = {
   status: "pending",
   result: null,
   decided_by: null,
+  note: null,
   created_at: "2026-10-19T08:00:00Z",
   expires_at: "2026-10-20T08:00:00Z",
   decided_at: null,

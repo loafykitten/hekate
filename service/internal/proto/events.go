@@ -11,12 +11,14 @@ const (
 	DomainWeather   = "weather"
 	DomainMail      = "mail"
 	DomainApprovals = "approvals"
+	DomainChanges   = "changes"
 )
 
 // Notify kinds.
 const (
 	NotifyKindReminder = "reminder"
 	NotifyKindApproval = "approval"
+	NotifyKindChange   = "change"
 )
 
 // Notify tells clients that something fired, even with no turn running.

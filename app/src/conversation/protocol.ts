@@ -95,11 +95,14 @@ export interface CapabilitiesChanged {
   capabilities: Capabilities;
 }
 
-// Something fired with no turn running (a reminder). `card` has the same shape as a turn's card.
+// Something fired with no turn running (a reminder, an approval she asks for, a change that
+// finished). `card` has the same shape as a turn's card. `kind` stays a string so a newer
+// service's kinds still show as a plain banner.
+export type NotifyKind = "reminder" | "approval" | "change";
 export interface Notify {
   type: "notify";
   id: string;
-  kind: string;
+  kind: NotifyKind | (string & {});
   title: string;
   body: string;
   card?: unknown;

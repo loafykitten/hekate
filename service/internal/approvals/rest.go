@@ -40,12 +40,13 @@ func (s *Service) handleDecide(w http.ResponseWriter, r *http.Request) {
 	}
 	var b struct {
 		Decision string `json:"decision"`
+		Note     string `json:"note"`
 	}
 	if err := httpx.Decode(w, r, &b); err != nil {
 		httpx.Fail(w, s.log, r, err)
 		return
 	}
-	a, err := s.Decide(r.Context(), id, b.Decision)
+	a, err := s.Decide(r.Context(), id, b.Decision, b.Note)
 	if err != nil {
 		httpx.Fail(w, s.log, r, err)
 		return

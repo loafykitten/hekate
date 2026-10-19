@@ -11,6 +11,7 @@
     "check": "npm run typecheck && npm run lint && npm run test && npm run build",
     "verify:screens": "node scripts/verify/screenshots.mjs",
     "verify:mail": "node scripts/verify/mail.mjs",
+    "verify:changes": "node scripts/verify/changes.mjs",
     "verify:clips": "node scripts/verify/clip-flow.mjs",
     "verify:blend": "node scripts/verify/blend-stress.mjs",
     "verify:strip": "node scripts/verify/transition-strip.mjs",

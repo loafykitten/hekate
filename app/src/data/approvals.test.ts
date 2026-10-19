@@ -1,7 +1,8 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import { applyApproval, approvalKindLabel, freshest, patchPending, patchRecent } from "./approvals";
-import type { Approval } from "./model";
+import { asApproval, type Approval } from "./model";
+import { decideBody, MAX_DENY_NOTE } from "./rest";
 import { keys } from "./queryKeys";
 
 const make = (id: string, status: Approval["status"] = "pending", extra: Partial<Approval> = {}): Approval => ({
@@ -13,6 +14,7 @@ const make = (id: string, status: Approval["status"] = "pending", extra: Partial
   status,
   result: null,
   decided_by: null,
+  note: null,
   created_at: "2026-10-19T08:00:00Z",
   expires_at: null,
   decided_at: null,
@@ -67,5 +69,22 @@ describe("approvalKindLabel", () => {
     expect(approvalKindLabel("mail_trash")).toBe("Move mail to Trash");
     expect(approvalKindLabel("calendar_delete")).toBe("Calendar delete");
     expect(approvalKindLabel("")).toBe("Action");
+  });
+});
+
+describe("denial notes", () => {
+  it("reads a note off an approval and treats a missing or empty one as none", () => {
+    const base = { id: "5", title: "Build: Match mail rules on subject words?", status: "denied" };
+    expect(asApproval({ ...base, note: "Too broad" })?.note).toBe("Too broad");
+    expect(asApproval({ ...base, note: "" })?.note).toBeNull();
+    expect(asApproval(base)?.note).toBeNull();
+  });
+
+  it("sends a note only with deny, trimmed and capped, and omits an empty one", () => {
+    expect(decideBody("deny", "  not now ")).toEqual({ decision: "deny", note: "not now" });
+    expect(decideBody("deny", "   ")).toEqual({ decision: "deny" });
+    expect(decideBody("deny")).toEqual({ decision: "deny" });
+    expect(decideBody("once", "ignored")).toEqual({ decision: "once" });
+    expect(decideBody("deny", "x".repeat(900)).note).toHaveLength(MAX_DENY_NOTE);
   });
 });

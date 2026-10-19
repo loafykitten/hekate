@@ -249,7 +249,7 @@ empty and her tools say mail isn't set up.
 
 Actions that need the owner's say-so wait as approvals. Allowing one runs the action on the
 service and records what happened; "Always" also stores a standing rule for that action and
-scope, so the next matching request runs without asking (such a run appears as an approval already `done`/`failed` with `decided_by: "rule"`). Pending approvals expire after 24 h and become `expired` (`decided_by` stays null). Each approval is decided once: a second decision, from another device or a double tap, gets 409 and runs nothing. An allowed action reads `running` until it finishes, then `done` or `failed` (the `approval` event carries each change); one cut off by a restart becomes `failed` saying so.
+scope, so the next matching request runs without asking (such a run appears as an approval already `done`/`failed` with `decided_by: "rule"`). Pending approvals expire after 24 h (a change request after 7 days) and become `expired` (`decided_by` stays null). Each approval is decided once: a second decision, from another device or a double tap, gets 409 and runs nothing. An allowed action reads `running` until it finishes, then `done` or `failed` (the `approval` event carries each change); one cut off by a restart becomes `failed` saying so.
 
 ```jsonc
 // Approval
@@ -262,6 +262,7 @@ scope, so the next matching request runs without asking (such a run appears as a
   "status": "pending",               // pending | running | done | failed | denied | expired
   "result": null,                    // after running: "Moved 14 messages to Trash" or the error
   "decided_by": null,                // owner | rule
+  "note": null,                      // the owner's reason for a denial, if they gave one
   "created_at": "…", "expires_at": "…", "decided_at": null
 }
 // ApprovalRule
@@ -271,9 +272,47 @@ scope, so the next matching request runs without asking (such a run appears as a
 | Method & path | Body | Returns |
 |---|---|---|
 | `GET /api/approvals?status=pending\|recent` (default pending) | | `{ approvals: [Approval] }`; `recent` is everything decided, run by a rule or expired in the last 7 days, newest first |
-| `POST /api/approvals/{id}/decide` | `{ decision: "once" \| "always" \| "deny" }` | `Approval` after the action ran; 409 when it's no longer pending; "always" on an approval without a scope is 400 |
+| `POST /api/approvals/{id}/decide` | `{ decision: "once" \| "always" \| "deny", note? }` | `Approval` after the action ran; 409 when it's no longer pending; "always" on an approval without a scope is 400. `note` (up to 500 characters) goes with `deny` only: Renamon reads it |
 | `GET /api/approvals/rules` | | `{ rules: [ApprovalRule] }` |
 | `DELETE /api/approvals/rules/{id}` | | 204 |
+
+### Change requests
+
+Renamon proposes changes to Hekate itself with her `propose_change` tool (at most 5 in 24 h).
+Each proposal waits as an approval of kind `change_request`. Allowing it queues the change; a
+worker on the development machine claims it, files a sanitized public issue, builds the change
+in its own worktree, opens a PR, and a separate final check merges it (which deploys) or
+rejects it. Denying it can carry a note; she reads it and may propose a revised version, which
+names the one it `revises`. There is no auth beyond the tailnet and the device allowlist, like
+the rest of the API.
+
+```jsonc
+// ChangeRequest
+{
+  "id": "3",
+  "title": "Match mail rules on subject words",
+  "what": "…",                         // what to build, in her words
+  "why": "…",                          // why it helps
+  "kind": "feature",                   // feature | fix | improvement
+  "revises": null,                     // id of the denied proposal this replaces
+  "status": "queued",                  // proposed | denied | expired | queued | working | merged | rejected | failed
+  "approval_id": "41",
+  "feedback": null,                    // the owner's note when denied
+  "stage": "",                         // the worker's latest step, e.g. "Building", "PR open, in review"
+  "issue_url": null,                   // https://github.com/… once filed
+  "pr_url": null,
+  "result": null,                      // once finished: what happened, in a line or two
+  "created_at": "…", "updated_at": "…", "finished_at": null
+}
+```
+
+| Method & path | Body | Returns |
+|---|---|---|
+| `GET /api/changes?status=` (optional, one status) | | `{ changes: [ChangeRequest] }`, newest first, last 60 days |
+| `GET /api/changes/{id}` | | `ChangeRequest` |
+| `POST /api/changes/{id}/claim` | | `ChangeRequest` now `working`; 409 unless it was `queued` |
+| `POST /api/changes/{id}/progress` | `{ stage, issue_url?, pr_url? }` | `ChangeRequest`; 409 unless `working`. URLs must be `https://github.com/…` |
+| `POST /api/changes/{id}/finish` | `{ outcome: "merged" \| "rejected" \| "failed", result, issue_url?, pr_url? }` | `ChangeRequest`; 409 unless `working`. Tells the owner by notify and push |
 
 ### Weather
 
@@ -303,6 +342,6 @@ from stored or fetched data, never from model text. Shapes of `data` by `kind`:
 
 | type | fields | meaning |
 |---|---|---|
-| `notify` | `id`, `kind: "reminder" \| "approval"`, `title`, `body`, `card?` | Something fired, or she needs a decision she asked for outside a conversation (e.g. a rule from the weekly noise report). The app shows it even with no turn running. |
+| `notify` | `id`, `kind: "reminder" \| "approval" \| "change"`, `title`, `body`, `card?` | Something fired, or she needs a decision she asked for outside a conversation (e.g. a rule from the weekly noise report). The app shows it even with no turn running. |
 | `approval` | `approval: Approval` | An approval was created or changed (decided, ran, expired). Clients update any card showing it. |
-| `invalidate` | `domains: ("tasks" \| "reminders" \| "calendar" \| "memory" \| "weather" \| "mail" \| "approvals")[]` | Data changed; refetch those menu sections (`weather`: the home place changed). |
+| `invalidate` | `domains: ("tasks" \| "reminders" \| "calendar" \| "memory" \| "weather" \| "mail" \| "approvals" \| "changes")[]` | Data changed; refetch those menu sections (`weather`: the home place changed). |

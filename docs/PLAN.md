@@ -267,6 +267,10 @@ to GitHub) and capped at about five a day.
 Progress and outcomes reach the owner through Hekate (push, in-app notice, Renamon mentioning
 it).
 
+Built 2026-10-19 (`service/internal/changes`, `scripts/change-worker/`; setup in
+`DEVELOPMENT.md`). Proposals expire after 7 days unanswered, and denials carry an optional
+reason for every approval kind, not just change requests.
+
 **Telegram.** Notifications and actions only, not a second chat. Hekate stays the first channel;
 Telegram is used when Hekate can't deliver: the homelab or the service is down (the watcher's
 health check notices), or a deploy failed and rolled back (the deployer reports it). Messages

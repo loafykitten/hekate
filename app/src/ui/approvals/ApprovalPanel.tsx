@@ -1,7 +1,8 @@
+import { useEffect, useRef, useState } from "react";
 import { useDecideApproval } from "../../data/hooks";
 import type { Approval, ApprovalStatus } from "../../data/model";
-import { ApiError, type ApprovalDecision } from "../../data/rest";
-import { Button } from "../kit/kit";
+import { ApiError, MAX_DENY_NOTE, type ApprovalDecision } from "../../data/rest";
+import { Button, TextArea } from "../kit/kit";
 import styles from "./approvals.module.css";
 
 // Something she needs your say-so for. Pending, it asks; once decided it says what happened.
@@ -23,6 +24,14 @@ function outcomeNote(a: Approval): string {
   return [a.result, by].filter(Boolean).join(" ");
 }
 
+// A detail longer than this folds behind "More" (a change request's what and why can run long).
+const LONG_DETAIL_LINES = 5;
+const LONG_DETAIL_CHARS = 320;
+
+function isLong(detail: string): boolean {
+  return detail.length > LONG_DETAIL_CHARS || detail.split("\n").length > LONG_DETAIL_LINES;
+}
+
 export function ApprovalPanel({ approval }: { approval: Approval }) {
   const decide = useDecideApproval();
   const pending = approval.status === "pending";
@@ -30,8 +39,22 @@ export function ApprovalPanel({ approval }: { approval: Approval }) {
   const choice = decide.variables?.decision;
   const raced = decide.error instanceof ApiError && decide.error.status === 409;
 
-  function send(decision: ApprovalDecision) {
-    decide.mutate({ id: approval.id, decision });
+  // Deny asks for an optional reason first, right where the buttons were.
+  const [denying, setDenying] = useState(false);
+  const [note, setNote] = useState("");
+  const [more, setMore] = useState(false);
+  const noteField = useRef<HTMLTextAreaElement>(null);
+  const denyForm = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    if (!denying) return;
+    noteField.current?.focus({ preventScroll: true });
+    // Keep Deny and Back in sight: a long detail can push them below the card's fold.
+    denyForm.current?.scrollIntoView?.({ block: "nearest" }); // absent in jsdom
+  }, [denying]);
+  const long = isLong(approval.detail);
+
+  function send(decision: ApprovalDecision, text?: string) {
+    decide.mutate({ id: approval.id, decision, note: text });
   }
 
   const outcome = approval.status === "pending" ? undefined : OUTCOME[approval.status];
@@ -39,8 +62,53 @@ export function ApprovalPanel({ approval }: { approval: Approval }) {
   return (
     <div className={styles.panel} data-status={approval.status}>
       <p className={styles.title}>{approval.title}</p>
-      {approval.detail && <p className={styles.detail}>{approval.detail}</p>}
-      {pending ? (
+      {approval.detail && (
+        <>
+          <p className={styles.detail} data-clamped={(long && !more) || undefined}>
+            {approval.detail}
+          </p>
+          {long && (
+            <button type="button" className={styles.more} aria-expanded={more} onClick={() => setMore(!more)}>
+              {more ? "Less" : "More"}
+            </button>
+          )}
+        </>
+      )}
+      {pending && denying ? (
+        <form
+          ref={denyForm}
+          className={styles.deny}
+          onSubmit={(e) => {
+            e.preventDefault();
+            send("deny", note);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape" && !sending) {
+              e.stopPropagation();
+              setDenying(false);
+            }
+          }}
+        >
+          <TextArea
+            ref={noteField}
+            label="Why not? (optional)"
+            rows={2}
+            maxLength={MAX_DENY_NOTE}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Renamon will read this"
+            disabled={sending}
+          />
+          <div className={styles.buttons}>
+            <Button compact variant="danger" type="submit" busy={sending} disabled={sending}>
+              Deny
+            </Button>
+            <Button compact variant="quiet" disabled={sending} onClick={() => setDenying(false)}>
+              Back
+            </Button>
+          </div>
+        </form>
+      ) : pending ? (
         <>
           <div className={styles.buttons}>
             <Button compact variant="primary" busy={sending && choice === "once"} disabled={sending} onClick={() => send("once")}>
@@ -51,7 +119,7 @@ export function ApprovalPanel({ approval }: { approval: Approval }) {
                 Always
               </Button>
             )}
-            <Button compact variant="quiet" busy={sending && choice === "deny"} disabled={sending} onClick={() => send("deny")}>
+            <Button compact variant="quiet" disabled={sending} onClick={() => setDenying(true)}>
               Deny
             </Button>
           </div>
@@ -64,6 +132,7 @@ export function ApprovalPanel({ approval }: { approval: Approval }) {
               {outcome.label}
             </span>
             <span className={styles.note}>{outcomeNote(approval)}</span>
+            {approval.status === "denied" && approval.note && <p className={styles.reason}>&ldquo;{approval.note}&rdquo;</p>}
           </div>
         )
       )}

@@ -24,6 +24,8 @@ import {
   toRfc3339,
   toTimeInput,
   weekdayOf,
+  resolveZone,
+  setZone,
 } from "./time";
 
 const NY = { tz: "America/New_York", locale: "en-US" };
@@ -212,5 +214,15 @@ describe("groupEventsByDay", () => {
   it("clips to a range", () => {
     const trip = ev({ start: "2026-10-20", end: "2026-10-24", all_day: true });
     expect(groupEventsByDay([trip], NY, { from: "2026-10-21", to: "2026-10-22" }).map((g) => g.key)).toEqual(["2026-10-21", "2026-10-22"]);
+  });
+});
+
+describe("setZone", () => {
+  it("ignores a zone the browser can't use, keeping the device's", () => {
+    setZone({ tz: "Local" });
+    expect(resolveZone().tz).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    setZone({ tz: "America/Chicago" });
+    expect(resolveZone().tz).toBe("America/Chicago");
+    setZone({});
   });
 });

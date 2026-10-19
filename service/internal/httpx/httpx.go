@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 )
 
@@ -93,6 +94,11 @@ func decode(w http.ResponseWriter, r *http.Request, v any, emptyOK bool) error {
 			return nil
 		}
 		return BadRequest("a JSON body is required")
+	}
+	// Only JSON: a form or text/plain body is what a cross-site page can send
+	// without a preflight. (Cross-origin protection is the primary guard.)
+	if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/json" {
+		return &Error{http.StatusUnsupportedMediaType, "send the body as application/json"}
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()

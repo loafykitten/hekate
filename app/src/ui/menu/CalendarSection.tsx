@@ -123,6 +123,8 @@ function EventForm({ event, startMs, busy, submitLabel, onSubmit, onCancel, chil
     if (d.notes.trim() !== event.notes) changed.notes = d.notes.trim();
     if (d.rrule !== event.rrule) changed.rrule = d.rrule;
     if (Object.keys(changed).length === 0) return onCancel();
+    // Times edited on one occurrence of a series apply to the series relative to that occurrence.
+    if (event.instance && (changed.start || changed.end)) changed.instance = event.instance;
     onSubmit(changed as EventFields & { title: string; start: string });
   }
 

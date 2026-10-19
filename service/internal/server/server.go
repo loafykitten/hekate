@@ -161,7 +161,16 @@ func (s *Server) Routes() http.Handler {
 	// All methods: "GET /" would conflict with the method-less /api/ catch-all.
 	mux.HandleFunc("/", s.handleStatic)
 
-	return chain(mux,
+	// State-changing requests must come from this origin. Without this, a page
+	// on another site, opened on one of the owner's (allowlisted) devices, could
+	// fire simple cross-origin POSTs at the API: the reverse proxy would see an
+	// allowed device. Uses Sec-Fetch-Site, falling back to Origin.
+	csrf := http.NewCrossOriginProtection()
+	csrf.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
+	}))
+
+	return chain(csrf.Handler(mux),
 		s.requestID,
 		s.accessLog,
 		s.recoverer,

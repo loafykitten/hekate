@@ -77,6 +77,23 @@ type due struct {
 	atStamp     string
 }
 
+// loadDue reads reminder id if it is still scheduled and due at now.
+func (s *Service) loadDue(ctx context.Context, id int64, now time.Time) (due, bool, error) {
+	d := due{id: id}
+	var start string
+	err := s.db.QueryRowContext(ctx, `SELECT text, at, start, COALESCE(rrule, '') FROM reminders
+		WHERE id = ? AND status = 'scheduled' AND at <= ?`, id, stamp(now)).Scan(&d.text, &d.atStamp, &start, &d.rrule)
+	if errors.Is(err, sql.ErrNoRows) {
+		return due{}, false, nil
+	}
+	if err != nil {
+		return due{}, false, fmt.Errorf("reload reminder %d: %w", id, err)
+	}
+	d.at, _ = time.Parse(time.RFC3339, d.atStamp) // written by this package
+	d.start, _ = time.Parse(time.RFC3339, start)
+	return d, true, nil
+}
+
 // fireDue fires every reminder that is due now. With maxLate > 0 (startup),
 // one that is later than that is closed without notifying.
 func (s *Service) fireDue(ctx context.Context, maxLate time.Duration) (int, error) {
@@ -120,8 +137,16 @@ func (s *Service) fireDue(ctx context.Context, maxLate time.Duration) (int, erro
 // fire closes one due reminder and, unless it is too stale, announces it. The
 // database changes first and the guarded update makes a concurrent edit win,
 // so a reminder is never announced twice or after being cancelled.
-func (s *Service) fire(ctx context.Context, d due, now time.Time, maxLate time.Duration) (bool, error) {
+func (s *Service) fire(ctx context.Context, snap due, now time.Time, maxLate time.Duration) (bool, error) {
 	s.mu.Lock()
+	// Re-read under the lock every mutation takes: an edit between the query
+	// and now (a removed repeat rule, new text) must win, not be overwritten
+	// with the snapshot's values.
+	d, ok, err := s.loadDue(ctx, snap.id, now)
+	if err != nil || !ok {
+		s.mu.Unlock()
+		return false, err
+	}
 	notify := maxLate <= 0 || now.Sub(d.at) <= maxLate
 
 	status, nextAt, start, rule := StatusFired, d.atStamp, stamp(d.start), ""

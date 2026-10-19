@@ -69,7 +69,7 @@ An `interrupt` that arrives after the turn already ended (the client was still p
 
 ## REST
 
-All under `/api/`, JSON, errors as `{ "error": "message" }` with a 4xx/5xx status.
+All under `/api/`, JSON, errors as `{ "error": "message" }` with a 4xx/5xx status. Request bodies must be `application/json` (415 otherwise), and state-changing requests from another origin are refused with 403 (cross-origin protection via `Sec-Fetch-Site`/`Origin`).
 
 | Method & path | Returns |
 |---|---|
@@ -169,7 +169,7 @@ focuses or opens `url`.
 | `GET /api/calendar/status` | | `{ configured, calendar_name? }` |
 | `GET /api/calendar/events?from=&to=` (default today through +7 days) | | `{ events: [Event] }` sorted by start |
 | `POST /api/calendar/events` | `{ title, start, end?, all_day?, location?, notes?, rrule? }` | `Event` (201) |
-| `PATCH /api/calendar/events/{uid}` | Event fields (applies to the whole series) | `Event` |
+| `PATCH /api/calendar/events/{uid}` | Event fields (applies to the whole series). Send `instance` when editing from one occurrence: a moved `start` shifts the series by the same amount and a new `end` sets its length. | `Event` |
 
 All-day events use an exclusive end date (RFC 5545): a one-day event on the 20th has `start: "2026-10-20"`, `end: "2026-10-21"`. Renamon can only edit or delete events she created; the owner can change any event through REST.
 | `DELETE /api/calendar/events/{uid}` | | 204 (whole series) |

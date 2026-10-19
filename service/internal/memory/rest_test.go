@@ -15,7 +15,9 @@ func (f *fixture) do(method, path, body string) *httptest.ResponseRecorder {
 	mux := http.NewServeMux()
 	f.svc.Routes(mux)
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, httptest.NewRequest(method, path, strings.NewReader(body)))
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(w, req)
 	return w
 }
 

@@ -2,6 +2,7 @@ package calendar
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -507,4 +508,55 @@ func TestApplyUpdateReschedulingDropsExceptions(t *testing.T) {
 	if s.master.c.Props.Get("EXDATE") != nil || len(s.cal.Children) != 1 {
 		t.Error("reschedule kept exceptions")
 	}
+}
+
+// Edits made while viewing a later occurrence apply to the series in relative
+// terms (the review case: extending the Oct 26 occurrence to 11:00 must make
+// the series two hours long, not run from Oct 19 to Oct 26).
+func TestAnchorToSeries(t *testing.T) {
+	loc, _ := time.LoadLocation("America/Chicago")
+	at := func(s string) time.Time { v, _ := time.ParseInLocation("2006-01-02T15:04", s, loc); return v }
+	master := &component{start: at("2026-10-19T09:00"), end: at("2026-10-19T10:00")}
+	str := func(s string) *string { return &s }
+	inst := func(s string) json.RawMessage { b, _ := json.Marshal(s); return b }
+
+	tests := []struct {
+		name               string
+		p                  EventPatch
+		wantStart, wantEnd string
+	}{
+		{"end only, later occurrence", EventPatch{Instance: inst("2026-10-26T09:00:00-05:00"), End: str("2026-10-26T11:00")},
+			"", "2026-10-19T11:00:00-05:00"},
+		{"moved later by an hour", EventPatch{Instance: inst("2026-10-26T09:00:00-05:00"), Start: str("2026-10-26T10:00"), End: str("2026-10-26T11:00")},
+			"2026-10-19T10:00:00-05:00", "2026-10-19T11:00:00-05:00"},
+		{"occurrence after the November change", EventPatch{Instance: inst("2026-11-02T09:00:00-06:00"), End: str("2026-11-02T11:30")},
+			"", "2026-10-19T11:30:00-05:00"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := tt.p
+			if err := anchorToSeries(&p, master, true, loc); err != nil {
+				t.Fatal(err)
+			}
+			if got := deref(p.Start); got != tt.wantStart {
+				t.Errorf("start = %q, want %q", got, tt.wantStart)
+			}
+			if got := deref(p.End); got != tt.wantEnd {
+				t.Errorf("end = %q, want %q", got, tt.wantEnd)
+			}
+		})
+	}
+
+	// A non-recurring event, or no instance, is left alone.
+	p := EventPatch{End: str("2026-10-26T11:00")}
+	if err := anchorToSeries(&p, master, true, loc); err != nil || *p.End != "2026-10-26T11:00" {
+		t.Errorf("without instance: %v %q", err, *p.End)
+	}
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

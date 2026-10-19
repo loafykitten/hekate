@@ -25,6 +25,7 @@ func newAPI(t *testing.T) *api {
 func (a *api) do(method, path, body string) *httptest.ResponseRecorder {
 	a.t.Helper()
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	a.mux.ServeHTTP(w, r)
 	return w

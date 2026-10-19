@@ -226,7 +226,9 @@ func TestREST(t *testing.T) {
 	svc.Routes(mux)
 	do := func(method, path, body string) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, httptest.NewRequest(method, path, strings.NewReader(body)))
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		mux.ServeHTTP(w, req)
 		return w
 	}
 
@@ -289,7 +291,9 @@ func TestHTTPSRequiredByDefault(t *testing.T) {
 	sub := subscription(t, "http://push.example.com/x")
 	b, _ := json.Marshal(sub)
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/push/subscriptions", strings.NewReader(string(b))))
+	req := httptest.NewRequest("POST", "/api/push/subscriptions", strings.NewReader(string(b)))
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(w, req)
 	if w.Code != 400 || !strings.Contains(w.Body.String(), "https") {
 		t.Errorf("http endpoint = %d %s", w.Code, w.Body)
 	}

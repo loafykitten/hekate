@@ -13,6 +13,14 @@ let configured: Zone = {};
 
 // The zone and locale the app displays in. Unset values fall back to the device's.
 export function setZone(zone: Zone) {
+  // Only zones this browser can use; otherwise keep the device's.
+  if (zone.tz) {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: zone.tz });
+    } catch {
+      zone = { ...zone, tz: undefined };
+    }
+  }
   configured = zone;
 }
 

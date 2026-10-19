@@ -563,3 +563,29 @@ func TestRunFiresMissedOnStartup(t *testing.T) {
 	defer func() { cancel(); <-done }()
 	waitFor(t, "the missed reminder", func() bool { return len(f.events.notices()) == 1 })
 }
+
+// An edit between the scheduler's query and the fire (here: the repeat rule is
+// removed) must win; the stale snapshot must not restore the old rule.
+func TestFireUsesEditsMadeAfterTheSnapshot(t *testing.T) {
+	f := newFixture(t)
+	r := f.create(t, "Pills", "2026-10-20T09:00", "FREQ=DAILY")
+	at := f.at("2026-10-20T09:00")
+	stale := due{id: mustID(r.ID), text: "Pills", rrule: "FREQ=DAILY", at: at, start: at, atStamp: stamp(at)}
+
+	none, newText := "", "Vitamins"
+	if _, err := f.svc.Update(t.Context(), mustID(r.ID), Patch{RRule: &none, Text: &newText}); err != nil {
+		t.Fatal(err)
+	}
+	f.clock.set(f.at("2026-10-20T09:00"))
+	fired, err := f.svc.fire(t.Context(), stale, f.clock.Now(), 0)
+	if err != nil || !fired {
+		t.Fatalf("fired=%v err=%v", fired, err)
+	}
+	got := f.get(t, r.ID)
+	if got.Status != StatusFired || got.RRule != nil {
+		t.Errorf("after firing = %+v, want a one-off that fired", got)
+	}
+	if ns := f.events.notices(); len(ns) != 1 || ns[0].Body != "Vitamins" {
+		t.Errorf("notices = %+v, want the edited text", ns)
+	}
+}

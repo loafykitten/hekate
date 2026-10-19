@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -83,6 +84,9 @@ type Options struct {
 
 // Service owns memories and the core profile.
 type Service struct {
+	// mu serializes read-modify-write changes (REST and her tools overlap), so a
+	// patch never writes back a stale copy of fields it didn't touch.
+	mu     sync.Mutex
 	db     *sql.DB
 	loc    *time.Location
 	events proto.Events
@@ -202,6 +206,8 @@ func (s *Service) followUp(v string) (any, error) {
 // Save stores a memory. When the same text is already remembered it returns
 // that memory, with importance raised if the new one is higher, and existed set.
 func (s *Service) Save(ctx context.Context, n NewMemory) (m Memory, existed bool, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err := checkKind(n.Kind); err != nil {
 		return Memory{}, false, err
 	}
@@ -250,6 +256,8 @@ func (s *Service) Save(ctx context.Context, n NewMemory) (m Memory, existed bool
 
 // Update changes a memory.
 func (s *Service) Update(ctx context.Context, id int64, p Patch) (Memory, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	cur, err := s.Get(ctx, id)
 	if err != nil {
 		return Memory{}, err
@@ -292,6 +300,8 @@ func (s *Service) Update(ctx context.Context, id int64, p Patch) (Memory, error)
 
 // Forget deletes a memory for good, including its search index entry.
 func (s *Service) Forget(ctx context.Context, id int64) (Memory, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	m, err := s.Get(ctx, id)
 	if err != nil {
 		return Memory{}, err

@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
-	"time"
 )
 
 func env(m map[string]string) func(string) string {
@@ -27,8 +26,8 @@ func TestDefaults(t *testing.T) {
 	if cfg.WebDir != "" || cfg.AssetsDir != "" {
 		t.Errorf("optional dirs should be empty: %+v", cfg)
 	}
-	if cfg.Location != time.Local {
-		t.Errorf("location = %v, want Local", cfg.Location)
+	if cfg.Location == nil || cfg.Location.String() == "Local" {
+		t.Errorf("location = %v, want the system zone by name", cfg.Location)
 	}
 }
 
@@ -210,5 +209,17 @@ func TestM2Settings(t *testing.T) {
 		}); err == nil {
 			t.Errorf("%s=%q: want error", k, v)
 		}
+	}
+}
+
+// With no zone configured, the location must still have a real IANA name:
+// browsers reject Go's "Local".
+func TestDefaultZoneIsNamed(t *testing.T) {
+	cfg, err := LoadFrom(func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name := cfg.Location.String(); name == "Local" || name == "" {
+		t.Errorf("default zone = %q", name)
 	}
 }

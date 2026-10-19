@@ -177,7 +177,7 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 		}
 	}
 	if cfg.Location == nil {
-		cfg.Location = time.Local
+		cfg.Location = systemZone()
 	}
 
 	if !strings.Contains(cfg.Addr, ":") {
@@ -218,4 +218,18 @@ func (c Config) LogValue() slog.Value {
 		slog.String("units", c.Units),
 		slog.String("push_subject", c.PushSubject),
 	)
+}
+
+// systemZone names the machine's zone so it can be shared with browsers, which
+// reject Go's "Local". It follows /etc/localtime to its zoneinfo name, and
+// falls back to UTC.
+func systemZone() *time.Location {
+	if target, err := os.Readlink("/etc/localtime"); err == nil {
+		if i := strings.Index(target, "zoneinfo/"); i >= 0 {
+			if loc, err := time.LoadLocation(target[i+len("zoneinfo/"):]); err == nil {
+				return loc
+			}
+		}
+	}
+	return time.UTC
 }

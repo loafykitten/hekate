@@ -2,8 +2,10 @@ package memory
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -435,5 +437,30 @@ func TestPromptContext(t *testing.T) {
 	got, _ = f.svc.PromptContext(ctx, time.Date(2026, 11, 29, 12, 0, 0, 0, f.loc))
 	if !strings.Contains(got, "trip to Lisbon") {
 		t.Errorf("a due follow-up is missing:\n%s", got)
+	}
+}
+
+// Two patches touching different fields at the same time must both survive.
+func TestConcurrentPatchesKeepEachOthersFields(t *testing.T) {
+	f := newFixture(t)
+	for i := range 20 {
+		m, _, err := f.svc.Save(t.Context(), NewMemory{Kind: "follow_up", Content: fmt.Sprintf("Interview %d", i), FollowUpAt: "2026-10-22"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, _ := strconv.ParseInt(m.ID, 10, 64)
+		content, clear := fmt.Sprintf("Interview %d at Acme", i), ""
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); _, _ = f.svc.Update(t.Context(), id, Patch{Content: &content}) }()
+		go func() { defer wg.Done(); _, _ = f.svc.Update(t.Context(), id, Patch{FollowUpAt: &clear}) }()
+		wg.Wait()
+		got, err := f.svc.Get(t.Context(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Content != content || got.FollowUpAt != nil {
+			t.Fatalf("round %d: content=%q follow_up=%v; a patch lost the other's change", i, got.Content, got.FollowUpAt)
+		}
 	}
 }

@@ -45,6 +45,7 @@ func TestDecode(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tt.body))
+			r.Header.Set("Content-Type", "application/json; charset=utf-8")
 			w := httptest.NewRecorder()
 			var b body
 			dec := Decode
@@ -79,5 +80,22 @@ func TestFail(t *testing.T) {
 	Fail(w, nil, httptest.NewRequest(http.MethodGet, "/", nil), errors.New("secret detail"))
 	if w.Code != 500 || strings.Contains(w.Body.String(), "secret") {
 		t.Errorf("got %d %s", w.Code, w.Body)
+	}
+}
+
+// Only JSON bodies: forms and text/plain are what a cross-site page can send
+// without a CORS preflight.
+func TestDecodeRequiresJSONContentType(t *testing.T) {
+	for _, ct := range []string{"", "text/plain", "application/x-www-form-urlencoded"} {
+		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"a":1}`))
+		if ct != "" {
+			r.Header.Set("Content-Type", ct)
+		}
+		var v struct{ A int }
+		err := Decode(httptest.NewRecorder(), r, &v)
+		var he *Error
+		if !errors.As(err, &he) || he.Status != http.StatusUnsupportedMediaType {
+			t.Errorf("Content-Type %q: err = %v, want 415", ct, err)
+		}
 	}
 }

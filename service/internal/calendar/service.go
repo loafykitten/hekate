@@ -284,6 +284,9 @@ func (s *Service) Update(ctx context.Context, uid string, p EventPatch, onlyHeka
 			return false, ErrNotOwned
 		}
 		cur := ser.event(*ser.master, s.loc, nil)
+		if err := anchorToSeries(&p, ser.master, ser.rruleString() != "", s.loc); err != nil {
+			return false, err
+		}
 		in, err := mergePatch(cur, ser.master, p, s.loc)
 		if err != nil {
 			return false, err
@@ -484,6 +487,50 @@ func resolveSpec(in EventInput, loc *time.Location) (spec, error) {
 
 // mergePatch overlays p on the current event, returning a complete input. When
 // the start moves and no end is given, the length of the event is kept.
+// anchorToSeries rewrites a patch made while looking at one occurrence of a
+// recurring event (p.Instance is that occurrence's original start) so it
+// applies to the series: a moved start shifts the series by the same amount,
+// and a new end keeps the edited length rather than being read as an
+// absolute end for the series' first occurrence.
+func anchorToSeries(p *EventPatch, m *component, recurring bool, loc *time.Location) error {
+	var instance string
+	if !recurring || len(p.Instance) == 0 || json.Unmarshal(p.Instance, &instance) != nil || instance == "" {
+		return nil
+	}
+	if p.Start == nil && p.End == nil {
+		return nil
+	}
+	occ, _, err := parseInput(instance, loc)
+	if err != nil {
+		return badInput("instance: %v", err)
+	}
+	format := func(t time.Time, dateOnly bool) string {
+		if dateOnly {
+			return t.In(loc).Format(dateLayout)
+		}
+		return t.In(loc).Format(time.RFC3339)
+	}
+	newStart, base := m.start, occ
+	if p.Start != nil {
+		ns, dateOnly, err := parseInput(*p.Start, loc)
+		if err != nil {
+			return badInput("start: %v", err)
+		}
+		newStart, base = m.start.Add(ns.Sub(occ)), ns
+		v := format(newStart, dateOnly)
+		p.Start = &v
+	}
+	if p.End != nil {
+		ne, dateOnly, err := parseInput(*p.End, loc)
+		if err != nil {
+			return badInput("end: %v", err)
+		}
+		v := format(newStart.Add(ne.Sub(base)), dateOnly)
+		p.End = &v
+	}
+	return nil
+}
+
 func mergePatch(cur Event, m *component, p EventPatch, loc *time.Location) (EventInput, error) {
 	in := EventInput{
 		Title:    cur.Title,

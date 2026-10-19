@@ -161,10 +161,14 @@ export class MicCapture {
   // Opens the microphone without recording, ahead of the press. The first time, this is where
   // the browser asks for permission.
   private async warm(): Promise<void> {
-    if (this.warmRefused || this.isOpen() || this.opening || this.stream) return;
-    if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
-    if (!navigator.mediaDevices?.getUserMedia || (await micBlocked())) return;
-    if (this.isOpen() || this.opening || this.stream) return;
+    const visible = () => typeof document === "undefined" || document.visibilityState === "visible";
+    if (this.warmRefused || this.isOpen() || this.opening || this.stream || !visible()) return;
+    if (!navigator.mediaDevices?.getUserMedia) return;
+    const before = this.generation;
+    if (await micBlocked()) return;
+    // Whatever happened meanwhile wins: a press (it opens the mic itself), the app being hidden,
+    // a close. Each of those moves the generation on.
+    if (this.generation !== before || !visible() || this.opening || this.stream || this.isOpen()) return;
     const generation = ++this.generation;
     const opening = this.open(generation, false).then(
       () => {},
@@ -198,8 +202,15 @@ export class MicCapture {
       throw new MicError(kind, MESSAGES[kind]);
     }
     const generation = ++this.generation;
+    const opened = this.open(generation, true);
+    // Registered so a warm-up starting meanwhile stands aside instead of opening a second time.
+    const opening = opened.then(
+      () => {},
+      () => {},
+    );
+    this.opening = opening;
     try {
-      if (!(await this.open(generation, true))) return false;
+      if (!(await opened)) return false;
       return await this.record(generation);
     } catch (e) {
       if (generation !== this.generation) return false;
@@ -207,6 +218,8 @@ export class MicCapture {
       setAudioSession("playback");
       console.warn("microphone: capture failed", e);
       throw classifyMicError(e);
+    } finally {
+      if (this.opening === opening) this.opening = undefined;
     }
   }
 

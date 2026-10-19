@@ -360,4 +360,39 @@ describe("MicCapture recording handoff", () => {
     expect(chunks).toEqual([333]);
     expect(audio.streams[0].stopped).toBe(true);
   });
+
+  it("a press during the warm-up's permission check isn't undone by the warm-up", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    stubDocument();
+    const audio = stubAudio();
+    audio.resolveModule();
+    let answer!: (s: { state: string }) => void;
+    (navigator as unknown as { permissions: unknown }).permissions = {
+      query: () => new Promise((r) => (answer = r)),
+    };
+    const mic = new MicCapture(() => {}, { stayOpen: true });
+    mic.prepare(); // waiting on the permission check
+    const pressed = mic.start();
+    answer({ state: "prompt" });
+    expect(await pressed).toBe(true);
+    expect(mic.active).toBe(true);
+    expect(audio.requests).toHaveLength(1);
+  });
+
+  it("a warm-up doesn't open the mic if the app was hidden during its permission check", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const page = stubDocument();
+    const audio = stubAudio();
+    audio.resolveModule();
+    let answer!: (s: { state: string }) => void;
+    (navigator as unknown as { permissions: unknown }).permissions = {
+      query: () => new Promise((r) => (answer = r)),
+    };
+    const mic = new MicCapture(() => {}, { stayOpen: true });
+    mic.prepare();
+    page.hide();
+    answer({ state: "granted" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(audio.requests).toHaveLength(0);
+  });
 });

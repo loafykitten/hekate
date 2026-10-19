@@ -100,7 +100,9 @@ export const tasksApi = {
   lists: async (signal?: AbortSignal): Promise<TaskList[]> => many(await request("GET", "/lists", { signal }), "lists", asTaskList),
   create: async (fields: TaskFields & { title: string }) => one(await request("POST", "/tasks", { body: fields }), asTask),
   patch: async (id: string, fields: TaskFields) => one(await request("PATCH", `/tasks/${encodeURIComponent(id)}`, { body: fields }), asTask),
-  complete: async (id: string) => one(await request("POST", `/tasks/${encodeURIComponent(id)}/complete`), asTask),
+  // `due` is the occurrence being completed, so a repeated request can't complete the next one too.
+  complete: async (id: string, due?: string | null) =>
+    one(await request("POST", `/tasks/${encodeURIComponent(id)}/complete`, due ? { body: { due } } : undefined), asTask),
   reopen: async (id: string) => one(await request("POST", `/tasks/${encodeURIComponent(id)}/reopen`), asTask),
   remove: async (id: string) => void (await request("DELETE", `/tasks/${encodeURIComponent(id)}`)),
 };

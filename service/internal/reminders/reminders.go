@@ -423,25 +423,48 @@ func (s *Service) Done(ctx context.Context, id int64) (Reminder, error) {
 	}
 	if cur.RRule != nil && cur.Status == StatusScheduled {
 		// Done on a repeating reminder acknowledges what is pending. While it is
-		// snoozed (at is before start, its next regular occurrence), that is the
-		// snooze: drop it and resume the schedule. Otherwise there is nothing to
-		// acknowledge, and the next occurrence stays.
+		// snoozed (at differs from start, its regular schedule; the snooze may be
+		// earlier or later than the next occurrence), that is the snooze: drop it
+		// and resume at the next regular occurrence that hasn't passed. Otherwise
+		// there is nothing to acknowledge.
 		var at, start string
 		if err := s.db.QueryRowContext(ctx, `SELECT at, start FROM reminders WHERE id = ?`, id).Scan(&at, &start); err != nil {
 			return Reminder{}, fmt.Errorf("load reminder %d: %w", id, err)
 		}
 		atT, err1 := time.Parse(time.RFC3339, at)
 		startT, err2 := time.Parse(time.RFC3339, start)
-		if err1 != nil || err2 != nil || !startT.After(atT) {
+		if err1 != nil || err2 != nil || atT.Equal(startT) {
 			return cur, nil
 		}
-		if _, err := s.db.ExecContext(ctx, `UPDATE reminders SET at = start, updated_at = ? WHERE id = ?`,
-			stamp(s.now()), id); err != nil {
+		resume, now := startT, s.now()
+		if !resume.After(now) {
+			r, err := when.ParseRule(*cur.RRule, startT.In(s.loc), s.loc)
+			if err != nil {
+				return Reminder{}, httpx.BadRequest("rrule: %s", err)
+			}
+			next, ok := r.Next(now)
+			if !ok {
+				return s.closeLocked(ctx, id)
+			}
+			resume = next
+		}
+		if _, err := s.db.ExecContext(ctx, `UPDATE reminders SET at = ?, start = ?, updated_at = ? WHERE id = ?`,
+			stamp(resume), stamp(resume), stamp(now), id); err != nil {
 			return Reminder{}, fmt.Errorf("finish snooze %d: %w", id, err)
 		}
 		s.changed()
 		return s.Get(ctx, id)
 	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE reminders SET status = 'done', updated_at = ? WHERE id = ?`,
+		stamp(s.now()), id); err != nil {
+		return Reminder{}, fmt.Errorf("finish reminder %d: %w", id, err)
+	}
+	s.changed()
+	return s.Get(ctx, id)
+}
+
+// closeLocked marks a reminder done; s.mu must be held.
+func (s *Service) closeLocked(ctx context.Context, id int64) (Reminder, error) {
 	if _, err := s.db.ExecContext(ctx, `UPDATE reminders SET status = 'done', updated_at = ? WHERE id = ?`,
 		stamp(s.now()), id); err != nil {
 		return Reminder{}, fmt.Errorf("finish reminder %d: %w", id, err)

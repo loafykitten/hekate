@@ -97,7 +97,8 @@ type TaskCache = [readonly unknown[], Task[] | undefined][];
 export function useSetTaskDone() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, done }: { id: string; done: boolean }) => (done ? tasksApi.complete(id) : tasksApi.reopen(id)),
+    mutationFn: ({ id, done, due }: { id: string; done: boolean; due?: string | null }) =>
+      done ? tasksApi.complete(id, due) : tasksApi.reopen(id),
     onMutate: async ({ id, done }) => {
       await qc.cancelQueries({ queryKey: ["tasks", "list"] });
       const previous: TaskCache = qc.getQueriesData<Task[]>({ queryKey: ["tasks", "list"] });

@@ -102,7 +102,7 @@ event (below) so open menus refresh.
 | `GET /api/tasks?list=&status=open\|done\|all` (default open) | | `{ tasks: [Task] }` ordered by due (nulls last), then priority |
 | `POST /api/tasks` | `{ title, notes?, list?, due?, rrule?, priority? }` | `Task` (201) |
 | `PATCH /api/tasks/{id}` | any Task fields above | `Task` |
-| `POST /api/tasks/{id}/complete` | | `Task`. A repeating task records the completion and moves `due` to the next occurrence instead of closing. |
+| `POST /api/tasks/{id}/complete` | optional `{ due }`: the occurrence being completed | `Task`. A repeating task records the completion and moves `due` to the next occurrence instead of closing. With `due`, a request for an occurrence that's no longer current changes nothing (no double completion). |
 | `POST /api/tasks/{id}/reopen` | | `Task` |
 | `DELETE /api/tasks/{id}` | | 204 |
 | `GET /api/lists` | | `{ lists: [{ name, open_count }] }` |

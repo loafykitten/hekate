@@ -84,3 +84,14 @@ describe("typed endpoints", () => {
     await expect(fetchWeather()).rejects.toBeInstanceOf(ApiError);
   });
 });
+
+describe("tasksApi.complete", () => {
+  it("sends the occurrence being completed, so a repeat can't skip the next one", async () => {
+    const task = { id: "4", title: "Recycling", notes: "", list: "Chores", due: "2026-10-19", rrule: "FREQ=WEEKLY", priority: 0, completed_at: null, created_at: "x", updated_at: "x" };
+    const fetchMock = respond(200, task);
+    await tasksApi.complete("4", "2026-10-19");
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain("/api/tasks/4/complete");
+    expect(JSON.parse(String(init?.body))).toEqual({ due: "2026-10-19" });
+  });
+});

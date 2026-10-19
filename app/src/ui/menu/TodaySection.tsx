@@ -103,7 +103,14 @@ export function TodaySection() {
         ) : (
           <div className={styles.group}>
             {dueTasks.map((t) => (
-              <TaskRow key={t.id} task={t} now={now} showList onToggle={(done) => setDone.mutate({ id: t.id, done })} />
+              <TaskRow
+                key={t.id}
+                task={t}
+                now={now}
+                showList
+                onToggle={(done) => setDone.mutate({ id: t.id, done, due: t.due })}
+                busy={setDone.isPending && setDone.variables?.id === t.id}
+              />
             ))}
           </div>
         )}

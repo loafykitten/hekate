@@ -638,3 +638,30 @@ func TestDoneDuringSnoozeResumesSchedule(t *testing.T) {
 		t.Errorf("the acknowledged snooze still fired")
 	}
 }
+
+// A snooze that reaches past the next regular occurrence is still a snooze:
+// Done drops it and resumes the schedule at the next occurrence not yet passed.
+func TestDoneDuringLongSnoozeResumesSchedule(t *testing.T) {
+	for _, tt := range []struct{ doneAt, want string }{
+		{"2026-10-20T09:05", "2026-10-20T10:00:00-05:00"},
+		{"2026-10-20T10:30", "2026-10-20T11:00:00-05:00"},
+	} {
+		f := newFixture(t)
+		r := f.create(t, "Water", "2026-10-20T09:00", "FREQ=HOURLY")
+		f.clock.set(f.at("2026-10-20T09:00"))
+		if n, err := f.svc.fireDue(t.Context(), 0); err != nil || n != 1 {
+			t.Fatalf("fire: %d %v", n, err)
+		}
+		if _, err := f.svc.Snooze(t.Context(), mustID(r.ID), 180); err != nil {
+			t.Fatal(err)
+		}
+		f.clock.set(f.at(tt.doneAt))
+		got, err := f.svc.Done(t.Context(), mustID(r.ID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Status != StatusScheduled || got.At != tt.want {
+			t.Errorf("Done at %s: %+v, want at %s", tt.doneAt, got, tt.want)
+		}
+	}
+}

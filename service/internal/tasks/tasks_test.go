@@ -447,3 +447,25 @@ func TestTimedRuleDetectionUsesCanonicalRule(t *testing.T) {
 		t.Error("date-only due with a prefixed hourly rule accepted")
 	}
 }
+
+// A double click (or two devices) completing the same occurrence advances a
+// repeating task once, not twice.
+func TestCompleteOccurrenceIsIdempotent(t *testing.T) {
+	f := newFixture(t)
+	f.setNow(time.Date(2026, 10, 19, 8, 0, 0, 0, f.svc.loc))
+	task := mustCreate(t, f.svc, NewTask{Title: "Recycling", Due: "2026-10-19", RRule: "FREQ=DAILY"})
+	id, _ := strconv.ParseInt(task.ID, 10, 64)
+	seen := *task.Due
+	for range 2 {
+		if _, err := f.svc.CompleteOccurrence(t.Context(), id, &seen); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := f.svc.Get(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Due == nil || *got.Due != "2026-10-20" {
+		t.Errorf("due = %v, want 2026-10-20 (one occurrence completed)", got.Due)
+	}
+}

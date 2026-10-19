@@ -162,7 +162,8 @@ export function TasksSection() {
         now={now}
         showList={selected === undefined}
         expanded={isOpen}
-        onToggle={(d) => setDone.mutate({ id: t.id, done: d })}
+        onToggle={(d) => setDone.mutate({ id: t.id, done: d, due: t.due })}
+        busy={setDone.isPending && setDone.variables?.id === t.id}
         onOpen={() => setOpenId(isOpen ? undefined : t.id)}
       >
         {isOpen && (

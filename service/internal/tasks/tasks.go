@@ -520,7 +520,21 @@ func (s *Service) update(ctx context.Context, id int64, p Patch) (Task, error) {
 // Complete finishes a task. A repeating task records the completion and moves
 // its due to the next occurrence instead of closing.
 func (s *Service) Complete(ctx context.Context, id int64) (Task, error) {
+	return s.CompleteOccurrence(ctx, id, nil)
+}
+
+// CompleteOccurrence completes the task only if it is still due at due (the
+// occurrence the caller saw). A repeated request (a double click, or another
+// device completing it first) then finds the series already moved on and
+// changes nothing, instead of skipping the next occurrence too. A nil due
+// completes whatever is current.
+func (s *Service) CompleteOccurrence(ctx context.Context, id int64, due *string) (Task, error) {
 	s.mu.Lock()
+	cur, err := s.get(ctx, id)
+	if err == nil && due != nil && !sameDue(cur.Due, *due) {
+		s.mu.Unlock()
+		return cur, nil
+	}
 	t, err := s.complete(ctx, id)
 	s.mu.Unlock()
 	if err != nil {
@@ -652,4 +666,18 @@ func (s *Service) remove(ctx context.Context, id int64) (Task, error) {
 		return Task{}, fmt.Errorf("delete task %d: %w", id, err)
 	}
 	return t, nil
+}
+
+// sameDue compares a stored due with one a client sent back: dates as text,
+// times as instants (the client may render a different offset).
+func sameDue(stored *string, seen string) bool {
+	if stored == nil {
+		return seen == ""
+	}
+	if *stored == seen {
+		return true
+	}
+	a, errA := time.Parse(time.RFC3339, *stored)
+	b, errB := time.Parse(time.RFC3339, seen)
+	return errA == nil && errB == nil && a.Equal(b)
 }

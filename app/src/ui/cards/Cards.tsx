@@ -127,7 +127,7 @@ function TasksCard({ items, highlight }: { items: Task[]; highlight: string[] })
     // Show it checked at once (a repeating task jumps to its next date when the service answers).
     setLocal((l) => ({ ...l, [task.id]: { ...original, completed_at: done ? new Date().toISOString() : null } }));
     setDone.mutate(
-      { id: task.id, done },
+      { id: task.id, done, due: original.due },
       {
         onSuccess: (updated) => setLocal((l) => ({ ...l, [task.id]: updated })),
         onError: () => setLocal((l) => ({ ...l, [task.id]: original })),
@@ -139,7 +139,7 @@ function TasksCard({ items, highlight }: { items: Task[]; highlight: string[] })
   return (
     <div className={styles.list}>
       {tasks.map((t) => (
-        <TaskRow key={t.id} task={t} now={now} compact highlight={highlight.includes(t.id)} showList={new Set(tasks.map((x) => x.list)).size > 1} onToggle={(done) => toggle(t, done)} />
+        <TaskRow key={t.id} task={t} now={now} compact highlight={highlight.includes(t.id)} showList={new Set(tasks.map((x) => x.list)).size > 1} onToggle={(done) => toggle(t, done)} busy={setDone.isPending && setDone.variables?.id === t.id} />
       ))}
     </div>
   );

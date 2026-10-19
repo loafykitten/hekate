@@ -20,13 +20,15 @@ interface TaskRowProps {
   compact?: boolean;
   // Checking the box. Omitted for a read-only row.
   onToggle?: (done: boolean) => void;
+  // A change for this row is on its way: the box is disabled so it can't be sent twice.
+  busy?: boolean;
   // Opens the editor. When set, the text area becomes a button.
   onOpen?: () => void;
   expanded?: boolean;
   children?: ReactNode;
 }
 
-export function TaskRow({ task, now, showList, highlight, compact, onToggle, onOpen, expanded, children }: TaskRowProps) {
+export function TaskRow({ task, now, showList, highlight, compact, onToggle, busy, onOpen, expanded, children }: TaskRowProps) {
   const done = task.completed_at !== null;
   const due = task.due ? dueLabel(task.due, now) : undefined;
   const body = (
@@ -60,7 +62,7 @@ export function TaskRow({ task, now, showList, highlight, compact, onToggle, onO
   return (
     <div className={styles.row} data-highlight={highlight || undefined} data-compact={compact || undefined} data-expanded={expanded || undefined}>
       <div className={styles.line}>
-        {onToggle && <CheckCircle checked={done} label={done ? `Reopen ${task.title}` : `Complete ${task.title}`} onChange={onToggle} />}
+        {onToggle && <CheckCircle checked={done} label={done ? `Reopen ${task.title}` : `Complete ${task.title}`} onChange={onToggle} disabled={busy} />}
         {onOpen ? (
           <button type="button" className={styles.body} aria-expanded={expanded} onClick={onOpen}>
             {body}

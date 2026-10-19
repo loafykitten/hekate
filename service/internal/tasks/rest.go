@@ -107,7 +107,16 @@ func (s *Service) handlePatch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleComplete(w http.ResponseWriter, r *http.Request) {
-	s.transition(w, r, s.Complete)
+	// Optional {"due": "..."}: the occurrence the client saw, so a repeated
+	// request can't complete the next one too.
+	var body struct {
+		Due *string `json:"due"`
+	}
+	if err := httpx.DecodeOptional(w, r, &body); err != nil {
+		httpx.Fail(w, s.log, r, err)
+		return
+	}
+	s.transition(w, r, func(ctx context.Context, id int64) (Task, error) { return s.CompleteOccurrence(ctx, id, body.Due) })
 }
 
 func (s *Service) handleReopen(w http.ResponseWriter, r *http.Request) {

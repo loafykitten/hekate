@@ -81,6 +81,8 @@ export class ConversationClient {
   // The seq of the last segment of the current turn the user heard at least partly, or -1.
   // The playback layer owns that fact; the client only needs it to interrupt on new input.
   getHeardSeq: () => number = () => -1;
+  // The turn getHeardSeq describes (the last one this client played).
+  getHeardTurn: () => string | undefined = () => undefined;
 
   constructor(options: ClientOptions = {}) {
     this.url = options.url ?? defaultSocketUrl();
@@ -191,9 +193,10 @@ export class ConversationClient {
   }
 
   // Stops the current turn; the server keeps segments up to heardSeq in history.
-  interrupt(heardSeq: number = this.getHeardSeq()): boolean {
+  interrupt(heardSeq: number = this.getHeardSeq(), turnId: string | undefined = this.getHeardTurn() ?? this.activeTurn): boolean {
     this.activeTurn = undefined;
-    return this.send({ type: "interrupt", heard_seq: heardSeq });
+    // Naming the turn lets the server ignore an interrupt that arrives after a newer turn began.
+    return this.send(turnId ? { type: "interrupt", heard_seq: heardSeq, turn_id: turnId } : { type: "interrupt", heard_seq: heardSeq });
   }
 
   private canSend(): boolean {

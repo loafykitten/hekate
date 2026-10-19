@@ -346,7 +346,7 @@ func TestInterruptKeepsHeardSegments(t *testing.T) {
 			}, envOpts{})
 			e.agent.Say("c", "i", "tell me a story")
 			e.hub.waitFor(t, "two segments", func(ev []any) bool { return len(ofType[proto.Segment](ev)) >= 2 })
-			e.agent.Interrupt(tt.heard)
+			e.agent.Interrupt("", tt.heard)
 			ev := e.hub.waitTurnEnd(t, 1)
 
 			end := ofType[proto.TurnEnd](ev)[0]
@@ -381,7 +381,7 @@ func TestInterruptCancelsSynthesis(t *testing.T) {
 	for len(synth.spoken()) == 0 {
 		time.Sleep(5 * time.Millisecond)
 	}
-	e.agent.Interrupt(-1)
+	e.agent.Interrupt("", -1)
 	ev := e.hub.waitTurnEnd(t, 1)
 	if len(ofType[proto.Segment](ev)) != 0 || ofType[proto.TurnEnd](ev)[0].Status != "interrupted" {
 		t.Errorf("events = %s", describe(ev))
@@ -617,7 +617,7 @@ func TestInterruptAfterTurnEndsTrimsSavedReply(t *testing.T) {
 	e.agent.Say("c", "i", "tell me a story")
 	e.hub.waitTurnEnd(t, 1)
 
-	e.agent.Interrupt(0)
+	e.agent.Interrupt("", 0)
 	ev := e.hub.waitTurnEnd(t, 2)
 	ends := ofType[proto.TurnEnd](ev)
 	if ends[0].Status != proto.StatusDone || ends[1].Status != proto.StatusInterrupted ||
@@ -633,8 +633,8 @@ func TestInterruptAfterTurnEndsTrimsSavedReply(t *testing.T) {
 	}
 
 	// Hearing more than was kept, or interrupting again, changes nothing.
-	e.agent.Interrupt(2)
-	e.agent.Interrupt(0)
+	e.agent.Interrupt("", 2)
+	e.agent.Interrupt("", 0)
 	if got := len(ofType[proto.TurnEnd](e.hub.snapshot())); got != 2 {
 		t.Errorf("turn_end events = %d, want 2", got)
 	}
@@ -646,7 +646,7 @@ func TestInterruptJustBeforeEndIsHonored(t *testing.T) {
 	e := newEnv(t, func(int, llmReq) (int, []string) {
 		return 200, say("First sentence is right here. Second sentence is also here. Third sentence ends it.")
 	}, envOpts{})
-	testHookBeforeEnd = func(*turn) { e.agent.Interrupt(0) }
+	testHookBeforeEnd = func(*turn) { e.agent.Interrupt("", 0) }
 	t.Cleanup(func() { testHookBeforeEnd = nil })
 
 	e.agent.Say("c", "i", "tell me a story")
@@ -658,4 +658,65 @@ func TestInterruptJustBeforeEndIsHonored(t *testing.T) {
 	if msgs := e.messages(); len(msgs) != 2 || msgs[1].Text != "First sentence is right here." {
 		t.Errorf("stored = %+v", msgs)
 	}
+}
+
+// A late interrupt that describes an older turn must not cut the newer one.
+func TestInterruptForAnOlderTurnIsIgnored(t *testing.T) {
+	e := newEnv(t, func(n int, _ llmReq) (int, []string) {
+		if n == 0 {
+			return 200, say("The first reply is short.")
+		}
+		return 200, sayThenHang("The second reply has started. And it goes on")
+	}, envOpts{})
+	e.agent.Say("phone", "i1", "one")
+	first := ofType[proto.TurnEnd](e.hub.waitTurnEnd(t, 1))[0].TurnID
+	e.agent.Say("desktop", "i2", "two")
+	e.hub.waitFor(t, "second reply", func(ev []any) bool { return len(ofType[proto.Segment](ev)) >= 2 })
+
+	e.agent.Interrupt(first, -1) // the phone's interrupt, arriving late
+	time.Sleep(50 * time.Millisecond)
+	if ends := ofType[proto.TurnEnd](e.hub.snapshot()); len(ends) != 1 {
+		t.Fatalf("the newer turn was cut: %+v", ends)
+	}
+	e.agent.Interrupt("", 0)
+	if end := ofType[proto.TurnEnd](e.hub.waitTurnEnd(t, 2))[1]; end.Status != proto.StatusInterrupted || end.TurnID == first {
+		t.Errorf("end = %+v", end)
+	}
+}
+
+// Someone starting push-to-talk stops her: a running turn keeps what was
+// delivered; a finished one still playing somewhere is announced once.
+func TestHush(t *testing.T) {
+	t.Run("running turn", func(t *testing.T) {
+		e := newEnv(t, func(int, llmReq) (int, []string) {
+			return 200, sayThenHang("First sentence is right here. Second sentence is also here. And then")
+		}, envOpts{})
+		e.agent.Say("c", "i", "go")
+		e.hub.waitFor(t, "two segments", func(ev []any) bool { return len(ofType[proto.Segment](ev)) >= 2 })
+		e.agent.Hush()
+		end := ofType[proto.TurnEnd](e.hub.waitTurnEnd(t, 1))[0]
+		if end.Status != proto.StatusInterrupted || end.Text != "First sentence is right here. Second sentence is also here." {
+			t.Errorf("end = %+v", end)
+		}
+	})
+	t.Run("finished turn", func(t *testing.T) {
+		e := newEnv(t, func(int, llmReq) (int, []string) {
+			return 200, say("All of it was generated. Some may still be playing.")
+		}, envOpts{})
+		e.agent.Say("c", "i", "go")
+		e.hub.waitTurnEnd(t, 1)
+		e.agent.Hush()
+		e.agent.Hush()
+		ends := ofType[proto.TurnEnd](e.hub.waitTurnEnd(t, 2))
+		if len(ends) != 2 || ends[1].Status != proto.StatusInterrupted || ends[1].TurnID != ends[0].TurnID {
+			t.Fatalf("ends = %+v", ends)
+		}
+		time.Sleep(50 * time.Millisecond)
+		if n := len(ofType[proto.TurnEnd](e.hub.snapshot())); n != 2 {
+			t.Errorf("turn_end events = %d, want 2 (announced once)", n)
+		}
+		if msgs := e.messages(); len(msgs) != 2 || msgs[1].Text != "All of it was generated. Some may still be playing." {
+			t.Errorf("stored = %+v (nothing is trimmed without a heard position)", msgs)
+		}
+	})
 }

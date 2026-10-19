@@ -103,6 +103,7 @@ export class Conversation {
     this.now = deps.now ?? (() => performance.now());
     this.mic = (deps.createMic ?? ((onChunk) => new MicCapture(onChunk)))((chunk) => this.onMicChunk(chunk));
     this.client.getHeardSeq = () => this.player?.heardSeq(this.lastMyTurn) ?? -1;
+    this.client.getHeardTurn = () => this.lastMyTurn;
   }
 
   // --- lifecycle -------------------------------------------------------------------------

@@ -29,11 +29,13 @@ import (
 
 // fakeConv records what the sockets ask of the conversation.
 type fakeConv struct {
-	mu        sync.Mutex
-	said      []said
-	interrupt []int
-	msgs      []proto.HistoryMessage
-	lastQuery struct {
+	mu             sync.Mutex
+	said           []said
+	interrupt      []int
+	interruptTurns []string
+	hushes         int
+	msgs           []proto.HistoryMessage
+	lastQuery      struct {
 		before int64
 		limit  int
 	}
@@ -52,9 +54,15 @@ func (f *fakeConv) Say(origin, id, text string) {
 	f.mu.Unlock()
 	f.sayCh <- said{origin, id, text}
 }
-func (f *fakeConv) Interrupt(h int) {
+func (f *fakeConv) Interrupt(turnID string, h int) {
 	f.mu.Lock()
 	f.interrupt = append(f.interrupt, h)
+	f.interruptTurns = append(f.interruptTurns, turnID)
+	f.mu.Unlock()
+}
+func (f *fakeConv) Hush() {
+	f.mu.Lock()
+	f.hushes++
 	f.mu.Unlock()
 }
 func (f *fakeConv) Messages(_ context.Context, before int64, limit int) ([]proto.HistoryMessage, error) {
@@ -780,5 +788,31 @@ func TestCapabilitiesNotMissedWhenSTTFinishesDuringConnect(t *testing.T) {
 	m := readMsg(t, c)
 	if m["type"] != "capabilities" || m["capabilities"].(map[string]any)["stt"] != true {
 		t.Fatalf("got %v, want capabilities with stt", m)
+	}
+}
+
+// Starting push-to-talk on one device hushes her right away; interrupts carry
+// the turn they describe.
+func TestPTTStartHushesAndInterruptCarriesTurn(t *testing.T) {
+	conv := newFakeConv()
+	env := newWSServer(t, conv, &fakeSTT{ready: true}, false)
+	phone, desktop := env.dial(t), env.dial(t)
+	readMsg(t, phone)
+	readMsg(t, desktop)
+
+	// Each connection is read in order, so a say after a message proves it was handled.
+	send(t, desktop, map[string]any{"type": "interrupt", "heard_seq": 1, "turn_id": "t_7"})
+	send(t, desktop, map[string]any{"type": "say", "id": "s1", "text": "sync"})
+	<-conv.sayCh
+	send(t, phone, map[string]any{"type": "ptt_start", "id": "p", "sample_rate": 16000})
+	send(t, phone, map[string]any{"type": "say", "id": "s2", "text": "sync"})
+	<-conv.sayCh
+	conv.mu.Lock()
+	defer conv.mu.Unlock()
+	if conv.hushes != 1 {
+		t.Errorf("hushes = %d, want 1", conv.hushes)
+	}
+	if len(conv.interruptTurns) != 1 || conv.interruptTurns[0] != "t_7" || conv.interrupt[0] != 1 {
+		t.Errorf("interrupts = %v %v", conv.interruptTurns, conv.interrupt)
 	}
 }

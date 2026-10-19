@@ -37,7 +37,8 @@ type Conversation interface {
 	ConversationID() string
 	Gestures() []string
 	Say(origin, inputID, text string)
-	Interrupt(heardSeq int)
+	Interrupt(turnID string, heardSeq int)
+	Hush()
 	Messages(ctx context.Context, before int64, limit int) ([]proto.HistoryMessage, error)
 }
 
@@ -238,7 +239,7 @@ func (ss *session) onText(data []byte) {
 		if m.HeardSeq != nil {
 			heard = *m.HeardSeq
 		}
-		ss.s.conv.Interrupt(heard)
+		ss.s.conv.Interrupt(m.TurnID, heard)
 	default:
 		ss.sendTo(proto.NewError(proto.CodeBadMessage, "I don't know that kind of message.", m.ID))
 	}
@@ -276,6 +277,9 @@ func (ss *session) onPTTStart(m proto.ClientMessage) {
 		return
 	}
 	ss.pttID, ss.pttGen = m.ID, gen
+	// Someone started talking: she stops now, on every device, rather than
+	// after the recording is transcribed (and before her voice reaches the mic).
+	ss.s.conv.Hush()
 }
 
 func (ss *session) sttReady() bool { return ss.s.stt != nil && ss.s.stt.Ready() }

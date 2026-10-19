@@ -110,7 +110,7 @@ export type ClientMessage =
   | { type: "ptt_start"; id: string; sample_rate: number }
   | { type: "ptt_end"; id: string }
   | { type: "ptt_cancel"; id: string }
-  | { type: "interrupt"; heard_seq: number };
+  | { type: "interrupt"; heard_seq: number; turn_id?: string };
 
 export const MAX_TEXT_LENGTH = 4000;
 export const PTT_SAMPLE_RATE = 16000;

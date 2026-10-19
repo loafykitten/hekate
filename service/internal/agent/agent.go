@@ -112,7 +112,8 @@ type turn struct {
 type finished struct {
 	rounds []*roundRec
 	segs   []segRecord
-	kept   int // last seq stored
+	kept   int  // last seq stored
+	hushed bool // clients were already told it was interrupted
 	model  string
 	usage  proto.TurnUsage
 	at     time.Time
@@ -247,14 +248,16 @@ func (a *Agent) Say(origin, inputID, text string) {
 	go a.runTurn(t, prev)
 }
 
-// Interrupt stops the current turn. heardSeq is the last segment the user
-// heard at least partly, or -1. If generation already finished and the client
-// was still playing queued audio, the saved reply is trimmed to what was heard.
-func (a *Agent) Interrupt(heardSeq int) {
+// Interrupt stops turn turnID (empty: the current turn). heardSeq is the last
+// segment the user heard at least partly, or -1. An interrupt naming an older
+// turn is ignored, so a late one can't cut a newer reply. If generation already
+// finished and the client was still playing queued audio, the saved reply is
+// trimmed to what was heard.
+func (a *Agent) Interrupt(turnID string, heardSeq int) {
 	a.mu.Lock()
 	t := a.cur
 	a.mu.Unlock()
-	if t == nil {
+	if t == nil || (turnID != "" && t.id != turnID) {
 		return
 	}
 	t.endMu.Lock()
@@ -267,6 +270,31 @@ func (a *Agent) Interrupt(heardSeq int) {
 		return
 	}
 	a.trimFinished(t, heardSeq)
+}
+
+// Hush stops whatever she's saying because someone started talking (push-to-
+// talk on any device). A running turn ends keeping what was delivered; a
+// finished one that may still be playing somewhere is announced as
+// interrupted so every client stops it. What was heard is unknown here, so
+// nothing more is trimmed.
+func (a *Agent) Hush() {
+	a.mu.Lock()
+	t := a.cur
+	a.mu.Unlock()
+	if t == nil {
+		return
+	}
+	t.endMu.Lock()
+	defer t.endMu.Unlock()
+	f := t.fin
+	switch {
+	case f == nil:
+		t.interrupt(t.delivered())
+	case !f.hushed && time.Since(f.at) <= lateInterruptWindow:
+		f.hushed = true
+		_, text := collectMessages(t.id, f.rounds, f.segs, f.kept)
+		a.hub.Broadcast(proto.NewTurnEnd(t.id, proto.StatusInterrupted, text, f.model, f.usage))
+	}
 }
 
 // trimFinished rewrites a completed turn's saved reply to end at seq heard and
@@ -283,7 +311,7 @@ func (a *Agent) trimFinished(t *turn, heard int) {
 	if err := a.store.EndTurn(ctx, t.id, proto.StatusInterrupted, f.model, ""); err != nil {
 		a.log.Error("cannot mark turn interrupted", "turn_id", t.id, "error", err)
 	}
-	f.kept = heard
+	f.kept, f.hushed = heard, true
 	a.hub.Broadcast(proto.NewTurnEnd(t.id, proto.StatusInterrupted, text, f.model, f.usage))
 	a.log.Info("trimmed finished turn", "turn_id", t.id, "kept", heard+1)
 }

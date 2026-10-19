@@ -140,7 +140,7 @@ describe("ConversationClient", () => {
     const id = client.say("actually, never mind");
     const types = socket.json.map((m) => m.type);
     expect(types).toEqual(["interrupt", "say"]);
-    expect(socket.json[0]).toEqual({ type: "interrupt", heard_seq: 1 });
+    expect(socket.json[0]).toEqual({ type: "interrupt", heard_seq: 1, turn_id: "t1" });
     expect(socket.json[1]).toMatchObject({ id });
     expect(client.turnActive).toBe(false);
     // The old turn's end arriving later doesn't disturb a newer turn.
@@ -156,7 +156,7 @@ describe("ConversationClient", () => {
     socket.receive({ type: "turn_start", turn_id: "t1", input_id: "i", origin: "c1", user_text: "x" });
     client.pttStart();
     expect(socket.json.map((m) => m.type)).toEqual(["say", "interrupt", "ptt_start"]);
-    expect(socket.json[1]).toEqual({ type: "interrupt", heard_seq: -1 });
+    expect(socket.json[1]).toEqual({ type: "interrupt", heard_seq: -1, turn_id: "t1" });
   });
 
   it("leaves another device's turn to the server: no interrupt with this device's position", () => {

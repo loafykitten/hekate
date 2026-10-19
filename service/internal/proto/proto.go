@@ -214,6 +214,7 @@ type ClientMessage struct {
 	Text       string `json:"text"`
 	SampleRate int    `json:"sample_rate"`
 	HeardSeq   *int   `json:"heard_seq"`
+	TurnID     string `json:"turn_id"` // interrupt: the turn heard_seq describes
 }
 
 // Limits from PROTOCOL.md.

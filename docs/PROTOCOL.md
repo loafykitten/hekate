@@ -53,10 +53,10 @@ from the audio's loudness.
 | type | fields | meaning |
 |---|---|---|
 | `say` | `id`, `text` | Typed input. |
-| `ptt_start` | `id`, `sample_rate` (16000) | Push-to-talk started. Binary frames follow: little-endian signed 16-bit mono PCM. |
+| `ptt_start` | `id`, `sample_rate` (16000) | Push-to-talk started. Binary frames follow: little-endian signed 16-bit mono PCM. She stops talking at once on every device (the current turn ends as `interrupted`, keeping what was delivered). |
 | `ptt_end` | `id` | Released. The server transcribes, sends `transcript`, then starts a turn. |
 | `ptt_cancel` | `id` | Discard the audio. |
-| `interrupt` | `heard_seq` (last segment seq the user heard at least partly, or -1) | Stop the current turn. The server keeps segments up to `heard_seq` in history. |
+| `interrupt` | `heard_seq` (last segment seq the user heard at least partly, or -1), `turn_id` (the turn `heard_seq` describes) | Stop that turn. The server keeps segments up to `heard_seq` in history, and ignores an interrupt for a turn that is no longer the current one. |
 
 An `interrupt` that arrives after the turn already ended (the client was still playing queued audio) trims the saved reply to `heard_seq` and broadcasts a second `turn_end` with status `interrupted`, so every client stops playing that turn. With no recent turn it is ignored. New input while a turn is running interrupts that turn first. The client sends `interrupt` with its `heard_seq` only for a turn it started (it knows what was heard); for another device's turn it just sends the input, and the server interrupts that turn keeping what it delivered.
 

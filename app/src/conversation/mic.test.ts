@@ -411,4 +411,15 @@ describe("MicCapture recording handoff", () => {
     expect(await second).toBe(true);
     expect(mic.active).toBe(true);
   });
+
+  it("coming back to the app doesn't open the mic unless the app asked for it", async () => {
+    const page = stubDocument();
+    const audio = stubAudio();
+    audio.resolveModule();
+    new MicCapture(() => {}, { stayOpen: true }); // never prepared: speech-to-text is off
+    page.hide();
+    page.show();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(audio.requests).toHaveLength(0);
+  });
 });

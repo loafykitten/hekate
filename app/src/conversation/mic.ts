@@ -122,6 +122,9 @@ export class MicCapture {
   // press opens the mic.
   private warmRefused = false;
   private readonly stayOpen: boolean;
+  // prepare() was called: the app wants the mic (speech-to-text is available), so coming back
+  // to the app opens it again.
+  private armed = false;
 
   constructor(
     private readonly onChunk: (chunk: ArrayBuffer) => void,
@@ -130,7 +133,7 @@ export class MicCapture {
     this.stayOpen = options.stayOpen ?? false;
     if (this.stayOpen && typeof document !== "undefined") {
       document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "visible") return this.prepare();
+        if (document.visibilityState === "visible") return this.armed && this.prepare();
         // A recording still draining its last chunks closes once it's done (see stop()).
         if (!this._active && this.forwarding === undefined) this.close();
       });
@@ -150,6 +153,7 @@ export class MicCapture {
   // worklet ahead of time, so the first press only waits for the microphone to open.
   // With stayOpen it also opens the microphone now, when the user already allowed it.
   prepare(): void {
+    this.armed = true;
     if (!this.ctx && typeof AudioContext !== "undefined") {
       try {
         const ctx = (this.ctx = new AudioContext({ latencyHint: "interactive" }));

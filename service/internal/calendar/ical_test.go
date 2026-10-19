@@ -822,3 +822,51 @@ func TestAnchorToSeriesUsesTheSeriesZone(t *testing.T) {
 		t.Errorf("end = %s, want the first occurrence +90m (15:30Z)", *p.End)
 	}
 }
+
+// Moving an occurrence of a UTC series keeps the series in UTC, so the moved
+// occurrence lands where asked even across DST: Nov 2 08:00 CST -> 09:00 CST.
+func TestRescheduledSeriesKeepsItsZone(t *testing.T) {
+	chicago, _ := time.LoadLocation("America/Chicago")
+	ser := mustSeries(t, `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//other client//EN
+BEGIN:VEVENT
+UID:standup
+DTSTAMP:20261001T000000Z
+DTSTART:20261019T140000Z
+DTEND:20261019T150000Z
+RRULE:FREQ=WEEKLY
+SUMMARY:Standup
+END:VEVENT
+END:VCALENDAR
+`, chicago)
+	inst, _ := json.Marshal("2026-11-02T08:00:00-06:00")
+	start, end := "2026-11-02T09:00:00-06:00", "2026-11-02T10:00:00-06:00"
+	p := EventPatch{Instance: inst, Start: &start, End: &end}
+	if err := anchorToSeries(&p, ser.master, ser.rruleString(), chicago); err != nil {
+		t.Fatal(err)
+	}
+	cur := ser.event(*ser.master, chicago, nil)
+	in, err := mergePatch(cur, ser.master, p, chicago)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sp, err := resolveSpec(in, chicago)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ser.applyUpdate(sp, true, chicago, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	moved, err := parseSeries(ser.cal, chicago)
+	if err != nil {
+		t.Fatal(err)
+	}
+	occ, err := moved.occurrences(time.Date(2026, 11, 2, 0, 0, 0, 0, chicago), time.Date(2026, 11, 3, 0, 0, 0, 0, chicago), chicago)
+	if err != nil || len(occ) != 1 {
+		t.Fatalf("occurrences = %v, %v", occ, err)
+	}
+	if want := time.Date(2026, 11, 2, 9, 0, 0, 0, chicago); !occ[0].start.Equal(want) {
+		t.Errorf("Nov 2 occurrence = %s, want %s", occ[0].start, want)
+	}
+}

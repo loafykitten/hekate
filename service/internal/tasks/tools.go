@@ -203,14 +203,18 @@ func (s *Service) updateTool() agent.Tool {
 
 func (s *Service) completeTool() agent.Tool {
 	return agent.Tool{
-		Name:        "task_complete",
-		Description: "Mark a task done. A repeating task is not closed: it moves to its next occurrence, and the result says when.",
-		Schema:      json.RawMessage(`{"type":"object","required":["id"],"properties":{"id":{"type":"string","description":"The task id, as shown in task results."}}}`),
-		Effect:      agent.EffectLocal,
-		Label:       "Checking it off",
+		Name: "task_complete",
+		Description: "Mark a task done. A repeating task is not closed: it moves to its next occurrence, and the result says when. " +
+			"Pass the due date shown with the task, so the occurrence you mean is the one completed even if it changed meanwhile.",
+		Schema: json.RawMessage(`{"type":"object","required":["id"],"properties":{
+			"id":{"type":"string","description":"The task id, as shown in task results."},
+			"due":{"type":"string","description":"The task's due exactly as shown in task results (omit for a task without one)."}}}`),
+		Effect: agent.EffectLocal,
+		Label:  "Checking it off",
 		Run: func(ctx context.Context, raw json.RawMessage) (agent.Result, error) {
 			var a struct {
-				ID agent.ID `json:"id"`
+				ID  agent.ID `json:"id"`
+				Due *string  `json:"due"`
 			}
 			if err := agent.DecodeArgs(raw, &a); err != nil {
 				return agent.Result{}, err
@@ -222,11 +226,15 @@ func (s *Service) completeTool() agent.Tool {
 			if err != nil {
 				return agent.Result{}, err
 			}
-			// Complete the occurrence just looked at: if it was completed meanwhile
-			// (the menu, another device), don't advance the next one too.
+			// Complete the occurrence she saw (the due from the task results); if
+			// it was completed meanwhile (the menu, another device), don't advance
+			// the next one too. Without it, the current one.
 			due := ""
 			if before.Due != nil {
 				due = *before.Due
+			}
+			if a.Due != nil {
+				due = *a.Due
 			}
 			t, err := s.CompleteOccurrence(ctx, int64(a.ID), &due)
 			if err != nil {
@@ -236,6 +244,8 @@ func (s *Service) completeTool() agent.Tool {
 			switch {
 			case before.CompletedAt != nil:
 				content = "It was already done: " + oneLine(t)
+			case a.Due != nil && !sameDue(before.Due, *a.Due):
+				content = "That occurrence was already checked off (maybe on another device); nothing changed: " + oneLine(t)
 			case t.RRule != nil && t.CompletedAt == nil:
 				content = fmt.Sprintf("Completed this time; it repeats, so it is now due %s: %s", deref(t.Due), oneLine(t))
 			case t.RRule != nil:

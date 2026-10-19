@@ -126,6 +126,7 @@ type updateArgs struct {
 	Notes    *string `json:"notes"`
 	RRule    *string `json:"rrule"`
 	Instance *string `json:"instance"`
+	Version  *string `json:"version"`
 }
 
 func (s *Service) updateTool() agent.Tool {
@@ -135,7 +136,8 @@ func (s *Service) updateTool() agent.Tool {
 			"change; for a repeating event the change applies to the whole series. An empty rrule makes it one-off. " +
 			"Moving a repeating event's start or rule clears its one-off exceptions. When changing the times of a repeating " +
 			"event, give the instance of the occurrence you are looking at (from calendar_events): the new start and end " +
-			"then apply to every occurrence relative to it. " + timeHelp,
+			"then apply to every occurrence relative to it. Always pass the version shown with the event, so a change made " +
+			"elsewhere in the meantime is noticed instead of overwritten. " + timeHelp,
 		Schema: schema(`{
 			"uid":{"type":"string"},
 			"title":{"type":"string"},
@@ -145,7 +147,8 @@ func (s *Service) updateTool() agent.Tool {
 			"location":{"type":"string"},
 			"notes":{"type":"string"},
 			"rrule":{"type":"string"},
-			"instance":{"type":"string","description":"For a repeating event: the instance value of the occurrence being changed."}}`, "uid"),
+			"instance":{"type":"string","description":"For a repeating event: the instance value of the occurrence being changed."},
+			"version":{"type":"string","description":"The version shown with the event in calendar_events."}}`, "uid"),
 		Effect:  agent.EffectExternal,
 		Label:   "Updating your calendar",
 		Timeout: toolTimeout,
@@ -164,6 +167,7 @@ func (s *Service) updateTool() agent.Tool {
 			if a.Instance != nil {
 				p.Instance, _ = json.Marshal(*a.Instance)
 			}
+			p.Version = a.Version
 			if a.RRule != nil {
 				p.RRule, _ = json.Marshal(*a.RRule)
 			}
@@ -373,6 +377,9 @@ func describe(o occurrence, loc *time.Location) string {
 		line += " (repeats: " + *o.RRule + ")"
 		if o.Instance != nil {
 			line += " [instance " + *o.Instance + "]"
+		}
+		if o.Version != "" {
+			line += " [version " + o.Version + "]"
 		}
 	}
 	if o.CreatedByHekate {

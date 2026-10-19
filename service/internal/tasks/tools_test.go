@@ -3,8 +3,10 @@ package tasks
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/loafykitten/hekate/service/internal/agent"
 )
@@ -190,5 +192,32 @@ func TestToolUpdateCompleteDelete(t *testing.T) {
 		if _, err := run(t, f.svc, c.tool, c.args); err == nil {
 			t.Errorf("%s %s accepted", c.tool, c.args)
 		}
+	}
+}
+
+// The occurrence she saw was completed elsewhere before the tool ran: the
+// tool must not complete the next one too.
+func TestCompleteToolUsesTheSeenOccurrence(t *testing.T) {
+	f := newFixture(t)
+	f.setNow(time.Date(2026, 10, 19, 8, 0, 0, 0, f.svc.loc))
+	task := mustCreate(t, f.svc, NewTask{Title: "Recycling", Due: "2026-10-19", RRule: "FREQ=DAILY"})
+	id, _ := strconv.ParseInt(task.ID, 10, 64)
+	seen := *task.Due
+	if _, err := f.svc.CompleteOccurrence(t.Context(), id, &seen); err != nil { // the menu, first
+		t.Fatal(err)
+	}
+	var tool agent.Tool
+	for _, tl := range f.svc.Tools() {
+		if tl.Name == "task_complete" {
+			tool = tl
+		}
+	}
+	res, err := tool.Run(t.Context(), json.RawMessage(`{"id":"`+task.ID+`","due":"`+seen+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := f.svc.Get(t.Context(), id)
+	if got.Due == nil || *got.Due != "2026-10-20" || !strings.Contains(res.Content, "already checked off") {
+		t.Errorf("due = %v, content = %q; want 2026-10-20 and a note that it was already done", got.Due, res.Content)
 	}
 }

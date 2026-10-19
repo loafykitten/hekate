@@ -587,3 +587,34 @@ func TestIntegrationStaleVersionRefused(t *testing.T) {
 		t.Errorf("stale edit: err = %v, want a conflict", err)
 	}
 }
+
+// A spoken edit carries the version it saw: if the series was changed in
+// between (here shifted by one day, so the seen occurrence still exists), the
+// edit is refused rather than shifting it again.
+func TestIntegrationToolStaleVersionRefused(t *testing.T) {
+	env := integEnv(t)
+	ctx := context.Background()
+	s := env.service(t, uniqueName(), nil, &changes{}, testNow)
+	tools := map[string]agent.Tool{}
+	for _, tl := range s.Tools() {
+		tools[tl.Name] = tl
+	}
+	ev, err := s.Create(ctx, EventInput{Title: "Stretch", Start: "2026-10-19T09:00", RRule: "FREQ=DAILY"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := tools["calendar_events"].Run(ctx, json.RawMessage(`{"from":"2026-10-20","to":"2026-10-21"}`))
+	if err != nil || !strings.Contains(res.Content, "[version "+ev.Version+"]") {
+		t.Fatalf("listing must show the version: %q %v", res.Content, err)
+	}
+	// Meanwhile, another editor moves the series a day later.
+	inst, _ := json.Marshal("2026-10-19T09:00:00-05:00")
+	start := "2026-10-20T09:00"
+	if _, err := s.Update(ctx, ev.UID, EventPatch{Instance: inst, Start: &start, Version: &ev.Version}, false); err != nil {
+		t.Fatal(err)
+	}
+	_, err = tools["event_update"].Run(ctx, json.RawMessage(`{"uid":"`+ev.UID+`","instance":"2026-10-20T09:00:00-05:00","start":"2026-10-21T09:00","version":"`+ev.Version+`"}`))
+	if err == nil || !strings.Contains(err.Error(), "changed elsewhere") {
+		t.Errorf("stale spoken edit: err = %v, want a conflict", err)
+	}
+}

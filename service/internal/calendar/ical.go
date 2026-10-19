@@ -560,7 +560,14 @@ func (s *series) applyUpdate(sp spec, resched bool, loc *time.Location, now time
 		saved[ical.PropDateTimeEnd] = m.c.Props[ical.PropDateTimeEnd]
 		saved[ical.PropDuration] = m.c.Props[ical.PropDuration]
 	}
-	fillEvent(m.c, sp, loc, now)
+	// Times are written in the series' own zone (another client may have
+	// written it in UTC): the edit was translated in that zone, and writing it
+	// in ours would move its later occurrences across DST.
+	zone := loc
+	if m.loc != nil {
+		zone = m.loc
+	}
+	fillEvent(m.c, sp, zone, now)
 	for name, props := range saved {
 		if props == nil {
 			delete(m.c.Props, name)

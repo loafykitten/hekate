@@ -22,9 +22,10 @@ export interface CharacterRig {
   // Outlines are drawn by OutlineEffect, styled per mesh (null = no outline; fallback covers
   // unlisted meshes).
   outline: { byMesh: Record<string, OutlineStyle | null>; fallback: OutlineStyle | null };
-  // Looping idle, a looping clip to play while speaking, one-shot gestures, and which clips
-  // move the head enough that the procedural head layer should back off.
-  clips: { idle?: string; talk?: string; gestures: string[]; headDriven: string[] };
+  // Looping idle, a looping clip to play while speaking, one-shot gestures, quiet one-shots for
+  // idle moments (fidgets), and which clips move the head enough that the procedural head layer
+  // should back off.
+  clips: { idle?: string; talk?: string; gestures: string[]; fidgets: string[]; headDriven: string[] };
   // chinLift (radians): how far to raise the head while speaking, for idles that look down.
   procedural: { spine?: string; tail: string[]; ears: string[]; chinLift: number };
 }
@@ -73,6 +74,9 @@ const _q = new THREE.Quaternion();
 const GESTURE_IN = 0.5;
 const GESTURE_OUT = 0.6;
 const LOOP_FADE = 0.7;
+// Seconds of quiet between idle variations.
+const FIDGET_GAP_MIN = 25;
+const FIDGET_GAP_MAX = 60;
 
 type Pose = Map<string, THREE.Quaternion>;
 
@@ -125,7 +129,12 @@ export class Character {
   private overlaid = new Set<string>();
   private loopAction?: THREE.AnimationAction; // idle or talk, whichever is the base right now
   // fadeOut: return fade length; the return starts that long before the clip ends.
-  private gesture?: { action: THREE.AnimationAction; headDriven: boolean; fadeOut: number };
+  private gesture?: { action: THREE.AnimationAction; headDriven: boolean; fadeOut: number; fidget: boolean };
+  // Idle variations: while the conversation is idle, now and then a quiet clip (shifting weight,
+  // a glance aside) so she doesn't stand frozen. The conversation turns this on and off.
+  fidgets = false;
+  private nextFidget?: number;
+  private lastFidget?: string;
   // Our own crossfader. Each fade snapshots every action's current weight and interpolates the
   // whole set toward the target, so weights always sum to 1 and outgoing actions only decrease.
   // three's crossFadeTo assumes the outgoing action is at full weight, which pops when a fade is
@@ -190,6 +199,16 @@ export class Character {
     this.mixer.addEventListener("finished", (e) => {
       if (this.gesture && e.action === this.gesture.action) this.endGesture();
     });
+  }
+
+  // A character over a scene that's already loaded (tests build tiny ones).
+  static fromScene(root: THREE.Object3D, animations: THREE.AnimationClip[], rig: CharacterRig): Character {
+    return new Character(root, animations, rig);
+  }
+
+  // The one-shot playing now (a gesture or a fidget), if any.
+  get playing(): string | undefined {
+    return this.gesture?.action.getClip().name;
   }
 
   static async load(url: string, rig: CharacterRig): Promise<Character> {
@@ -299,16 +318,40 @@ export class Character {
   // One-shot gesture over the current loop, then back to whichever loop fits by then.
   // Asking for the gesture that's already playing is a no-op rather than a snap back to frame 0.
   playGesture(name: string): boolean {
+    return this.playOneShot(name, false);
+  }
+
+  private playOneShot(name: string, fidget: boolean): boolean {
     const clip = this.clip(name);
-    if (!clip || !this.rig.clips.gestures.includes(name)) return false;
+    if (!clip || !(fidget ? this.rig.clips.fidgets : this.rig.clips.gestures).includes(name)) return false;
     if (this.gesture?.action.getClip().name === name) return true;
     const action = this.freshGestureAction(clip);
     if (this.blend.has(action)) this.blend.delete(action); // rare double re-trigger: restart it from zero
     // Short clips get proportionally shorter fades so they still play visibly.
     const fade = (max: number) => Math.min(max, clip.duration / 3);
     this.fadeTo(action, fade(GESTURE_IN));
-    this.gesture = { action, headDriven: this.rig.clips.headDriven.includes(name), fadeOut: fade(GESTURE_OUT) };
+    this.gesture = { action, headDriven: this.rig.clips.headDriven.includes(name), fadeOut: fade(GESTURE_OUT), fidget };
     return true;
+  }
+
+  // Picks the next idle variation once she has been quiet long enough. Anything else happening
+  // (speech, a gesture, the conversation leaving idle) restarts the wait; a fidget in progress
+  // gives way at once.
+  private updateFidgets(t: number) {
+    const names = this.rig.clips.fidgets.filter((n) => this.clip(n));
+    const quiet = this.fidgets && !this.speaking;
+    if (this.gesture?.fidget && !quiet) this.endGesture();
+    if (!quiet || this.gesture || names.length === 0) {
+      this.nextFidget = undefined;
+      return;
+    }
+    this.nextFidget ??= t + FIDGET_GAP_MIN + Math.random() * (FIDGET_GAP_MAX - FIDGET_GAP_MIN);
+    if (t < this.nextFidget) return;
+    const choices = names.length > 1 ? names.filter((n) => n !== this.lastFidget) : names;
+    const name = choices[Math.floor(Math.random() * choices.length)];
+    this.lastFidget = name;
+    this.nextFidget = undefined;
+    this.playOneShot(name, true);
   }
 
   private endGesture() {
@@ -373,6 +416,7 @@ export class Character {
     // Head back to the loop while the gesture is still settling, not after it has frozen.
     const g = this.gesture;
     if (g && g.action.time >= g.action.getClip().duration - g.fadeOut) this.endGesture();
+    this.updateFidgets(t);
     const loopName = this.loopAction?.getClip().name;
     const clipOwnsHead = this.gesture ? this.gesture.headDriven : !!loopName && this.rig.clips.headDriven.includes(loopName);
     const headTarget = clipOwnsHead ? 0.25 : 1;

@@ -106,6 +106,8 @@ for (const variant of ['desktop', 'phone']) {
   for (const clip of gltf.animations) {
     const spec = manifest.animations.find(a => a.name === clip.name);
     assert(spec);
+    assert.equal(typeof spec.idle_variation, 'boolean');
+    assert.equal(spec.idle_variation, ['look_away','relieved_sigh','weight_shift'].includes(clip.name));
     assert(Math.abs(clip.duration-spec.duration_seconds)<1e-5);
     for (const track of clip.tracks) {
       const parsed = THREE.PropertyBinding.parseTrackName(track.name);
@@ -123,21 +125,28 @@ for (const variant of ['desktop', 'phone']) {
     }
     const action=mixer.clipAction(clip);
     action.reset().setLoop(THREE.LoopOnce,1);action.clampWhenFinished=true;action.play();
-    const poses=[], contacts=[];let motion=0,maxSoleDrift=0,minSoleY=Infinity;
+    const poses=[], contacts=[];let motion=0,maxSoleDrift=0,minSoleY=Infinity,maxSoleDrop=0;
+    let firstHead, previousHead, headExcursion=0, headStep=0;
     for(let i=0;i<=Math.ceil(clip.duration*60);i++) {
       const t=Math.min(clip.duration,i/60);mixer.setTime(t);update();
+      const headQ=headBone.getWorldQuaternion(new THREE.Quaternion());
+      firstHead ??= headQ.clone();
+      headExcursion=Math.max(headExcursion,headQ.angleTo(firstHead));
+      if(previousHead) headStep=Math.max(headStep,headQ.angleTo(previousHead));
+      previousHead=headQ;
       const pose=bones.map(b=>[...b.position.toArray(),...b.quaternion.toArray()]);
       if(i===0 || t===clip.duration) poses.push(pose);
       if(i>0) for(let k=0;k<bones.length;k++) motion=Math.max(motion, ...pose[k].map((v,j)=>Math.abs(v-poses[0][k][j])));
       contacts.push(feet.map(b=>b.getWorldPosition(new THREE.Vector3())));
       for(const [m,index,restP] of soleSamples) {
-        const p=point(m,index);minSoleY=Math.min(minSoleY,p.y);maxSoleDrift=Math.max(maxSoleDrift,p.distanceTo(restP));
+        const p=point(m,index);maxSoleDrop=Math.max(maxSoleDrop,restP.y-p.y);minSoleY=Math.min(minSoleY,p.y);maxSoleDrift=Math.max(maxSoleDrift,p.distanceTo(restP));
       }
       for(const b of bones) assert(b.matrixWorld.elements.every(Number.isFinite));
     }
     let footDrift=0;
     for(const sample of contacts) for(let j=0;j<feet.length;j++) footDrift=Math.max(footDrift,sample[j].distanceTo(contacts[0][j]));
     assert(footDrift<.002, `${clip.name} foot drift ${footDrift}`);
+    assert(maxSoleDrop<.001, `${clip.name} sole drop ${maxSoleDrop}`);
     assert(maxSoleDrift<.003, `${clip.name} sole drift ${maxSoleDrift}`);
     if(spec.category!=='pose') assert(motion>.001, `${clip.name} must move`);
     const last=poses.at(-1);let seam=0;
@@ -148,7 +157,7 @@ for (const variant of ['desktop', 'phone']) {
     }
     for(let k=0;k<bones.length;k++) for(let j=0;j<7;j++) seam=Math.max(seam,Math.abs(last[k][j]-poses[0][k][j]));
     if(spec.loop) assert(seam<1e-5, `${clip.name} loop seam ${seam}`);
-    animationChecks[clip.name]={tracks:clip.tracks.length,duration_seconds:clip.duration,sampled_fps:60,max_bone_motion:motion,loop_seam_max_component:seam,foot_drift_m:footDrift,sole_drift_m:maxSoleDrift,minimum_sole_y_m:minSoleY,passed:true};
+    animationChecks[clip.name]={tracks:clip.tracks.length,duration_seconds:clip.duration,sampled_fps:60,head_excursion_degrees:THREE.MathUtils.radToDeg(headExcursion),max_head_step_degrees_at_60hz:THREE.MathUtils.radToDeg(headStep),max_bone_motion:motion,loop_seam_max_component:seam,foot_drift_m:footDrift,sole_drift_m:maxSoleDrift,minimum_sole_y_m:minSoleY,max_sole_drop_from_rest_m:maxSoleDrop,passed:true};
     mixer.stopAllAction();update();
   }
   console.warn=originalWarn;

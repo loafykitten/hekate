@@ -138,6 +138,9 @@ export class Stage {
   }
 
   // Undefined until load() resolves.
+  // Set by the conversation: nothing is happening, so she may fidget now and then.
+  idle = false;
+
   get character(): Character | undefined {
     return this._character;
   }
@@ -223,6 +226,7 @@ export class Stage {
       const target = mouthTarget(this.speech.level(), this.params.forcedMouth);
       character.mouthOpen = smoothMouth(character.mouthOpen, target, dt);
       character.speaking = this.speech.speaking || this.params.forcedMouth !== undefined;
+      character.fidgets = this.idle && !this.params.gesture;
       character.update(dt);
       for (const m of this.params.pinnedMorphs) character.setMorph(m.name, m.weight);
       this.bubble?.update(character.headScreenAnchor(this.camera, this.anchor));

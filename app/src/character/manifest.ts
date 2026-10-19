@@ -23,6 +23,8 @@ export interface Manifest {
     loop: boolean;
     category?: "idle" | "talk" | "gesture" | "pose";
     head_motion?: "strong" | "moderate" | "none";
+    // A quiet one-shot that suits idle moments (shifting weight, a glance aside).
+    idle_variation?: boolean;
   }[];
 }
 
@@ -46,6 +48,7 @@ function clipsOf(animations: NonNullable<Manifest["animations"]>): CharacterRig[
     idle: idle?.name,
     talk: byCategory("talk").find((a) => a.loop)?.name,
     gestures: byCategory("gesture").map((a) => a.name),
+    fidgets: animations.filter((a) => a.idle_variation && !a.loop).map((a) => a.name),
     headDriven: animations.filter(strong).map((a) => a.name),
   };
 }

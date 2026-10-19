@@ -598,6 +598,7 @@ export class Conversation {
   }
 
   private emit() {
+    if (this.stage) this.stage.idle = this.phase() === "idle";
     const next: ConversationState = {
       ...this.state,
       connection: this.client.status,

@@ -200,3 +200,12 @@ func TestRuleLimits(t *testing.T) {
 		t.Errorf("next after COUNT ran out = %v", next)
 	}
 }
+
+// BYEASTER is an rrule-go extension it doesn't bounds-check (an out-of-range
+// value panics in the iterator), so it's refused before it can be stored.
+func TestParseRuleRefusesByEaster(t *testing.T) {
+	start := time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC)
+	if _, err := ParseRule("FREQ=YEARLY;BYEASTER=1000", start, time.UTC); err == nil {
+		t.Error("BYEASTER accepted")
+	}
+}

@@ -2,7 +2,7 @@ import { useId, useState } from "react";
 import { useCreateTask, useDeleteTask, useNow, usePatchTask, useSetTaskDone, useTaskLists, useTasks } from "../../data/hooks";
 import type { Task } from "../../data/model";
 import type { TaskFields } from "../../data/rest";
-import { fromDateTimeInputs, isDateOnly, toDateInput, toMs, toTimeInput } from "../../data/time";
+import { dueFromInputs, isDateOnly, toDateInput, toMs, toTimeInput } from "../../data/time";
 import { PlusIcon, TrashIcon } from "../icons";
 import { Button, Chip, ConfirmButton, StateMessage, SectionTitle, SelectField, Switch, TextArea, TextField } from "../kit/kit";
 import { useAutoFocus } from "../kit/useAutoFocus";
@@ -19,11 +19,6 @@ const PRIORITIES = [
 ];
 
 // What a due value looks like in the date and time inputs, and back.
-function dueFromInputs(date: string, time: string): string | null {
-  if (!date) return null;
-  return time ? fromDateTimeInputs(date, time) || null : date;
-}
-
 function sameDue(a: string | null, b: string | null): boolean {
   if (a === b) return true;
   if (!a || !b || isDateOnly(a) || isDateOnly(b)) return false;
@@ -55,7 +50,7 @@ function TaskEditor({ task, lists, busy, onSave, onCancel, onDelete, deleting }:
   const valid = title.trim() !== "" && list.trim() !== "" && !needsDate;
 
   function save() {
-    const due = dueFromInputs(date, time);
+    const due = dueFromInputs(date, time, base.due);
     const fields: TaskFields = {};
     if (title.trim() !== base.title) fields.title = title.trim();
     if (notes !== base.notes) fields.notes = notes;

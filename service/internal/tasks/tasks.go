@@ -388,7 +388,7 @@ func (s *Service) withRule(due *when.Value, rule string, now time.Time) (*when.V
 	if err != nil {
 		return nil, "", httpx.BadRequest("rrule: %s", err)
 	}
-	timed := ruleHasTimeOfDay(rule)
+	timed := ruleHasTimeOfDay(r.String()) // canonical: no RRULE: prefix, upper case
 	if due != nil && due.DateOnly && timed {
 		// A date can't hold the rule's time, so completing would land on the same
 		// occurrence again.

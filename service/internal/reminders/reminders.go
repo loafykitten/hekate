@@ -422,7 +422,25 @@ func (s *Service) Done(ctx context.Context, id int64) (Reminder, error) {
 		return Reminder{}, err
 	}
 	if cur.RRule != nil && cur.Status == StatusScheduled {
-		return cur, nil
+		// Done on a repeating reminder acknowledges what is pending. While it is
+		// snoozed (at is before start, its next regular occurrence), that is the
+		// snooze: drop it and resume the schedule. Otherwise there is nothing to
+		// acknowledge, and the next occurrence stays.
+		var at, start string
+		if err := s.db.QueryRowContext(ctx, `SELECT at, start FROM reminders WHERE id = ?`, id).Scan(&at, &start); err != nil {
+			return Reminder{}, fmt.Errorf("load reminder %d: %w", id, err)
+		}
+		atT, err1 := time.Parse(time.RFC3339, at)
+		startT, err2 := time.Parse(time.RFC3339, start)
+		if err1 != nil || err2 != nil || !startT.After(atT) {
+			return cur, nil
+		}
+		if _, err := s.db.ExecContext(ctx, `UPDATE reminders SET at = start, updated_at = ? WHERE id = ?`,
+			stamp(s.now()), id); err != nil {
+			return Reminder{}, fmt.Errorf("finish snooze %d: %w", id, err)
+		}
+		s.changed()
+		return s.Get(ctx, id)
 	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE reminders SET status = 'done', updated_at = ? WHERE id = ?`,
 		stamp(s.now()), id); err != nil {

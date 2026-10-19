@@ -355,3 +355,12 @@ export function timestampFromInputs(date: string, time: string, original?: strin
   if (original && date === toDateInput(original, z) && time === toTimeInput(original, z)) return original;
   return fromDateTimeInputs(date, time, z);
 }
+
+// A task's due from its date/time inputs: null without a date, a date without a time, otherwise
+// a timestamp (the original one, exactly, when the inputs still show it).
+export function dueFromInputs(date: string, time: string, original?: string | null, z: Zone = {}): string | null {
+  if (!date) return null;
+  if (!time) return date;
+  const timed = original && !isDateOnly(original) ? original : undefined;
+  return timestampFromInputs(date, time, timed, z) || null;
+}

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/emersion/go-ical"
+
+	"github.com/teambition/rrule-go"
 )
 
 func chicago(t *testing.T) *time.Location {
@@ -731,5 +733,50 @@ func TestMoveAgainstRuleNegativeMonthDay(t *testing.T) {
 	}
 	if err := checkMoveAgainstRule(at("2026-10-31T09:00"), at("2026-10-30T09:00"), "FREQ=MONTHLY;BYMONTHDAY=-1", loc); err == nil {
 		t.Error("move off the last day accepted")
+	}
+}
+
+// A rule rrule-go can't evaluate is an error for that event, never a crash.
+func TestIterateRuleRecoversFromPanics(t *testing.T) {
+	if _, err := validateRRule("FREQ=YEARLY;BYEASTER=1000"); err == nil {
+		t.Error("BYEASTER accepted")
+	}
+	opt, err := rrule.StrToROption("FREQ=YEARLY;BYEASTER=1000")
+	if err != nil {
+		t.Skip("rrule-go no longer parses BYEASTER")
+	}
+	opt.Dtstart = time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
+	r, err := rrule.NewRRule(*opt)
+	if err != nil {
+		t.Skip("rrule-go now validates BYEASTER")
+	}
+	err = iterateRule(r, opt.Dtstart, opt.Dtstart.AddDate(2, 0, 0), func(time.Time) {})
+	t.Logf("iterateRule: %v", err) // the point is that it returned
+}
+
+// Moving an occurrence across a DST change keeps wall-clock times: the review
+// case moves the Nov 2 09:00 (CST) occurrence to Oct 26 09:00 (CDT); the
+// series must stay at 09:00 and start Oct 12, not at 08:00.
+func TestAnchorToSeriesKeepsWallClockAcrossDST(t *testing.T) {
+	loc, _ := time.LoadLocation("America/Chicago")
+	at := func(s string) time.Time { v, _ := time.ParseInLocation("2006-01-02T15:04", s, loc); return v }
+	master := &component{start: at("2026-10-19T09:00"), end: at("2026-10-19T10:00")}
+	str := func(s string) *string { return &s }
+	for _, tt := range []struct {
+		name, instance, start, end, wantStart, wantEnd string
+	}{
+		{"fall back", "2026-11-02T09:00:00-06:00", "2026-10-26T09:00", "2026-10-26T10:00", "2026-10-12T09:00:00-05:00", "2026-10-12T10:00:00-05:00"},
+		{"spring forward", "2027-03-15T09:00:00-05:00", "2027-03-08T09:30", "2027-03-08T10:30", "2026-10-12T09:30:00-05:00", "2026-10-12T10:30:00-05:00"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			inst, _ := json.Marshal(tt.instance)
+			p := EventPatch{Instance: inst, Start: str(tt.start), End: str(tt.end)}
+			if err := anchorToSeries(&p, master, true, loc); err != nil {
+				t.Fatal(err)
+			}
+			if *p.Start != tt.wantStart || *p.End != tt.wantEnd {
+				t.Errorf("start, end = %s, %s; want %s, %s", *p.Start, *p.End, tt.wantStart, tt.wantEnd)
+			}
+		})
 	}
 }

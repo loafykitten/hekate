@@ -613,3 +613,28 @@ func TestSpokenSnoozeKeepsTheRepeatAnchor(t *testing.T) {
 		t.Errorf("next regular occurrence = %s, want 2026-10-21T09:00:00-05:00", got.At)
 	}
 }
+
+// Done during a snooze of a repeating reminder drops the snooze and keeps the
+// regular schedule.
+func TestDoneDuringSnoozeResumesSchedule(t *testing.T) {
+	f := newFixture(t)
+	r := f.create(t, "Pills", "2026-10-20T09:00", "FREQ=DAILY")
+	f.clock.set(f.at("2026-10-20T09:00"))
+	if n, err := f.svc.fireDue(t.Context(), 0); err != nil || n != 1 {
+		t.Fatalf("fire: %d %v", n, err)
+	}
+	if _, err := f.svc.Snooze(t.Context(), mustID(r.ID), 10); err != nil {
+		t.Fatal(err)
+	}
+	got, err := f.svc.Done(t.Context(), mustID(r.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != StatusScheduled || got.At != "2026-10-21T09:00:00-05:00" {
+		t.Errorf("after Done = %+v, want the next regular occurrence", got)
+	}
+	f.clock.set(f.at("2026-10-20T09:10"))
+	if n, _ := f.svc.fireDue(t.Context(), 0); n != 0 {
+		t.Errorf("the acknowledged snooze still fired")
+	}
+}

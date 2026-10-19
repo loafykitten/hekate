@@ -401,19 +401,8 @@ func (s *series) masterStarts(from, to time.Time) ([]time.Time, error) {
 		if err != nil {
 			return nil, fmt.Errorf("RRULE %q: %w", rp.Value, err)
 		}
-		// Iterate lazily: Between would build every occurrence before any limit
-		// applied. Both the kept instances and the steps to reach the range are
-		// capped, so no stored rule can run away with memory or time.
-		next := rule.Iterator()
-		for n, steps := 0, 0; n < maxInstances && steps < maxSteps; steps++ {
-			t, ok := next()
-			if !ok || t.After(to) {
-				break
-			}
-			if !t.Before(lo) {
-				add(t)
-				n++
-			}
+		if err := iterateRule(rule, lo, to, add); err != nil {
+			return nil, fmt.Errorf("RRULE %q: %w", rp.Value, err)
 		}
 	}
 
@@ -620,11 +609,38 @@ func validateRRule(v string) (string, error) {
 	return v, nil
 }
 
+// iterateRule calls add for occurrences in [lo, to]. It iterates lazily (Between
+// would build every occurrence before any limit applied), caps both the kept
+// instances and the steps to reach the range, and turns a panic inside
+// rrule-go into an error, so no stored rule can take the service down.
+func iterateRule(rule *rrule.RRule, lo, to time.Time, add func(time.Time)) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("cannot expand: %v", r)
+		}
+	}()
+	next := rule.Iterator()
+	for n, steps := 0, 0; n < maxInstances && steps < maxSteps; steps++ {
+		t, ok := next()
+		if !ok || t.After(to) {
+			break
+		}
+		if !t.Before(lo) {
+			add(t)
+			n++
+		}
+	}
+	return nil
+}
+
 // checkRuleDensity rejects rules that repeat more often than daily, or that use
 // BYHOUR/BYMINUTE/BYSECOND lists to pack more than maxPerDay times into a day.
 func checkRuleDensity(opt *rrule.ROption) error {
 	if opt.Freq > rrule.DAILY {
 		return errors.New("repeating more often than daily is not supported")
+	}
+	if len(opt.Byeaster) > 0 {
+		return errors.New("BYEASTER is not supported") // an unchecked rrule-go extension that can panic
 	}
 	perDay := max(1, len(opt.Byhour)) * max(1, len(opt.Byminute)) * max(1, len(opt.Bysecond))
 	if perDay > maxPerDay {

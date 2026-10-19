@@ -513,13 +513,18 @@ func anchorToSeries(p *EventPatch, m *component, recurring bool, loc *time.Locat
 	if err != nil {
 		return badInput("instance: %v", err)
 	}
-	// shift moves t by the distance from `from` to `to`: whole calendar days for
-	// dates (an all-day edit must not pick up a DST hour), elapsed time otherwise.
+	// shift moves t by the distance from `from` to `to` on the wall clock: whole
+	// calendar days plus the change in time of day, in the series' zone. Elapsed
+	// time would pick up a DST hour when the occurrence and the series' first
+	// date sit on different sides of a change.
 	shift := func(t, from, to time.Time, dateOnly bool) string {
+		days := civilDays(to, loc) - civilDays(from, loc)
 		if dateOnly {
-			return t.In(loc).AddDate(0, 0, civilDays(to, loc)-civilDays(from, loc)).Format(dateLayout)
+			return t.In(loc).AddDate(0, 0, days).Format(dateLayout)
 		}
-		return t.Add(to.Sub(from)).In(loc).Format(time.RFC3339)
+		x, f, tt := t.In(loc), from.In(loc), to.In(loc)
+		secs := clockSeconds(tt) - clockSeconds(f)
+		return time.Date(x.Year(), x.Month(), x.Day()+days, x.Hour(), x.Minute(), x.Second()+secs, x.Nanosecond(), loc).Format(time.RFC3339)
 	}
 	newStart, base := m.start, occ
 	if p.Start != nil {
@@ -543,6 +548,9 @@ func anchorToSeries(p *EventPatch, m *component, recurring bool, loc *time.Locat
 	}
 	return nil
 }
+
+// clockSeconds is the time of day of t (already in the right zone) in seconds.
+func clockSeconds(t time.Time) int { return t.Hour()*3600 + t.Minute()*60 + t.Second() }
 
 // civilDays counts calendar days since the epoch for t's date in loc.
 func civilDays(t time.Time, loc *time.Location) int {
@@ -623,8 +631,21 @@ func checkMoveAgainstRule(from, to time.Time, rule string, loc *time.Location) e
 	if err != nil {
 		return nil
 	}
-	if first := r.After(to.Add(-time.Second), true); !first.Equal(to) {
+	first, ok := firstAt(r, to)
+	if ok && !first.Equal(to) {
 		return badInput("this event repeats by its rule (%s), and the new start isn't one of its occurrences, so the other occurrences wouldn't move; change the repeat rule too", rule)
 	}
 	return nil
+}
+
+// firstAt is the rule's first occurrence at or after t. ok is false if rrule-go
+// panicked (it accepts some rules it can't evaluate); callers then let the
+// edit through rather than block it on our check.
+func firstAt(r *rrule.RRule, t time.Time) (first time.Time, ok bool) {
+	defer func() {
+		if recover() != nil {
+			first, ok = time.Time{}, false
+		}
+	}()
+	return r.After(t.Add(-time.Second), true), true
 }

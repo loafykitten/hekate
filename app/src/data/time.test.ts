@@ -27,6 +27,7 @@ import {
   resolveZone,
   setZone,
   timestampFromInputs,
+  dueFromInputs,
 } from "./time";
 
 const NY = { tz: "America/New_York", locale: "en-US" };
@@ -261,5 +262,18 @@ describe("groupEventsByDay: long events", () => {
     const e = { uid: "u", instance: null, title: "Residency", start: "2026-09-01", end: "2026-11-02", all_day: true, location: "", notes: "", rrule: null, created_by_hekate: false } as CalendarEvent;
     const groups = groupEventsByDay([e], { tz: "America/Chicago" }, { from: "2026-10-19", to: "2026-10-19" });
     expect(groups.map((g) => g.key)).toEqual(["2026-10-19"]);
+  });
+});
+
+describe("dueFromInputs", () => {
+  const z = { tz: "America/Chicago" };
+  it("keeps an untouched timed due exactly, including the repeated 01:30", () => {
+    expect(dueFromInputs("2026-11-01", "01:30", "2026-11-01T01:30:00-06:00", z)).toBe("2026-11-01T01:30:00-06:00");
+    expect(dueFromInputs("2026-10-20", "09:00", "2026-10-20T09:00:30-05:00", z)).toBe("2026-10-20T09:00:30-05:00");
+  });
+  it("handles dates, no date, and changed times", () => {
+    expect(dueFromInputs("", "", "2026-10-20", z)).toBeNull();
+    expect(dueFromInputs("2026-10-21", "", "2026-10-20", z)).toBe("2026-10-21");
+    expect(toMs(dueFromInputs("2026-10-20", "10:00", "2026-10-20T09:00:00-05:00", z) ?? "")).toBe(Date.parse("2026-10-20T10:00:00-05:00"));
   });
 });

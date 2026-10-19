@@ -55,6 +55,11 @@ func ParseRule(rule string, start time.Time, loc *time.Location) (*Rule, error) 
 	if opt.Freq == rrule.HOURLY && (len(opt.Byhour) > 0 || len(opt.Byminute) > 0 || len(opt.Bysecond) > 0) {
 		return nil, fmt.Errorf("repeat rule %q can't combine hourly repeats with BYHOUR, BYMINUTE or BYSECOND; use FREQ=DAILY with BYHOUR for times of day", rule)
 	}
+	if len(opt.Byeaster) > 0 {
+		// A non-standard rrule-go extension it doesn't bounds-check: an out-of-range
+		// value panics inside the iterator.
+		return nil, fmt.Errorf("repeat rule %q uses BYEASTER, which isn't supported", rule)
+	}
 	if perDay := max(1, len(opt.Byhour)) * max(1, len(opt.Byminute)) * max(1, len(opt.Bysecond)); perDay > maxPerDay {
 		return nil, fmt.Errorf("repeat rule %q fires %d times a day; at most %d are supported", rule, perDay, maxPerDay)
 	}
@@ -86,7 +91,14 @@ func (r *Rule) First(t time.Time) (time.Time, bool) {
 // walk returns the first occurrence for which done is true, stepping at most
 // maxSteps occurrences so no rule can keep the caller (which may hold a lock)
 // busy indefinitely. Running out of steps counts as the series having ended.
-func (r *Rule) walk(done func(time.Time) bool) (time.Time, bool) {
+func (r *Rule) walk(done func(time.Time) bool) (o time.Time, ok bool) {
+	// rrule-go can panic on rules it accepted; a stored rule must never take
+	// the service down, so a panic counts as the series having ended.
+	defer func() {
+		if recover() != nil {
+			o, ok = time.Time{}, false
+		}
+	}()
 	next := r.r.Iterator()
 	for range maxSteps {
 		o, ok := next()
@@ -120,9 +132,9 @@ func (r *Rule) Rebase(next time.Time) string {
 }
 
 // countBefore counts occurrences strictly before t, walking at most maxSteps.
-func (r *Rule) countBefore(t time.Time) int {
+func (r *Rule) countBefore(t time.Time) (n int) {
+	defer func() { _ = recover() }() // see walk
 	next := r.r.Iterator()
-	n := 0
 	for range maxSteps {
 		o, ok := next()
 		if !ok || !o.Before(t) {

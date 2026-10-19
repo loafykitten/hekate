@@ -433,3 +433,17 @@ func TestTimeOfDayRuleKeepsTheTime(t *testing.T) {
 		t.Error("date-only due with a time-of-day rule accepted")
 	}
 }
+
+// The time-of-day check reads the canonical rule, so an RRULE: prefix or lower
+// case can't hide an hourly rule.
+func TestTimedRuleDetectionUsesCanonicalRule(t *testing.T) {
+	f := newFixture(t)
+	f.setNow(time.Date(2026, 10, 20, 8, 30, 0, 0, f.svc.loc))
+	task := mustCreate(t, f.svc, NewTask{Title: "Water", RRule: "rrule:freq=hourly;interval=2"})
+	if task.Due == nil || len(*task.Due) == len("2026-10-20") {
+		t.Errorf("due = %v, want a timed due for an hourly rule", task.Due)
+	}
+	if _, err := f.svc.Create(t.Context(), NewTask{Title: "x", Due: "2026-10-21", RRule: "RRULE:FREQ=HOURLY"}); err == nil {
+		t.Error("date-only due with a prefixed hourly rule accepted")
+	}
+}

@@ -2,7 +2,7 @@
 # Shared setup for the change worker. Sourced, not run. See docs/DEVELOPMENT.md.
 
 worker_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-repo="$(git -C "$worker_dir" rev-parse --show-toplevel)"
+repo="${CHANGE_WORKER_REPO:-$(git -C "$worker_dir" rev-parse --show-toplevel)}" # tests point it at a clone
 config="${XDG_CONFIG_HOME:-$HOME/.config}/hekate/change-worker.env"
 state="${XDG_STATE_HOME:-$HOME/.local/state}/hekate-change-worker"
 
@@ -24,4 +24,20 @@ api() {
   local args=(-fsS --max-time 30 -X "$1" -H 'Content-Type: application/json')
   [[ $# -ge 3 ]] && args+=(--data-binary "$3")
   curl "${args[@]}" "$HEKATE_URL$2"
+}
+
+# settle_prs BRANCH: closes any open PR from BRANCH and confirms GitHub shows none open. Prints
+# the URL of a merged PR from it, if there is one. Fails when GitHub can't be reached or a PR
+# stays open; the caller then leaves the change working so watch.sh tries again.
+settle_prs() {
+  local branch="$1" prs n
+  prs="$(cd "$repo" && gh pr list --head "$branch" --state all --json number,state,url)" || return 1
+  for n in $(jq -r '.[] | select(.state == "OPEN") | .number' <<<"$prs"); do
+    # A fixed comment: the PR is public, and the reason may not be.
+    (cd "$repo" && gh pr close "$n" --delete-branch \
+      --comment "Closed by the change worker without merging; the outcome is recorded in Hekate.") >&2 || return 1
+  done
+  prs="$(cd "$repo" && gh pr list --head "$branch" --state all --json number,state,url)" || return 1
+  jq -e 'all(.[]; .state != "OPEN")' <<<"$prs" >/dev/null || return 1
+  jq -r '[.[] | select(.state == "MERGED")][0].url // empty' <<<"$prs"
 }

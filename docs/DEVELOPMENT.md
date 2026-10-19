@@ -96,6 +96,10 @@ logged in, then run `scripts/change-worker/install.sh` (`--remove` to uninstall)
 per-change transcripts are in `~/.local/state/hekate-change-worker/`. The launchd job runs the
 scripts from this checkout, so keep it on `main`.
 
+After changing the worker, run `scripts/change-worker/test.sh`. It runs each outcome (merged,
+rejected, a PR that won't close, GitHub down, a run cut off) against a real local Hekate with
+fake `gh` and `claude`, so nothing reaches GitHub.
+
 ## Secrets and private details
 
 The repo is public. Never commit:

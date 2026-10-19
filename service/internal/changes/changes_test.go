@@ -177,6 +177,28 @@ func TestProposeOutlivesACancelledTurn(t *testing.T) {
 	}
 }
 
+func TestProposeIsAllOrNothing(t *testing.T) {
+	f := newFixture(t)
+	db := f.store.DB()
+	// Make the last write, the link, fail.
+	if _, err := db.Exec(`CREATE TRIGGER fail_link BEFORE UPDATE OF approval_id ON change_requests
+		BEGIN SELECT RAISE(ABORT, 'link failed'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.svc.Propose(t.Context(), subjectRules); err == nil {
+		t.Fatal("Propose succeeded with a failing link")
+	}
+	var changes, pending int
+	_ = db.QueryRow(`SELECT count(*) FROM change_requests`).Scan(&changes)
+	_ = db.QueryRow(`SELECT count(*) FROM approvals`).Scan(&pending)
+	if changes != 0 || pending != 0 {
+		t.Errorf("after a failed proposal: %d changes, %d approvals left; want none", changes, pending)
+	}
+	if list, err := f.appr.List(t.Context(), approvals.ListPending); err != nil || len(list) != 0 {
+		t.Errorf("pending approvals = %+v, %v", list, err)
+	}
+}
+
 func TestLifecycle(t *testing.T) {
 	f := newFixture(t)
 	c, a := f.propose(t, subjectRules)

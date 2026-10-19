@@ -2,6 +2,7 @@ package approvals
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -682,5 +683,44 @@ func TestRestartFailsInterruptedActions(t *testing.T) {
 	got, err := f.svc.Get(t.Context(), id)
 	if err != nil || got.Status != StatusFailed || str(got.Result) != interruptedResult {
 		t.Fatalf("after restart = %+v, %v", got, err)
+	}
+}
+
+func TestPrepare(t *testing.T) {
+	f := newFixture(t)
+	db := f.svc.db
+	begin := func() *sql.Tx {
+		tx, err := db.BeginTx(t.Context(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tx
+	}
+	req := Request{Kind: "mail_trash", Title: "Move them?", Payload: json.RawMessage(`{"n":1}`)}
+
+	tx := begin()
+	if _, _, err := f.svc.Prepare(t.Context(), tx, Request{Kind: "mail_trash", Title: "x", Scope: "from:@example.com"}); err == nil {
+		t.Error("prepared a request with a scope")
+	}
+	// Rolled back: nothing stored, nothing announced.
+	if _, _, err := f.svc.Prepare(t.Context(), tx, req); err != nil {
+		t.Fatal(err)
+	}
+	_ = tx.Rollback()
+	if list, _ := f.svc.List(t.Context(), ListPending); len(list) != 0 || len(f.bcast.msgs) != 0 {
+		t.Fatalf("after rollback: %d pending, %d broadcasts", len(list), len(f.bcast.msgs))
+	}
+
+	tx = begin()
+	a, announce, err := f.svc.Prepare(t.Context(), tx, req)
+	if err != nil || a.Status != StatusPending {
+		t.Fatalf("Prepare = %+v, %v", a, err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	announce()
+	if list, _ := f.svc.List(t.Context(), ListPending); len(list) != 1 || len(f.bcast.msgs) != 1 {
+		t.Errorf("after commit: %d pending, %d broadcasts", len(list), len(f.bcast.msgs))
 	}
 }

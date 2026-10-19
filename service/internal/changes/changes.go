@@ -313,12 +313,16 @@ func (s *Service) Propose(ctx context.Context, p Proposal) (ChangeRequest, appro
 		detail = fmt.Sprintf("Revises #%d.\n\n%s", p.Revises, detail)
 	}
 
-	// From here the row, its approval and the link between them are written as
-	// one: an interrupted turn must not leave an approval with no change behind
-	// it, or a change whose approval it can't see.
-	ctx = context.WithoutCancel(ctx)
+	// The row, its approval and the link between them commit together, and the
+	// approval is announced only after: the owner never sees a card without a
+	// change behind it, nor a change its card can't settle.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ChangeRequest{}, approvals.Approval{}, fmt.Errorf("store change request: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // a no-op after Commit
 	now := stamp(s.now())
-	res, err := s.db.ExecContext(ctx, `INSERT INTO change_requests (title, what, why, kind, revises, created_at, updated_at)
+	res, err := tx.ExecContext(ctx, `INSERT INTO change_requests (title, what, why, kind, revises, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`, p.Title, p.What, p.Why, p.Kind, revises, now, now)
 	if err != nil {
 		return ChangeRequest{}, approvals.Approval{}, fmt.Errorf("store change request: %w", err)
@@ -328,7 +332,7 @@ func (s *Service) Propose(ctx context.Context, p Proposal) (ChangeRequest, appro
 		return ChangeRequest{}, approvals.Approval{}, fmt.Errorf("store change request: %w", err)
 	}
 	payload, _ := json.Marshal(queuePayload{ID: id}) // plain struct: cannot fail
-	a, err := s.appr.Request(ctx, approvals.Request{
+	a, announce, err := s.appr.Prepare(ctx, tx, approvals.Request{
 		Kind:    KindApproval,
 		Title:   "Build: " + p.Title + "?",
 		Detail:  detail,
@@ -336,16 +340,17 @@ func (s *Service) Propose(ctx context.Context, p Proposal) (ChangeRequest, appro
 		TTL:     proposalTTL,
 	})
 	if err != nil {
-		if _, derr := s.db.ExecContext(ctx, `DELETE FROM change_requests WHERE id = ?`, id); derr != nil {
-			s.log.Error("cannot remove a change request whose approval failed", "id", id, "error", derr)
-		}
 		return ChangeRequest{}, approvals.Approval{}, fmt.Errorf("ask to approve change request: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE change_requests SET approval_id = ? WHERE id = ?`, a.ID, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE change_requests SET approval_id = ? WHERE id = ?`, a.ID, id); err != nil {
 		return ChangeRequest{}, approvals.Approval{}, fmt.Errorf("link change request to its approval: %w", err)
 	}
+	if err := tx.Commit(); err != nil {
+		return ChangeRequest{}, approvals.Approval{}, fmt.Errorf("store change request: %w", err)
+	}
+	announce()
 	s.events.Invalidate(proto.DomainChanges)
-	c, err := s.Get(ctx, id)
+	c, err := s.Get(context.WithoutCancel(ctx), id)
 	return c, a, err
 }
 

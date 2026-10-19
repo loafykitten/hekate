@@ -56,6 +56,17 @@ describe("applyApproval", () => {
     expect(qc.getQueryData(keys.approval("1"))).toEqual(done);
   });
 
+  it("refreshes the change requests when a change request's approval changes", async () => {
+    const qc = new QueryClient();
+    qc.setQueryData(keys.changes, []);
+    applyApproval(qc, make("4", "denied", { kind: "change_request", note: "Not now." }));
+    expect(qc.getQueryState(keys.changes)?.isInvalidated).toBe(true);
+    const other = new QueryClient();
+    other.setQueryData(keys.changes, []);
+    applyApproval(other, make("5", "done"));
+    expect(other.getQueryState(keys.changes)?.isInvalidated).toBe(false);
+  });
+
   it("leaves lists nobody has loaded alone", () => {
     const qc = new QueryClient();
     applyApproval(qc, make("3"));

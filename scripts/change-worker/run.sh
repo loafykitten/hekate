@@ -22,20 +22,7 @@ on_exit() {
   local code=$?
   if [[ "$finished" == 0 ]]; then
     log "change $id: stopped during $step (exit $code)"
-    # Ask GitHub what really happened before reporting: the PR may have merged already.
-    local prs
-    if ! prs="$(cd "$repo" && gh pr list --head "$branch" --state all --json number,state,url)"; then
-      # Leave it working: watch.sh settles it against GitHub on a later tick.
-      log "change $id: cannot reach GitHub; leaving it for watch.sh to settle"
-    elif merged="$(jq -r '[.[] | select(.state == "MERGED")][0].url // empty' <<<"$prs")" && [[ -n "$merged" ]]; then
-      "$report" finish "$id" merged "Merged; the worker stopped before it could confirm the deploy." --pr "$merged" || true
-    else
-      "$report" finish "$id" failed "The worker stopped while $step. The log is on the development machine." || true
-      # Don't leave a half-done PR open.
-      for n in $(jq -r '.[] | select(.state == "OPEN") | .number' <<<"$prs"); do
-        (cd "$repo" && gh pr close "$n" --delete-branch --comment "The change worker stopped before finishing this change.") || true
-      done
-    fi
+    finish failed "The worker stopped while $step. The log is on the development machine." || true
   fi
   if [[ -d "$wt" ]]; then
     git -C "$repo" worktree remove --force "$wt" || true
@@ -44,10 +31,26 @@ on_exit() {
 }
 trap on_exit EXIT
 
-finish() { # outcome result [--issue URL] [--pr URL]
-  "$report" finish "$id" "$@"
+# finish OUTCOME RESULT [--issue URL] [--pr URL]: reports how the change ended. Anything but a
+# merge first closes the branch's PR and confirms it closed (and becomes a merge if GitHub says
+# it merged after all). When GitHub can't confirm, the change stays working for watch.sh.
+finish() {
+  local outcome="$1" result="$2" merged
+  shift 2
+  if [[ "$outcome" != merged ]]; then
+    if ! merged="$(settle_prs "$branch")"; then
+      log "change $id: cannot confirm its PR is closed; leaving it for watch.sh"
+      finished=1
+      return 0
+    fi
+    if [[ -n "$merged" ]]; then
+      outcome=merged result="Merged, although the worker reported: $result"
+      set -- "$@" --pr "$merged"
+    fi
+  fi
+  "$report" finish "$id" "$outcome" "$result" "$@"
   finished=1
-  log "change $id: finished $1"
+  log "change $id: finished $outcome"
 }
 
 step="reading the change request"
@@ -127,12 +130,12 @@ $(wrap "$check_input")" --disallowedTools Edit Write NotebookEdit)"
 outcome="$(jq -r .outcome <<<"$verdict")"
 summary="$(jq -r .summary <<<"$verdict")"
 
-# Trust GitHub, not the session's word, for whether it merged.
+# Trust GitHub, not the session's word, for whether it merged. A rejection goes through finish,
+# which closes the PR if the session didn't and notices if it merged after all.
+step="confirming the outcome"
 state_now="$(cd "$wt" && gh pr view "$pr" --json state -q .state)"
-if [[ "$outcome" == merged && "$state_now" != MERGED ]]; then
-  finish failed "The final check said merged, but PR #$pr is $state_now." ${links[@]+"${links[@]}"}
-elif [[ "$outcome" == rejected && "$state_now" == MERGED ]]; then
-  finish merged "Merged, although the final check reported: $summary" ${links[@]+"${links[@]}"}
-else
-  finish "$outcome" "$summary" ${links[@]+"${links[@]}"}
-fi
+case "$outcome:$state_now" in
+  merged:MERGED) finish merged "$summary" ${links[@]+"${links[@]}"} ;;
+  merged:*) finish failed "The final check said it merged, but the pull request is $(tr "[:upper:]" "[:lower:]" <<<"$state_now")." ${links[@]+"${links[@]}"} ;;
+  *) finish rejected "$summary" ${links[@]+"${links[@]}"} ;;
+esac

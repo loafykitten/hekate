@@ -291,10 +291,6 @@ func (s *Service) Request(ctx context.Context, r Request) (Approval, error) {
 	if r.Scope == "" {
 		r.ScopeLabel = "" // no rule can cover it
 	}
-	ttl := r.TTL
-	if ttl <= 0 {
-		ttl = expiry
-	}
 	now := s.now()
 
 	if r.Scope != "" {
@@ -312,7 +308,26 @@ func (s *Service) Request(ctx context.Context, r Request) (Approval, error) {
 		}
 	}
 
-	res, err := s.db.ExecContext(ctx, `INSERT INTO approvals (kind, title, detail, scope, scope_label, payload, status, created_at, expires_at)
+	a, err := s.insertPending(ctx, s.db, r, payload, now)
+	if err != nil {
+		return Approval{}, err
+	}
+	s.announce(ctx, a, r.Notify)
+	return a, nil
+}
+
+// execQuerier is what insertPending needs: the database or a transaction.
+type execQuerier interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func (s *Service) insertPending(ctx context.Context, db execQuerier, r Request, payload string, now time.Time) (Approval, error) {
+	ttl := r.TTL
+	if ttl <= 0 {
+		ttl = expiry
+	}
+	res, err := db.ExecContext(ctx, `INSERT INTO approvals (kind, title, detail, scope, scope_label, payload, status, created_at, expires_at)
 		VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
 		r.Kind, r.Title, r.Detail, r.Scope, r.ScopeLabel, payload, stamp(now), stamp(now.Add(ttl)))
 	if err != nil {
@@ -322,16 +337,47 @@ func (s *Service) Request(ctx context.Context, r Request) (Approval, error) {
 	if err != nil {
 		return Approval{}, fmt.Errorf("insert approval: %w", err)
 	}
-	a, err := s.get(ctx, id)
+	a, err := s.scan(db.QueryRowContext(ctx, `SELECT `+columns+` FROM approvals WHERE id = ?`, id))
 	if err != nil {
-		return Approval{}, err
-	}
-	s.poke()
-	s.publish(a)
-	if r.Notify {
-		s.notify(ctx, a)
+		return Approval{}, fmt.Errorf("get approval %d: %w", id, err)
 	}
 	return a, nil
+}
+
+// announce tells the expiry loop and the clients about a new pending approval.
+func (s *Service) announce(ctx context.Context, a Approval, notify bool) {
+	s.poke()
+	s.publish(a)
+	if notify {
+		s.notify(ctx, a)
+	}
+}
+
+// Prepare stores a pending approval inside the caller's transaction, so it
+// lands together with the caller's own rows or not at all. It never consults
+// standing rules, so the request must have no Scope. Call the returned
+// announce once the transaction has committed, and not if it rolled back.
+func (s *Service) Prepare(ctx context.Context, tx *sql.Tx, r Request) (Approval, func(), error) {
+	if _, ok := s.executor(r.Kind); !ok {
+		return Approval{}, nil, fmt.Errorf("approvals: no executor registered for kind %q", r.Kind)
+	}
+	if r.Scope != "" {
+		return Approval{}, nil, errors.New("approvals: a prepared request can't have a scope")
+	}
+	r.Title = strings.TrimSpace(r.Title)
+	if r.Title == "" {
+		return Approval{}, nil, errors.New("approvals: a request needs a title")
+	}
+	r.ScopeLabel = ""
+	payload := string(r.Payload)
+	if payload == "" {
+		payload = "null"
+	}
+	a, err := s.insertPending(ctx, tx, r, payload, s.now())
+	if err != nil {
+		return Approval{}, nil, err
+	}
+	return a, func() { s.announce(context.WithoutCancel(ctx), a, r.Notify) }, nil
 }
 
 // runByRule runs a request a standing rule covers and records it as decided.

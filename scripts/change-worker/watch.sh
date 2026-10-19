@@ -22,20 +22,16 @@ trap 'rm -rf "$lock"' EXIT
 # a crash). Close it out before taking new work; run.sh would have reported it otherwise.
 working="$(api GET '/api/changes?status=working')" || { log "cannot reach Hekate"; exit 0; }
 for stale in $(jq -r '.changes[].id' <<<"$working"); do
-  if ! prs="$(cd "$repo" && gh pr list --head "change/$stale" --state all --json number,state,url)"; then
-    log "change $stale: cut off, but GitHub can't be reached; trying again next time"
+  if ! merged="$(settle_prs "change/$stale")"; then
+    log "change $stale: cut off, but GitHub can't confirm its PR is closed; trying again next time"
     exit 0 # no new work until it's settled
   fi
-  merged="$(jq -r '[.[] | select(.state == "MERGED")][0].url // empty' <<<"$prs")"
   if [[ -n "$merged" ]]; then
     log "change $stale: was cut off after merging"
-    "$worker_dir/report.sh" finish "$stale" merged "Merged; the worker was interrupted before it could confirm the deploy." --pr "$merged" || true
+    "$worker_dir/report.sh" finish "$stale" merged "Merged; the worker was interrupted before it could confirm the deploy." --pr "$merged" || exit 0
   else
     log "change $stale: was cut off, marking it failed"
-    "$worker_dir/report.sh" finish "$stale" failed "The worker was interrupted (the machine restarted or the run crashed)." || true
-    for n in $(jq -r '.[] | select(.state == "OPEN") | .number' <<<"$prs"); do
-      (cd "$repo" && gh pr close "$n" --delete-branch --comment "The change worker was interrupted before finishing this change.") || true
-    done
+    "$worker_dir/report.sh" finish "$stale" failed "The worker was interrupted (the machine restarted or the run crashed)." || exit 0
   fi
   git -C "$repo" worktree remove --force "$state/worktrees/change-$stale" 2>/dev/null || true
   git -C "$repo" branch -D "change/$stale" >/dev/null 2>&1 || true

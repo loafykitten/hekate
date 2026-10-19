@@ -5,8 +5,9 @@ import path from "node:path";
 import type { ServerResponse } from "node:http";
 import type { Plugin } from "vite";
 
-// The asset pipeline's output: manifest.json plus the GLBs it lists.
-const assetDir = path.resolve(import.meta.dirname, "../../assets/renamon-nukorio");
+// The asset pipeline's output: manifest.json plus the GLBs it lists. HEKATE_ASSETS_DIR points
+// the dev server at another checkout's folder (a git worktree has no assets of its own).
+const assetDir = path.resolve(process.env.HEKATE_ASSETS_DIR ?? path.join(import.meta.dirname, "../../assets/renamon-nukorio"));
 
 // /character/<file>: plain file names inside the asset folder only.
 function resolveAssetFile(url: string): string | undefined {

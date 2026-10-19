@@ -13,11 +13,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/loafykitten/hekate/service/internal/agent"
 	"github.com/loafykitten/hekate/service/internal/buildinfo"
 	"github.com/loafykitten/hekate/service/internal/config"
+	"github.com/loafykitten/hekate/service/internal/llm"
 	"github.com/loafykitten/hekate/service/internal/logging"
 	"github.com/loafykitten/hekate/service/internal/server"
 	"github.com/loafykitten/hekate/service/internal/store"
+	"github.com/loafykitten/hekate/service/internal/voice"
+	"github.com/loafykitten/hekate/service/internal/voice/elevenlabs"
+	"github.com/loafykitten/hekate/service/internal/voice/parakeet"
 )
 
 const shutdownTimeout = 10 * time.Second
@@ -56,11 +61,60 @@ func run() error {
 	}
 	defer func() { _ = db.Close() }()
 
-	srv := server.New(server.Options{
+	// Voice. Nil means "not configured": replies are text-only and push-to-talk
+	// reports stt_unavailable.
+	var synth voice.Synthesizer
+	if key := cfg.ElevenLabsAPIKey.Reveal(); key != "" {
+		synth = elevenlabs.New(key, cfg.ElevenLabsVoiceID, cfg.ElevenLabsModel,
+			elevenlabs.WithLogger(logger.Logger))
+	}
+	var stt voice.Transcriber
+	if cfg.STT {
+		// Downloads and loads the model in the background; push-to-talk reports
+		// stt_unavailable until it's ready.
+		t := parakeet.New(ctx, cfg.ModelsDir, logger.Logger)
+		defer t.Close()
+		stt = t
+	}
+
+	hub := server.NewHub(logger.Logger)
+	defer hub.Close()
+
+	if cfg.NeuralwattAPIKey == "" {
+		logger.Warn("NEURALWATT_API_KEY is not set: she cannot answer until it is")
+	}
+	ag, err := agent.New(agent.Options{
+		LLM: llm.New(llm.Config{
+			BaseURL: cfg.NeuralwattBaseURL,
+			APIKey:  cfg.NeuralwattAPIKey.Reveal(),
+			Logger:  logger.Logger,
+		}),
+		Store:     db,
+		Hub:       hub,
+		Synth:     synth,
 		Logger:    logger.Logger,
-		DB:        db,
-		WebDir:    cfg.WebDir,
+		Tamer:     cfg.TamerName,
+		Location:  cfg.Location,
+		Chat:      cfg.ModelChat,
+		Deep:      cfg.ModelDeep,
 		AssetsDir: cfg.AssetsDir,
+	})
+	if err != nil {
+		return fmt.Errorf("build agent: %w", err)
+	}
+	if err := ag.Start(ctx); err != nil {
+		return fmt.Errorf("start agent: %w", err)
+	}
+
+	srv := server.New(server.Options{
+		Logger:       logger.Logger,
+		DB:           db,
+		WebDir:       cfg.WebDir,
+		AssetsDir:    cfg.AssetsDir,
+		Conversation: ag,
+		Hub:          hub,
+		STT:          stt,
+		TTS:          synth != nil,
 	})
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,
@@ -90,8 +144,12 @@ func run() error {
 	logger.Info("shutting down")
 	shutCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
+	hub.Close() // hijacked WebSocket connections are not closed by Shutdown
 	if err := httpSrv.Shutdown(shutCtx); err != nil {
 		return fmt.Errorf("shutdown: %w", err)
+	}
+	if err := ag.Shutdown(shutCtx); err != nil {
+		return fmt.Errorf("agent shutdown: %w", err)
 	}
 	if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("serve: %w", err)

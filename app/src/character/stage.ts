@@ -225,10 +225,7 @@ export class Stage {
       character.speaking = this.speech.speaking || this.params.forcedMouth !== undefined;
       character.update(dt);
       for (const m of this.params.pinnedMorphs) character.setMorph(m.name, m.weight);
-      this.bubble?.update(
-        this.speech.speaking ? this.speech.progress : 1,
-        character.headScreenAnchor(this.camera, this.anchor),
-      );
+      this.bubble?.update(character.headScreenAnchor(this.camera, this.anchor));
     }
     this.controls.update();
     (this.outline ?? this.renderer).render(this.scene, this.camera);

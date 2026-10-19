@@ -3,6 +3,8 @@ module github.com/loafykitten/hekate/service
 go 1.27
 
 require (
+	github.com/coder/websocket v1.8.15
+	github.com/k2-fsa/sherpa-onnx-go v1.13.8
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	modernc.org/sqlite v1.60.1
 )
@@ -10,6 +12,9 @@ require (
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/k2-fsa/sherpa-onnx-go-linux v1.13.8 // indirect
+	github.com/k2-fsa/sherpa-onnx-go-macos v1.13.8 // indirect
+	github.com/k2-fsa/sherpa-onnx-go-windows v1.13.8 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect

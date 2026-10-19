@@ -9,8 +9,9 @@ JSON text frames, except push-to-talk audio, which is sent as binary frames. Eve
 a `type`. Ids made by the client (`id`) are opaque strings (UUIDs). The server echoes them so
 the client can match replies.
 
-All connected clients receive every server event (phone and desktop stay in sync). Only the
+All connected clients receive every turn event (phone and desktop stay in sync). Only the
 client whose input started a turn (`origin` matches its `client_id`) plays the audio.
+`transcript` and errors about a specific input go only to the client that sent it.
 
 ### Server → client
 
@@ -23,7 +24,7 @@ client whose input started a turn (`origin` matches its `client_id`) plays the a
 | `segment` | see below | One sentence of her reply, ready to perform. |
 | `card` | `turn_id`, `card: { kind, id, title, data }` | Something to show on screen (M2+). |
 | `turn_end` | `turn_id`, `status: "done" \| "interrupted" \| "error"`, `text`, `model`, `usage: { input_tokens, output_tokens, cost_usd \| null }` | The turn is over. `text` is the full display text. |
-| `error` | `code`, `message`, `input_id?` | A problem the user should see (e.g. `llm_unavailable`, `stt_failed`, `busy`). |
+| `error` | `code`, `message`, `input_id?` | A problem the user should see. Codes: `llm_unavailable` (no key), `llm_error`, `empty_reply`, `turn_timeout`, `stt_unavailable` (unconfigured or model still loading), `stt_failed`, `bad_message`, `too_long`. |
 
 `segment`:
 
@@ -56,7 +57,7 @@ from the audio's loudness.
 | `ptt_cancel` | `id` | Discard the audio. |
 | `interrupt` | `heard_seq` (last segment seq the user heard at least partly, or -1) | Stop the current turn. The server keeps segments up to `heard_seq` in history. |
 
-New input while a turn is running interrupts that turn first (as if `interrupt` was sent with
+An `interrupt` with no turn running is ignored. New input while a turn is running interrupts that turn first (as if `interrupt` was sent with
 the last segment delivered to the origin client).
 
 ### Limits

@@ -3,6 +3,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/loafykitten/hekate/service/internal/buildinfo"
+	"github.com/loafykitten/hekate/service/internal/voice"
 )
 
 // Pinger is the slice of the store the server needs.
@@ -26,6 +28,17 @@ type Options struct {
 	DB        Pinger
 	WebDir    string // optional: built PWA
 	AssetsDir string // optional: character assets
+
+	// Conversation and Hub enable /api/ws and the history endpoint.
+	Conversation Conversation
+	Hub          *Hub
+	// STT may be nil (not configured); TTS says whether replies carry audio.
+	STT voice.Transcriber
+	TTS bool
+
+	// PingInterval and PingTimeout default to 20 s and 10 s; tests shorten them.
+	PingInterval time.Duration
+	PingTimeout  time.Duration
 }
 
 // Server owns routing and its dependencies.
@@ -35,6 +48,12 @@ type Server struct {
 	webDir    string
 	assetsDir string
 	startedAt time.Time
+	conv      Conversation
+	hub       *Hub
+	stt       voice.Transcriber
+	tts       bool
+	pingEvery time.Duration
+	pingWait  time.Duration
 }
 
 // New creates a Server. Directories are opened lazily per request through
@@ -50,6 +69,12 @@ func New(o Options) *Server {
 		webDir:    o.WebDir,
 		assetsDir: o.AssetsDir,
 		startedAt: time.Now().UTC(),
+		conv:      o.Conversation,
+		hub:       o.Hub,
+		stt:       o.STT,
+		tts:       o.TTS,
+		pingEvery: cmp.Or(o.PingInterval, pingInterval),
+		pingWait:  cmp.Or(o.PingTimeout, pingTimeout),
 	}
 }
 
@@ -80,9 +105,10 @@ func (s *Server) Routes() http.Handler {
 	)
 }
 
-// apiRoutes is where feature milestones register /api/... endpoints
-// (M1 adds the WebSocket at /api/ws).
-func (s *Server) apiRoutes(_ *http.ServeMux) {}
+// apiRoutes is where feature milestones register /api/... endpoints.
+func (s *Server) apiRoutes(mux *http.ServeMux) {
+	s.conversationRoutes(mux)
+}
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)

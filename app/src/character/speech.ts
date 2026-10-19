@@ -18,14 +18,25 @@ function loudnessEnvelope(buffer: AudioBuffer): Float32Array {
   return env;
 }
 
-// Plays speech audio and exposes its loudness so the mouth can follow it.
+interface Scheduled {
+  start: number; // AudioContext time the source starts (and, minus output latency, is first heard)
+  end: number;
+  envelope: Float32Array;
+  source: AudioBufferSourceNode;
+}
+
+export interface Enqueued {
+  start: number;
+  end: number;
+  // Resolves when the source finishes (or is cut off by stop()).
+  done: Promise<void>;
+}
+
+// Plays speech audio and exposes its loudness so the mouth can follow it. Buffers can be
+// queued back to back (with a gap), and `position` is the clock the queue runs on.
 export class Speech {
   private ctx = new AudioContext();
-  private current?: AudioBufferSourceNode;
-  private active = false; // an utterance is playing or still draining through output latency
-  private envelope: Float32Array = new Float32Array(0);
-  private startedAt = 0;
-  private duration = 0;
+  private queue: Scheduled[] = [];
 
   // Browsers start audio suspended until a user gesture; call this from one, before any await.
   async unlock(): Promise<boolean> {
@@ -39,30 +50,48 @@ export class Speech {
     return this.ctx.state === "running";
   }
 
-  // Resolves when the source finishes (or is interrupted by the next utterance).
+  get running(): boolean {
+    return this.ctx.state === "running";
+  }
+
+  decode(data: ArrayBuffer): Promise<AudioBuffer> {
+    return this.ctx.decodeAudioData(data);
+  }
+
+  // Plays one buffer now, replacing whatever was playing. Resolves when it ends.
   play(buffer: AudioBuffer): Promise<void> {
     this.stop();
+    return this.enqueue(buffer).done;
+  }
+
+  // Schedules a buffer after everything already queued, `gap` seconds after the last one ends
+  // (and not before `notBefore`, on the same clock).
+  enqueue(buffer: AudioBuffer, gap = 0, notBefore = 0): Enqueued {
+    this.prune();
+    const last = this.queue[this.queue.length - 1];
+    const start = Math.max(this.ctx.currentTime + 0.03, notBefore, last ? last.end + gap : 0);
+    const end = start + buffer.duration;
     const source = this.ctx.createBufferSource();
     source.buffer = buffer;
     source.connect(this.ctx.destination);
-    this.envelope = loudnessEnvelope(buffer);
-    this.current = source;
-    this.active = true;
-    this.startedAt = this.ctx.currentTime;
-    this.duration = buffer.duration;
-    return new Promise((resolve) => {
-      source.onended = () => {
-        if (this.current === source) this.current = undefined;
-        resolve();
-      };
-      source.start();
+    const item: Scheduled = { start, end, envelope: loudnessEnvelope(buffer), source };
+    this.queue.push(item);
+    const done = new Promise<void>((resolve) => {
+      source.onended = () => resolve();
     });
+    source.start(start);
+    return { start, end, done };
   }
 
   stop() {
-    this.current?.stop();
-    this.current = undefined;
-    this.active = false;
+    for (const item of this.queue) {
+      try {
+        item.source.stop();
+      } catch {
+        // already ended
+      }
+    }
+    this.queue = [];
   }
 
   // Releases the audio context (browsers cap how many can be open).
@@ -71,26 +100,46 @@ export class Speech {
     void this.ctx.close().catch(() => {});
   }
 
-  // Seconds into the utterance that the listener is hearing now. The source node finishes
-  // up to outputLatency earlier (notably on Bluetooth), so everything keys off this instead.
-  private heard() {
-    return this.ctx.currentTime - this.startedAt - this.ctx.outputLatency;
+  // The context's clock, for scheduling. Falls back to the wall clock while the context is
+  // suspended (nothing can be heard then, but text and gestures still need to run on time).
+  now(): number {
+    return this.running ? this.ctx.currentTime : performance.now() / 1000;
   }
 
-  get speaking() {
-    return this.active && this.heard() < this.duration;
+  // What the listener is hearing now, on the same clock as Enqueued.start/end. The source node
+  // finishes up to outputLatency earlier (notably on Bluetooth), so everything keys off this.
+  // Safari doesn't implement outputLatency.
+  get position(): number {
+    return this.now() - (this.running ? (this.ctx.outputLatency ?? 0) : 0);
   }
 
-  // 0..1 through the current utterance, as heard.
-  get progress() {
-    if (!this.active || !this.duration) return 0;
-    return Math.min(1, Math.max(0, this.heard() / this.duration));
+  private current(): Scheduled | undefined {
+    const at = this.position;
+    return this.queue.find((i) => at >= i.start && at < i.end);
+  }
+
+  private prune() {
+    const at = this.position - 1;
+    this.queue = this.queue.filter((i) => i.end > at);
+  }
+
+  // Something is playing or still queued.
+  get speaking(): boolean {
+    const last = this.queue[this.queue.length - 1];
+    return !!last && this.position < last.end;
+  }
+
+  // 0..1 through the buffer being heard now.
+  get progress(): number {
+    const item = this.current();
+    return item ? (this.position - item.start) / (item.end - item.start) : 0;
   }
 
   // Normalized loudness of what's audible right now: ~1 on loud syllables, 0 in gaps.
   level(): number {
-    if (!this.speaking) return 0;
-    const frame = Math.floor(this.heard() * ENVELOPE_RATE);
-    return frame >= 0 && frame < this.envelope.length ? this.envelope[frame] : 0;
+    const item = this.current();
+    if (!item) return 0;
+    const frame = Math.floor((this.position - item.start) * ENVELOPE_RATE);
+    return frame >= 0 && frame < item.envelope.length ? item.envelope[frame] : 0;
   }
 }

@@ -1,0 +1,16 @@
+data: {"id": "chatcmpl-00000000-0000-4000-8000-000000000001", "object": "chat.completion.chunk", "created": 1792400602, "model": "glm-5.3-flash", "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "logprobs": null, "finish_reason": null}], "prompt_token_ids": null, "prompt_text": null, "service_tier": "standard"}
+
+data: {"id": "chatcmpl-00000000-0000-4000-8000-000000000001", "object": "chat.completion.chunk", "created": 1792400602, "model": "glm-5.3-flash", "choices": [{"index": 0, "delta": {"content": "Hi there"}, "logprobs": null, "finish_reason": null, "token_ids": null}], "service_tier": "standard"}
+
+data: {"id": "chatcmpl-00000000-0000-4000-8000-000000000001", "object": "chat.completion.chunk", "created": 1792400602, "model": "glm-5.3-flash", "choices": [{"index": 0, "delta": {"content": "!"}, "logprobs": null, "finish_reason": null, "stop_reason": 154827, "token_ids": null}], "service_tier": "standard"}
+
+data: {"id": "chatcmpl-00000000-0000-4000-8000-000000000001", "object": "chat.completion.chunk", "created": 1792400602, "model": "glm-5.3-flash", "choices": [{"index": 0, "delta": {}, "logprobs": null, "finish_reason": "stop", "stop_reason": 154827, "token_ids": null}], "service_tier": "standard"}
+
+data: {"id": "chatcmpl-00000000-0000-4000-8000-000000000001", "object": "chat.completion.chunk", "created": 1792400602, "model": "glm-5.3-flash", "choices": [], "usage": {"prompt_tokens": 18, "total_tokens": 23, "completion_tokens": 5, "prompt_tokens_details": {"cached_tokens": 0, "created_cache_tokens": 0}, "completion_tokens_details": {"reasoning_tokens": 0}}, "system_fingerprint": "vllm", "service_tier": "standard"}
+
+: energy {"energy_joules": 4.72, "energy_kwh": 1.311e-06, "avg_power_watts": 2496.5, "duration_seconds": 0.323, "attribution_method": "counter_prorated_token_pool_weighted_multi_gpu_4", "attribution_ratio": 0.0058, "carbon_g_co2eq": 6.16e-05, "grid_carbon_intensity_gco2perkwhr": 47.0, "grid_id": "XX", "carbon_source": "agent_cache"}
+
+: cost {"request_cost_usd": 0.000012, "cache_savings_usd": 0.0, "allowance_remaining_usd": 100.0, "budget_remaining_usd": 100.0}
+
+data: [DONE]
+

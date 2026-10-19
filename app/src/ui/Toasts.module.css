@@ -1,0 +1,60 @@
+.stack {
+  position: fixed;
+  top: calc(64px + var(--safe-top));
+  left: 50%;
+  z-index: calc(var(--z-overlay) + 20);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  width: min(420px, calc(100vw - 32px));
+  translate: -50% 0;
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  padding: 6px 4px 6px var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: rgba(30, 24, 48, 0.9);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  box-shadow: var(--shadow);
+  color: var(--fg);
+  font-size: var(--text-sm);
+  line-height: 1.35;
+  pointer-events: auto;
+  animation: drop 220ms var(--ease);
+}
+
+.toast[data-kind="error"] {
+  border-color: rgba(239, 122, 133, 0.45);
+}
+
+.text {
+  flex: 1;
+  padding: 4px 0;
+}
+
+.dismiss {
+  flex: none;
+  width: 44px;
+  height: 36px;
+  border: 0;
+  background: none;
+  color: var(--fg-muted);
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+@keyframes drop {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}

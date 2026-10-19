@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
+	"unicode/utf8"
 )
 
 func openTemp(t *testing.T) (*Store, string) {
@@ -21,6 +24,9 @@ func openTemp(t *testing.T) (*Store, string) {
 	t.Cleanup(func() { _ = s.Close() })
 	return s, dir
 }
+
+// nextVersion is the version after the embedded migrations, for tests that add their own.
+func nextVersion() int { return migrations[len(migrations)-1].version + 1 }
 
 func backups(t *testing.T, dir string) []string {
 	t.Helper()
@@ -76,7 +82,7 @@ func TestUpgradeCreatesBackup(t *testing.T) {
 	_ = s.Close()
 
 	next := append(append([]migration{}, migrations...), migration{
-		version: 2, name: "extra", sql: `CREATE TABLE extra (id INTEGER PRIMARY KEY)`,
+		version: nextVersion(), name: "extra", sql: `CREATE TABLE extra (id INTEGER PRIMARY KEY)`,
 	})
 	s2, err := open(ctx, dir, next)
 	if err != nil {
@@ -88,7 +94,7 @@ func TestUpgradeCreatesBackup(t *testing.T) {
 	if len(b) != 1 {
 		t.Fatalf("backups = %v", b)
 	}
-	if got := filepath.Base(b[0]); got[:len("pre-migrate-0002-")] != "pre-migrate-0002-" {
+	if got, want := filepath.Base(b[0]), fmt.Sprintf("pre-migrate-%04d-", nextVersion()); !strings.HasPrefix(got, want) {
 		t.Errorf("name = %s", got)
 	}
 	// The backup holds pre-upgrade data and lacks the new table.
@@ -116,7 +122,7 @@ func TestFailedMigrationRollsBack(t *testing.T) {
 	s, dir := openTemp(t)
 	_ = s.Close()
 	bad := append(append([]migration{}, migrations...), migration{
-		version: 2, name: "bad", sql: `CREATE TABLE ok_table (id INTEGER); THIS IS NOT SQL;`,
+		version: nextVersion(), name: "bad", sql: `CREATE TABLE ok_table (id INTEGER); THIS IS NOT SQL;`,
 	})
 	if _, err := open(ctx, dir, bad); err == nil {
 		t.Fatal("expected error")
@@ -228,5 +234,81 @@ func TestLoadMigrationsValidation(t *testing.T) {
 		if _, err := loadMigrations(fsys, "m"); err == nil {
 			t.Errorf("%s: expected error", name)
 		}
+	}
+}
+
+func TestConversationRoundTrip(t *testing.T) {
+	ctx := t.Context()
+	s, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+
+	if err := s.EnsureConversation(ctx, "default"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.EnsureConversation(ctx, "default"); err != nil {
+		t.Fatalf("second ensure: %v", err)
+	}
+	if err := s.BeginTurn(ctx, Turn{ID: "t1", ConversationID: "default", UserText: "hi", StartedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	err = s.AddMessages(ctx, []Message{
+		{ConversationID: "default", TurnID: "t1", Role: RoleUser, Text: "hi", Content: "hi"},
+		{ConversationID: "default", TurnID: "t1", Role: RoleAssistant, ToolCalls: `[{"id":"c"}]`},
+		{ConversationID: "default", TurnID: "t1", Role: RoleTool, Content: "result", ToolCallID: "c"},
+		{ConversationID: "default", TurnID: "t1", Role: RoleAssistant, Text: "Hello.", Content: "{waving} Hello.", Model: "m"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recent, err := s.RecentMessages(ctx, "default", 3)
+	if err != nil || len(recent) != 3 || recent[0].Role != RoleAssistant || recent[2].Content != "{waving} Hello." {
+		t.Fatalf("recent = %+v err %v", recent, err)
+	}
+	vis, err := s.VisibleMessages(ctx, "default", 0, 10)
+	if err != nil || len(vis) != 2 || vis[0].Text != "hi" || vis[1].Text != "Hello." {
+		t.Fatalf("visible = %+v err %v", vis, err)
+	}
+	older, err := s.VisibleMessages(ctx, "default", vis[1].ID, 10)
+	if err != nil || len(older) != 1 || older[0].Text != "hi" {
+		t.Fatalf("before = %+v err %v", older, err)
+	}
+	if err := s.EndTurn(ctx, "t1", TurnDone, "m", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	cost := 0.5
+	if err := s.AddUsage(ctx, Usage{TurnID: "t1", Model: "m", CostUSD: &cost, InputTokens: 3}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddUsage(ctx, Usage{TurnID: "t1", Model: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	var nulls int
+	if err := s.DB().QueryRowContext(ctx, `SELECT count(*) FROM usage WHERE cost_usd IS NULL`).Scan(&nulls); err != nil || nulls != 1 {
+		t.Fatalf("null costs = %d err %v", nulls, err)
+	}
+
+	big := strings.Repeat("é", 3000)
+	if err := s.AddActivity(ctx, Activity{TurnID: "t1", Tool: "x", Effect: "read", Args: big, Status: "ok"}); err != nil {
+		t.Fatal(err)
+	}
+	var args string
+	if err := s.DB().QueryRowContext(ctx, `SELECT args FROM activity`).Scan(&args); err != nil || len(args) > MaxActivityArgs || !utf8.ValidString(args) {
+		t.Fatalf("args len %d valid %v err %v", len(args), utf8.ValidString(args), err)
+	}
+
+	if err := s.BeginTurn(ctx, Turn{ID: "t2", ConversationID: "default", StartedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AbortRunningTurns(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	if err := s.DB().QueryRowContext(ctx, `SELECT status FROM turns WHERE id = 't2'`).Scan(&status); err != nil || status != TurnError {
+		t.Fatalf("status = %q err %v", status, err)
 	}
 }

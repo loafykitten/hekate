@@ -145,3 +145,25 @@ func TestRebaseSpendsCount(t *testing.T) {
 		t.Errorf("no count: %s", got)
 	}
 }
+
+// Hourly rules narrowed by hour/minute/second can make rrule-go search
+// forever, so they are refused before anything evaluates them.
+func TestParseRuleRefusesHourlyTimeFilters(t *testing.T) {
+	loc := time.UTC
+	start := time.Date(2026, 10, 19, 0, 0, 0, 0, loc)
+	for _, rule := range []string{"FREQ=HOURLY;INTERVAL=2;BYHOUR=1", "FREQ=HOURLY;BYMINUTE=30", "FREQ=HOURLY;BYSECOND=5"} {
+		if _, err := ParseRule(rule, start, loc); err == nil {
+			t.Errorf("%s accepted", rule)
+		}
+	}
+	for _, rule := range []string{"FREQ=HOURLY;INTERVAL=2", "FREQ=HOURLY;INTERVAL=3;BYDAY=MO,TU", "FREQ=DAILY;BYHOUR=9,21"} {
+		r, err := ParseRule(rule, start, loc)
+		if err != nil {
+			t.Errorf("%s rejected: %v", rule, err)
+			continue
+		}
+		if _, ok := r.First(start); !ok {
+			t.Errorf("%s has no first occurrence", rule)
+		}
+	}
+}

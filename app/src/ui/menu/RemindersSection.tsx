@@ -93,7 +93,10 @@ function ReminderForm({ initial, now, submitLabel, busy, onSubmit, onCancel, chi
   const [time, setTime] = useState(toTimeInput(startAt));
   const [rrule, setRrule] = useState<string | null>(initial?.rrule ?? null);
   const first = useAutoFocus<HTMLInputElement>();
-  const at = fromDateTimeInputs(date, time);
+  // Untouched inputs keep the exact original time: the inputs drop seconds, and a rebuilt time
+  // would look like an edit (re-anchoring a repeating reminder, or failing once it has passed).
+  const untouched = base !== undefined && date === toDateInput(base.at) && time === toTimeInput(base.at);
+  const at = untouched ? base.at : fromDateTimeInputs(date, time);
   const valid = text.trim() !== "" && at !== "";
   return (
     <form

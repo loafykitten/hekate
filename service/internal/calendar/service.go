@@ -11,10 +11,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/teambition/rrule-go"
 
 	"github.com/google/uuid"
 
@@ -296,6 +299,9 @@ func (s *Service) Update(ctx context.Context, uid string, p EventPatch, onlyHeka
 		}
 		sp, err := resolveSpec(in, s.loc)
 		if err != nil {
+			return false, err
+		}
+		if err := checkMoveAgainstRule(ser.master.start, sp.start, sp.rrule, s.loc); err != nil {
 			return false, err
 		}
 		resched := !sp.start.Equal(ser.master.start) || sp.allDay != ser.master.allDay || sp.rrule != ser.rruleString()
@@ -596,4 +602,44 @@ func mergePatch(cur Event, m *component, p EventPatch, loc *time.Location) (Even
 		in.End = *p.End
 	}
 	return in, nil
+}
+
+// checkMoveAgainstRule refuses moving a series' start somewhere its rule's
+// explicit filters don't match: with BYDAY=MO the series keeps producing
+// Mondays however the start moves, so "every occurrence" would silently not
+// move. The caller has to change the rule along with the start.
+func checkMoveAgainstRule(from, to time.Time, rule string, loc *time.Location) error {
+	if rule == "" || from.Equal(to) {
+		return nil
+	}
+	opt, err := rrule.StrToROption(rule)
+	if err != nil {
+		return nil // validated elsewhere
+	}
+	t := to.In(loc)
+	var pinned []string
+	if len(opt.Byweekday) > 0 && !slices.ContainsFunc(opt.Byweekday, func(w rrule.Weekday) bool {
+		return w.Day() == (int(t.Weekday())+6)%7 // rrule-go counts from Monday
+	}) {
+		pinned = append(pinned, "BYDAY")
+	}
+	if len(opt.Byhour) > 0 && !slices.Contains(opt.Byhour, t.Hour()) {
+		pinned = append(pinned, "BYHOUR")
+	}
+	if len(opt.Byminute) > 0 && !slices.Contains(opt.Byminute, t.Minute()) {
+		pinned = append(pinned, "BYMINUTE")
+	}
+	if len(opt.Bymonthday) > 0 && !slices.Contains(opt.Bymonthday, t.Day()) {
+		pinned = append(pinned, "BYMONTHDAY")
+	}
+	if len(opt.Bymonth) > 0 && !slices.Contains(opt.Bymonth, int(t.Month())) {
+		pinned = append(pinned, "BYMONTH")
+	}
+	if (len(opt.Byyearday) > 0 || len(opt.Byweekno) > 0 || len(opt.Bysetpos) > 0) && from.In(loc).YearDay() != t.YearDay() {
+		pinned = append(pinned, "a date-based rule part")
+	}
+	if len(pinned) > 0 {
+		return badInput("this event repeats by %s (rule %s), so moving its start there wouldn't move the other occurrences; change the repeat rule too", strings.Join(pinned, ", "), rule)
+	}
+	return nil
 }

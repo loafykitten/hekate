@@ -39,6 +39,13 @@ func ParseRule(rule string, start time.Time, loc *time.Location) (*Rule, error) 
 	if opt.Freq > rrule.HOURLY { // MINUTELY and SECONDLY sort after HOURLY
 		return nil, fmt.Errorf("repeat rule %q repeats too often; hourly is the shortest", rule)
 	}
+	// An hourly rule filtered by hour, minute or second can step past every
+	// match forever (FREQ=HOURLY;INTERVAL=2;BYHOUR=1 from midnight never lands
+	// on 1:00), and rrule-go can't be interrupted. Hourly rules may only be
+	// narrowed by day; for times of day, use a daily rule with BYHOUR.
+	if opt.Freq == rrule.HOURLY && (len(opt.Byhour) > 0 || len(opt.Byminute) > 0 || len(opt.Bysecond) > 0) {
+		return nil, fmt.Errorf("repeat rule %q can't combine hourly repeats with BYHOUR, BYMINUTE or BYSECOND; use FREQ=DAILY with BYHOUR for times of day", rule)
+	}
 	opt.Dtstart = start.In(loc)
 	r, err := rrule.NewRRule(*opt)
 	if err != nil {

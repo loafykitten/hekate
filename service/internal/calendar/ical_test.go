@@ -659,3 +659,65 @@ END:VCALENDAR
 		t.Errorf("SUMMARY = %q", got)
 	}
 }
+
+// Changing only the end keeps another client's start exactly as written.
+func TestEndOnlyEditKeepsStartAsWritten(t *testing.T) {
+	loc, _ := time.LoadLocation("America/Chicago")
+	ser := mustSeries(t, `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//other client//EN
+BEGIN:VEVENT
+UID:standup
+DTSTAMP:20261001T000000Z
+DTSTART:20261019T140000Z
+DTEND:20261019T150000Z
+RRULE:FREQ=WEEKLY
+SUMMARY:Standup
+END:VEVENT
+END:VCALENDAR
+`, loc)
+	end := "2026-10-19T10:30" // 15:30 UTC: thirty minutes longer
+	cur := ser.event(*ser.master, loc, nil)
+	in, err := mergePatch(cur, ser.master, EventPatch{End: &end}, loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sp, err := resolveSpec(in, loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resched := !sp.start.Equal(ser.master.start) || sp.allDay != ser.master.allDay || sp.rrule != ser.rruleString()
+	if err := ser.applyUpdate(sp, resched, loc, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	m := ser.master.c
+	if got := m.Props.Get(ical.PropDateTimeStart); got.Value != "20261019T140000Z" {
+		t.Errorf("DTSTART = %q, want unchanged", got.Value)
+	}
+	if got := m.Props.Get(ical.PropDateTimeEnd); got.Value != "20261019T153000Z" {
+		t.Errorf("DTEND = %q %v, want 20261019T153000Z in the start's zone", got.Value, got.Params)
+	}
+}
+
+func TestMoveAgainstRule(t *testing.T) {
+	loc, _ := time.LoadLocation("America/Chicago")
+	at := func(s string) time.Time { v, _ := time.ParseInLocation("2006-01-02T15:04", s, loc); return v }
+	mon9 := at("2026-10-19T09:00")
+	tests := []struct {
+		rule string
+		to   time.Time
+		ok   bool
+	}{
+		{"FREQ=WEEKLY;BYDAY=MO", at("2026-10-20T09:00"), false}, // Monday to Tuesday under BYDAY=MO
+		{"FREQ=WEEKLY;BYDAY=MO", at("2026-10-19T10:00"), true},  // same day, new time: fine
+		{"FREQ=DAILY;BYHOUR=9", at("2026-10-19T10:00"), false},
+		{"FREQ=WEEKLY", at("2026-10-20T10:00"), true}, // no filters: the series follows the start
+		{"FREQ=WEEKLY;BYDAY=TU", at("2026-10-20T09:00"), true},
+	}
+	for _, tt := range tests {
+		err := checkMoveAgainstRule(mon9, tt.to, tt.rule, loc)
+		if (err == nil) != tt.ok {
+			t.Errorf("%s to %s: err = %v, want ok=%v", tt.rule, tt.to.Format(time.RFC3339), err, tt.ok)
+		}
+	}
+}

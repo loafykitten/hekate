@@ -304,13 +304,18 @@ export interface DayGroup {
 
 const MAX_SPAN_DAYS = 31;
 
-// Days an event shows on. Timed events belong to the day they start. All-day ends follow the
-// iCalendar convention (exclusive), so a one-day event ends the next day.
+// Days an event shows on: every day it overlaps, so an ongoing multi-day event appears on the
+// days in between. Ends are exclusive (an all-day event on the 20th ends on the 21st; a timed
+// event ending at midnight doesn't reach the next day).
 function eventDays(e: CalendarEvent, z: Zone): string[] {
   const start = dayKey(e.start, z);
-  if (!e.all_day && !isDateOnly(e.start)) return [start];
-  const end = e.end ? dayKey(e.end, z) : start;
-  const span = Math.min(MAX_SPAN_DAYS, Math.max(1, daysBetween(start, end)));
+  let last = start;
+  if (e.all_day || isDateOnly(e.start)) {
+    if (e.end) last = addDays(dayKey(e.end, z), -1);
+  } else if (e.end && toMs(e.end, z) > toMs(e.start, z)) {
+    last = dayKeyOfMs(toMs(e.end, z) - 1, z);
+  }
+  const span = Math.min(MAX_SPAN_DAYS, Math.max(1, daysBetween(start, last) + 1));
   return Array.from({ length: span }, (_, i) => addDays(start, i));
 }
 

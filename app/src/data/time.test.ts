@@ -226,3 +226,19 @@ describe("setZone", () => {
     setZone({});
   });
 });
+
+describe("groupEventsByDay: multi-day timed events", () => {
+  const z = { tz: "America/Chicago" };
+  const ev = (start: string, end: string) =>
+    ({ uid: "u", instance: null, title: "Trip", start, end, all_day: false, location: "", notes: "", rrule: null, created_by_hekate: true }) as CalendarEvent;
+
+  it("shows an ongoing timed event on each day it overlaps", () => {
+    const groups = groupEventsByDay([ev("2026-10-19T18:00:00-05:00", "2026-10-21T10:00:00-05:00")], z);
+    expect(groups.map((g) => g.key)).toEqual(["2026-10-19", "2026-10-20", "2026-10-21"]);
+  });
+
+  it("doesn't spill into the next day when it ends at midnight", () => {
+    const groups = groupEventsByDay([ev("2026-10-19T22:00:00-05:00", "2026-10-20T00:00:00-05:00")], z);
+    expect(groups.map((g) => g.key)).toEqual(["2026-10-19"]);
+  });
+});

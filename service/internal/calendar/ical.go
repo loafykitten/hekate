@@ -553,17 +553,20 @@ func (s *series) applyUpdate(sp spec, resched bool, loc *time.Location, now time
 	if m == nil {
 		return errors.New("this event has no main entry to edit")
 	}
-	// An edit that doesn't touch the schedule (a new title, notes) keeps the
-	// event's own DTSTART/DTEND/DURATION/RRULE exactly as written, including
-	// their time zone: rewriting them in our zone would move another client's
-	// recurring event across DST changes.
-	keep := !resched && sp.end.Equal(m.end)
-	var saved map[string][]ical.Prop
-	if keep {
-		saved = map[string][]ical.Prop{}
-		for _, name := range []string{ical.PropDateTimeStart, ical.PropDateTimeEnd, ical.PropDuration, ical.PropRecurrenceRule} {
-			saved[name] = m.c.Props[name]
-		}
+	// What an edit doesn't change stays exactly as written, including its time
+	// zone: rewriting another client's recurring event in our zone would move
+	// it across DST changes. With the start kept, a new end is written in the
+	// start's own zone.
+	keepStart := !resched
+	keepEnd := keepStart && sp.end.Equal(m.end)
+	saved := map[string][]ical.Prop{}
+	if keepStart {
+		saved[ical.PropDateTimeStart] = m.c.Props[ical.PropDateTimeStart]
+		saved[ical.PropRecurrenceRule] = m.c.Props[ical.PropRecurrenceRule]
+	}
+	if keepEnd {
+		saved[ical.PropDateTimeEnd] = m.c.Props[ical.PropDateTimeEnd]
+		saved[ical.PropDuration] = m.c.Props[ical.PropDuration]
 	}
 	fillEvent(m.c, sp, loc, now)
 	for name, props := range saved {
@@ -572,6 +575,9 @@ func (s *series) applyUpdate(sp spec, resched bool, loc *time.Location, now time
 		} else {
 			m.c.Props[name] = props
 		}
+	}
+	if keepStart && !keepEnd && m.loc != nil {
+		setTime(m.c, ical.PropDateTimeEnd, sp.end, sp.allDay, m.loc)
 	}
 	seq := 0
 	if p := m.c.Props.Get(ical.PropSequence); p != nil {

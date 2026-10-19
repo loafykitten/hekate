@@ -609,7 +609,8 @@ func TestUnknownTagsAreNotSpoken(t *testing.T) {
 			t.Errorf("spoken text has a bad tag: %q", s)
 		}
 	}
-	if sp := synth.spoken(); len(sp) != 2 || sp[1] != "[softly] Rest now." {
+	// Sentences are synthesized in parallel, so their order here varies.
+	if sp := synth.spoken(); len(sp) != 2 || !slices.Contains(sp, "[softly] Rest now.") {
 		t.Errorf("spoken = %q", sp)
 	}
 }

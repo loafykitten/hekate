@@ -125,7 +125,11 @@ README in that folder) plus Mixamo clips in `mixamo/`.
 - **14 morphs** on `head`/`eye_black`/`eye_line`: `jawOpen`, `viseme_aa|E|I|O|U|PP`,
   `mouthSmile`, `mouthFrown`, `eyeBlink_L|R`, `eyeSquint`, `browUp`, `browDown`. Visemes are
   self-contained (include their jaw opening); don't add `jawOpen` on top of a full viseme.
-- **11 clips** (30 fps Mixamo, retargeted): loops `idle` (busy: arms lift mid-cycle), `idle_2`
+- **24 clips** (30 fps Mixamo, retargeted; round 4 added thirteen from Mixamo's gesture pack:
+  nods, head shakes, `look_away`, `angry`, `cocky`, `happy_hands`, `relieved_sigh`,
+  `weight_shift`). Clips flagged `idle_variation` (`look_away`, `relieved_sigh`, `weight_shift`)
+  play now and then while the conversation is idle (every 25–60 s), and give way at once when
+  anything happens. Round 3's clips: loops `idle` (busy: arms lift mid-cycle), `idle_2`
   (calm, the app's base), `talking`, `standing_pose`; gestures as listed above. Gestures start and
   end on `idle`'s first-frame stance (arms down), so from `idle_2` (hands clasped) every gesture
   opens with the hands unclasping. That reads fine with the current fades; an optional fix is to
@@ -133,7 +137,7 @@ README in that folder) plus Mixamo clips in `mixamo/`.
 - Manifest highlights the app relies on: `files.{desktop,phone}`,
   `skeleton.{head_bone,tail,ears,humanoid,threejs_runtime_names}`, `lipsync.amplitude_only`,
   `lipsync.viseme_based` (Oculus phoneme class → morph weights, ready for real lip sync),
-  `blink.{left,right}`, `outline.meshes`, `animations[].{name,loop,category,head_motion}`.
+  `blink.{left,right}`, `outline.meshes`, `animations[].{name,loop,category,head_motion,idle_variation}`.
 
 ### The pipeline
 

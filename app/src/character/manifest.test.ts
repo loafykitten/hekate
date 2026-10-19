@@ -23,10 +23,11 @@ const fixture: Manifest = {
   animations: [
     { name: "idle_busy", loop: true, category: "idle", head_motion: "strong" },
     { name: "idle_calm", loop: true, category: "idle", head_motion: "none" },
-    { name: "idle_once", loop: false, category: "idle" },
+    { name: "idle_once", loop: false, category: "idle", idle_variation: true },
     { name: "chat", loop: true, category: "talk" },
     { name: "wave", loop: false, category: "gesture", head_motion: "moderate" },
     { name: "shake", loop: false, category: "gesture", head_motion: "strong" },
+    { name: "glance", loop: false, category: "gesture", idle_variation: true },
     { name: "stand", loop: true, category: "pose" },
   ],
 };
@@ -63,8 +64,12 @@ describe("rigFrom", () => {
   it("picks the calmest looping idle, the looping talk clip and the gestures", () => {
     expect(rig.clips.idle).toBe("idle_calm");
     expect(rig.clips.talk).toBe("chat");
-    expect(rig.clips.gestures).toEqual(["wave", "shake"]);
+    expect(rig.clips.gestures).toEqual(["wave", "shake", "glance"]);
     expect(rig.clips.headDriven).toEqual(["idle_busy", "shake"]);
+  });
+
+  it("collects the one-shots that suit idle moments, from any category", () => {
+    expect(rig.clips.fidgets).toEqual(["idle_once", "glance"]);
   });
 
   it("takes any looping idle when all of them move the head", () => {

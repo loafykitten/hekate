@@ -57,6 +57,18 @@ type Config struct {
 	ElevenLabsModel   string
 	STT               bool   // speech-to-text on/off
 	ModelsDir         string // downloaded speech models
+
+	// Calendar (CalDAV). An empty URL means the calendar is not configured.
+	CalDAVURL      string
+	CalDAVUsername string
+	CalDAVPassword Secret
+	CalDAVCalendar string // display name of the calendar to use; created if missing
+
+	// Web search (Brave). An empty key means web_search is unavailable.
+	BraveAPIKey Secret
+
+	Units       string // "imperial" or "metric", for weather
+	PushSubject string // VAPID subject: a mailto: or https: URL identifying the sender
 }
 
 // Model is a model name plus the reasoning effort every request to it sets.
@@ -96,6 +108,16 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 	cfg.ElevenLabsVoiceID = str("ELEVENLABS_VOICE_ID", "EXAVITQu4vr4xnSDxMaL")
 	cfg.ElevenLabsModel = str("ELEVENLABS_MODEL", "eleven_v4")
 	cfg.ModelsDir = str("HEKATE_MODELS_DIR", filepath.Join(cfg.DataDir, "models"))
+	cfg.CalDAVURL = strings.TrimRight(str("CALDAV_URL", ""), "/") + "/"
+	if cfg.CalDAVURL == "/" {
+		cfg.CalDAVURL = ""
+	}
+	cfg.CalDAVUsername = str("CALDAV_USERNAME", "")
+	cfg.CalDAVPassword = Secret(str("CALDAV_PASSWORD", ""))
+	cfg.CalDAVCalendar = str("CALDAV_CALENDAR", "Calendar")
+	cfg.BraveAPIKey = Secret(str("BRAVE_API_KEY", ""))
+	cfg.Units = strings.ToLower(str("HEKATE_UNITS", "imperial"))
+	cfg.PushSubject = str("HEKATE_PUSH_SUBJECT", "mailto:hekate@example.com")
 
 	var errs []error
 
@@ -117,6 +139,18 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 	case "off":
 	default:
 		errs = append(errs, fmt.Errorf("HEKATE_STT: %q is not on or off", v))
+	}
+
+	if cfg.Units != "imperial" && cfg.Units != "metric" {
+		errs = append(errs, fmt.Errorf("HEKATE_UNITS: %q is not imperial or metric", cfg.Units))
+	}
+	if !strings.HasPrefix(cfg.PushSubject, "mailto:") && !strings.HasPrefix(cfg.PushSubject, "https://") {
+		errs = append(errs, fmt.Errorf("HEKATE_PUSH_SUBJECT: %q must start with mailto: or https://", cfg.PushSubject))
+	}
+	if cfg.CalDAVURL != "" {
+		if u, err := url.Parse(cfg.CalDAVURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			errs = append(errs, fmt.Errorf("CALDAV_URL: %q must be an http(s) URL", cfg.CalDAVURL))
+		}
 	}
 
 	if u, err := url.Parse(cfg.NeuralwattBaseURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
@@ -178,5 +212,10 @@ func (c Config) LogValue() slog.Value {
 		slog.String("elevenlabs_model", c.ElevenLabsModel),
 		slog.Bool("stt", c.STT),
 		slog.String("models_dir", c.ModelsDir),
+		slog.String("caldav_url", c.CalDAVURL),
+		slog.String("caldav_calendar", c.CalDAVCalendar),
+		slog.Bool("web_search_configured", c.BraveAPIKey != ""),
+		slog.String("units", c.Units),
+		slog.String("push_subject", c.PushSubject),
 	)
 }

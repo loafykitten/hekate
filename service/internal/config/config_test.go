@@ -176,3 +176,39 @@ func TestLogValueHidesKeys(t *testing.T) {
 		t.Errorf("configured flags missing: %s", buf.String())
 	}
 }
+
+func TestM2Settings(t *testing.T) {
+	env := map[string]string{
+		"CALDAV_URL": "http://127.0.0.1:5232", "CALDAV_USERNAME": "owner", "CALDAV_PASSWORD": "pw",
+		"BRAVE_API_KEY": "k", "HEKATE_UNITS": "metric", "HEKATE_PUSH_SUBJECT": "https://example.com",
+	}
+	cfg, err := LoadFrom(func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CalDAVURL != "http://127.0.0.1:5232/" || cfg.CalDAVCalendar != "Calendar" || cfg.CalDAVPassword.Reveal() != "pw" {
+		t.Errorf("caldav = %q %q", cfg.CalDAVURL, cfg.CalDAVCalendar)
+	}
+	if cfg.Units != "metric" || cfg.PushSubject != "https://example.com" || cfg.BraveAPIKey.Reveal() != "k" {
+		t.Errorf("units/push/brave = %q %q", cfg.Units, cfg.PushSubject)
+	}
+
+	defaults, err := LoadFrom(func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaults.CalDAVURL != "" || defaults.Units != "imperial" {
+		t.Errorf("defaults: caldav %q units %q", defaults.CalDAVURL, defaults.Units)
+	}
+
+	for k, v := range map[string]string{"HEKATE_UNITS": "kelvin", "HEKATE_PUSH_SUBJECT": "me", "CALDAV_URL": "ftp://x"} {
+		if _, err := LoadFrom(func(key string) string {
+			if key == k {
+				return v
+			}
+			return ""
+		}); err == nil {
+			t.Errorf("%s=%q: want error", k, v)
+		}
+	}
+}

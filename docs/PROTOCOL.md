@@ -75,5 +75,145 @@ All under `/api/`, JSON, errors as `{ "error": "message" }` with a 4xx/5xx statu
 |---|---|
 | `GET /api/conversation/messages?before=<message id>&limit=<n ≤ 100>` | `{ messages: [{ id, role: "user" \| "assistant", text, turn_id, created_at }] }`, newest last |
 
-Later milestones add tasks, reminders, calendar, mail, memory, approvals, activity, usage and
-settings, and document them here.
+
+Times are RFC 3339 with offset. "Local" means the configured `HEKATE_TIMEZONE`. A date-only value
+is `YYYY-MM-DD`. Every change made through REST or by Renamon's tools broadcasts an `invalidate`
+event (below) so open menus refresh.
+
+### Tasks and lists
+
+```jsonc
+// Task
+{
+  "id": "12",
+  "title": "Oat milk",
+  "notes": "",
+  "list": "Groceries",          // "Inbox" when not given
+  "due": "2026-10-20",          // null, a date (all-day) or an RFC 3339 time
+  "rrule": null,                // RFC 5545 RRULE for repeating tasks, e.g. "FREQ=WEEKLY;BYDAY=MO"
+  "priority": 0,                // 0 none, 1 low, 2 medium, 3 high
+  "completed_at": null,
+  "created_at": "…", "updated_at": "…"
+}
+```
+
+| Method & path | Body | Returns |
+|---|---|---|
+| `GET /api/tasks?list=&status=open\|done\|all` (default open) | | `{ tasks: [Task] }` ordered by due (nulls last), then priority |
+| `POST /api/tasks` | `{ title, notes?, list?, due?, rrule?, priority? }` | `Task` (201) |
+| `PATCH /api/tasks/{id}` | any Task fields above | `Task` |
+| `POST /api/tasks/{id}/complete` | | `Task`. A repeating task records the completion and moves `due` to the next occurrence instead of closing. |
+| `POST /api/tasks/{id}/reopen` | | `Task` |
+| `DELETE /api/tasks/{id}` | | 204 |
+| `GET /api/lists` | | `{ lists: [{ name, open_count }] }` |
+
+### Reminders
+
+```jsonc
+// Reminder
+{
+  "id": "7",
+  "text": "Call the dentist",
+  "at": "2026-10-20T09:00:00-05:00",   // next time it fires
+  "rrule": null,
+  "status": "scheduled",               // scheduled | fired | done | cancelled
+  "last_fired_at": null,
+  "created_at": "…"
+}
+```
+
+| Method & path | Body | Returns |
+|---|---|---|
+| `GET /api/reminders?status=upcoming\|past\|all` (default upcoming) | | `{ reminders: [Reminder] }` |
+| `POST /api/reminders` | `{ text, at, rrule? }` | `Reminder` (201) |
+| `PATCH /api/reminders/{id}` | `{ text?, at?, rrule? }` | `Reminder` |
+| `POST /api/reminders/{id}/snooze` | `{ minutes }` | `Reminder` |
+| `POST /api/reminders/{id}/done` | | `Reminder` |
+| `DELETE /api/reminders/{id}` | | 204 (cancels) |
+
+When a reminder fires, the service sends web push to every subscription and a `notify` event
+to connected clients. A repeating reminder is rescheduled to its next occurrence.
+
+### Push
+
+| Method & path | Body | Returns |
+|---|---|---|
+| `GET /api/push/key` | | `{ public_key }` (VAPID, base64url) |
+| `POST /api/push/subscriptions` | the browser's `PushSubscription.toJSON()` | 204 |
+| `DELETE /api/push/subscriptions` | `{ endpoint }` | 204 |
+| `POST /api/push/test` | | 204, sends a test notification |
+
+Push payload (JSON): `{ title, body, url, tag }`. The service worker shows it, and a click
+focuses or opens `url`.
+
+### Calendar
+
+```jsonc
+// Event (recurrences are expanded into instances inside the requested range)
+{
+  "uid": "…",                       // stable across instances of a recurring event
+  "instance": "2026-10-20T15:00:00-05:00",   // null for a non-recurring event
+  "title": "Dentist",
+  "start": "2026-10-20T15:00:00-05:00",      // a date for all-day events
+  "end": "2026-10-20T16:00:00-05:00",
+  "all_day": false,
+  "location": "",
+  "notes": "",
+  "rrule": null,
+  "created_by_hekate": true
+}
+```
+
+| Method & path | Body | Returns |
+|---|---|---|
+| `GET /api/calendar/status` | | `{ configured, calendar_name? }` |
+| `GET /api/calendar/events?from=&to=` (default today through +7 days) | | `{ events: [Event] }` sorted by start |
+| `POST /api/calendar/events` | `{ title, start, end?, all_day?, location?, notes?, rrule? }` | `Event` (201) |
+| `PATCH /api/calendar/events/{uid}` | Event fields (applies to the whole series) | `Event` |
+| `DELETE /api/calendar/events/{uid}` | | 204 (whole series) |
+
+### Memory
+
+```jsonc
+// Memory
+{ "id": "3", "kind": "preference", "content": "Takes coffee black", "importance": 3,
+  "follow_up_at": null, "created_at": "…", "updated_at": "…" }
+// kind: fact | preference | person | event | follow_up; importance 1–5
+```
+
+| Method & path | Body | Returns |
+|---|---|---|
+| `GET /api/memory?q=&kind=&limit=` | | `{ memories: [Memory] }`, full-text ranked when `q` is set, else newest first |
+| `PATCH /api/memory/{id}` | `{ content?, kind?, importance?, follow_up_at? }` | `Memory` |
+| `DELETE /api/memory/{id}` | | 204 |
+| `GET /api/memory/core` | | `{ entries: [{ key, value, updated_at }] }` (the always-loaded profile) |
+| `PUT /api/memory/core/{key}` | `{ value }` | the entry |
+| `DELETE /api/memory/core/{key}` | | 204 |
+
+### Weather
+
+| Method & path | Returns |
+|---|---|
+| `GET /api/weather?place=` (default: the home place from settings) | `Weather` card data (below), or 404 `{ error }` when no place is known |
+
+## Cards
+
+`card.card` is `{ kind, id, title, data }`. Tools attach cards to their results; cards are built
+from stored or fetched data, never from model text. Shapes of `data` by `kind`:
+
+| kind | data |
+|---|---|
+| `tasks` | `{ items: [Task], highlight?: [id] }`. One list, or the tasks just changed. |
+| `reminders` | `{ items: [Reminder], highlight?: [id] }` |
+| `events` | `{ from, to, items: [Event], highlight?: [uid] }` |
+| `memory` | `{ items: [Memory] }` (what she saved or recalled) |
+| `weather` | `{ place, unit: "F" \| "C", now: { temp, feels_like, condition, code }, today: { high, low, precip_chance, sunrise, sunset }, hours: [{ time, temp, precip_chance, code }] (next 12), days: [{ date, high, low, precip_chance, code }] (next 5) }` (`code` is the WMO weather code) |
+| `web_results` | `{ query, items: [{ title, url, snippet, source }] }` |
+| `web_page` | `{ title, url, source, excerpt }` |
+
+## More server → client events
+
+| type | fields | meaning |
+|---|---|---|
+| `notify` | `id`, `kind: "reminder"`, `title`, `body`, `card?` | Something fired. The app shows it even with no turn running. |
+| `invalidate` | `domains: ("tasks" \| "reminders" \| "calendar" \| "memory")[]` | Data changed; refetch those menu sections. |

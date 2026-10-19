@@ -108,7 +108,8 @@ and defaults to `max`, so every request sets `reasoning_effort` explicitly. Flex
    then to the client as a *segment* with audio, word timings and gesture events.
 4. Tool calls run with bounds (6 rounds, 12 calls, 90 s turn deadline). Reads run in parallel
    and writes are ordered. Each call and its result is recorded in the activity log.
-5. `present` lets her put cards on screen by referencing ids from tool results.
+5. Tools that look up or change something the owner cares about (tasks, events, weather…)
+   attach a card built from the stored data, and the client shows it beside her.
 
 Interrupting her (PTT while she talks) stops playback, cancels the rest of the turn and keeps
 what was already said in history.
@@ -125,7 +126,7 @@ what was already said in history.
 | Web | `web_search` (Brave), `web_read` (fetch + readability) | read |
 | World | `weather` (Open-Meteo), `time_in` | read |
 | Self | `self_status`, `self_logs`, `self_usage`, `self_activity`, `idea_log` | read / local |
-| UI | `present` (cards), `think_deeper` (escalate) | none |
+| Reasoning | `think_deeper` (escalate to the full model) | none |
 
 Tools are registered per feature module with a JSON schema, an effect class, a timeout and
 an output cap. Results from mail and web pages are untrusted data, and the prompt says so.

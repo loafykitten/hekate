@@ -49,6 +49,11 @@
   opacity: 1;
 }
 
+/* The panel is focused programmatically when it opens; it isn't a control, so no focus ring. */
+.panel:focus-visible {
+  outline: none;
+}
+
 .main {
   display: flex;
   flex: 1;

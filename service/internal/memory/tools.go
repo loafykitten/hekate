@@ -67,7 +67,10 @@ func (s *Service) saveTool() agent.Tool {
 		Name: "memory_save",
 		Description: "Remember something durable about the owner: a preference, a person in their life, an important date, a plan, a recurring struggle. " +
 			"Do it quietly as it comes up; skip trivia. If the result lists similar memories, update one of those instead of keeping both. " +
-			"Use follow_up_at for things worth asking about later (\"how did the interview go?\").",
+			"Use follow_up_at for things worth asking about later (\"how did the interview go?\"). " +
+			"Write content as one plain fact about the owner's life (\"Maya, their sister, is allergic to peanuts\"), with no " +
+			"notes to yourself, importance or dates of saving in it; importance and follow_up_at are separate fields. " +
+			"One fact per memory: an event on the calendar does not also need a memory.",
 		Schema: json.RawMessage(`{"type":"object","required":["content","kind"],"properties":{
 			"content":{"type":"string","description":"One self-contained note, e.g. \"Has a job interview at Acme on 2026-10-21\"."},
 			"kind":{"type":"string","enum":[` + kindList + `]},

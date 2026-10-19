@@ -290,7 +290,7 @@ func (s *Service) Update(ctx context.Context, uid string, p EventPatch, onlyHeka
 		// A copy per attempt: mutate retries this after an ETag conflict, and the
 		// translation must start from the caller's patch each time.
 		patch := p
-		if err := anchorToSeries(&patch, ser.master, ser.rruleString() != "", s.loc); err != nil {
+		if err := anchorToSeries(&patch, ser.master, ser.rruleString(), s.loc); err != nil {
 			return false, err
 		}
 		in, err := mergePatch(cur, ser.master, patch, s.loc)
@@ -501,9 +501,9 @@ func resolveSpec(in EventInput, loc *time.Location) (spec, error) {
 // applies to the series: a moved start shifts the series by the same amount,
 // and a new end keeps the edited length rather than being read as an
 // absolute end for the series' first occurrence.
-func anchorToSeries(p *EventPatch, m *component, recurring bool, loc *time.Location) error {
+func anchorToSeries(p *EventPatch, m *component, rule string, loc *time.Location) error {
 	var instance string
-	if !recurring || len(p.Instance) == 0 || json.Unmarshal(p.Instance, &instance) != nil || instance == "" {
+	if rule == "" || len(p.Instance) == 0 || json.Unmarshal(p.Instance, &instance) != nil || instance == "" {
 		return nil
 	}
 	if p.Start == nil && p.End == nil {
@@ -512,6 +512,12 @@ func anchorToSeries(p *EventPatch, m *component, recurring bool, loc *time.Locat
 	occ, _, err := parseInput(instance, loc)
 	if err != nil {
 		return badInput("instance: %v", err)
+	}
+	// The edit was made looking at that occurrence. If the series has moved
+	// since (another edit, or our own first attempt before an ETag retry), the
+	// occurrence no longer exists and applying the shift again would compound.
+	if !isOccurrence(m.start, occ, rule, loc) {
+		return errConflict
 	}
 	// shift moves t by the distance from `from` to `to` on the wall clock: whole
 	// calendar days plus the change in time of day, in the series' zone. Elapsed
@@ -648,4 +654,24 @@ func firstAt(r *rrule.RRule, t time.Time) (first time.Time, ok bool) {
 		}
 	}()
 	return r.After(t.Add(-time.Second), true), true
+}
+
+// isOccurrence reports whether t is an occurrence of a series starting at start
+// with rule. A rule rrule-go can't evaluate counts as matching, so the check
+// never blocks an edit on our own limitation.
+func isOccurrence(start, t time.Time, rule string, loc *time.Location) bool {
+	if t.Equal(start) {
+		return true
+	}
+	opt, err := rrule.StrToROptionInLocation(rule, loc)
+	if err != nil {
+		return true
+	}
+	opt.Dtstart = start.In(loc)
+	r, err := rrule.NewRRule(*opt)
+	if err != nil {
+		return true
+	}
+	first, ok := firstAt(r, t)
+	return !ok || first.Equal(t)
 }

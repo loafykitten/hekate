@@ -3,6 +3,7 @@ package calendar
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -537,7 +538,7 @@ func TestAnchorToSeries(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := tt.p
-			if err := anchorToSeries(&p, master, true, loc); err != nil {
+			if err := anchorToSeries(&p, master, "FREQ=WEEKLY", loc); err != nil {
 				t.Fatal(err)
 			}
 			if got := deref(p.Start); got != tt.wantStart {
@@ -551,7 +552,7 @@ func TestAnchorToSeries(t *testing.T) {
 
 	// A non-recurring event, or no instance, is left alone.
 	p := EventPatch{End: str("2026-10-26T11:00")}
-	if err := anchorToSeries(&p, master, true, loc); err != nil || *p.End != "2026-10-26T11:00" {
+	if err := anchorToSeries(&p, master, "FREQ=WEEKLY", loc); err != nil || *p.End != "2026-10-26T11:00" {
 		t.Errorf("without instance: %v %q", err, *p.End)
 	}
 }
@@ -572,7 +573,7 @@ func TestAnchorToSeriesAllDayAcrossDST(t *testing.T) {
 	str := func(s string) *string { return &s }
 	inst, _ := json.Marshal("2026-11-02")
 	p := EventPatch{Instance: inst, Start: str("2026-10-26"), End: str("2026-10-28")}
-	if err := anchorToSeries(&p, master, true, loc); err != nil {
+	if err := anchorToSeries(&p, master, "FREQ=WEEKLY", loc); err != nil {
 		t.Fatal(err)
 	}
 	if *p.Start != "2026-10-12" || *p.End != "2026-10-14" {
@@ -592,7 +593,7 @@ func TestAnchorToSeriesIsRepeatableOnACopy(t *testing.T) {
 	var starts []string
 	for range 2 { // first attempt, then the retry
 		attempt := p
-		if err := anchorToSeries(&attempt, master, true, loc); err != nil {
+		if err := anchorToSeries(&attempt, master, "FREQ=WEEKLY", loc); err != nil {
 			t.Fatal(err)
 		}
 		starts = append(starts, *attempt.Start)
@@ -771,12 +772,35 @@ func TestAnchorToSeriesKeepsWallClockAcrossDST(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			inst, _ := json.Marshal(tt.instance)
 			p := EventPatch{Instance: inst, Start: str(tt.start), End: str(tt.end)}
-			if err := anchorToSeries(&p, master, true, loc); err != nil {
+			if err := anchorToSeries(&p, master, "FREQ=WEEKLY", loc); err != nil {
 				t.Fatal(err)
 			}
 			if *p.Start != tt.wantStart || *p.End != tt.wantEnd {
 				t.Errorf("start, end = %s, %s; want %s, %s", *p.Start, *p.End, tt.wantStart, tt.wantEnd)
 			}
 		})
+	}
+}
+
+// Two editors move the same occurrence from 09:00 to 10:00. The first one
+// moves the series; the second one's anchor (the 09:00 occurrence) no longer
+// exists, so it is refused instead of shifting the series again to 11:00.
+func TestAnchorToSeriesRejectsStaleOccurrence(t *testing.T) {
+	loc, _ := time.LoadLocation("America/Chicago")
+	at := func(s string) time.Time { v, _ := time.ParseInLocation("2006-01-02T15:04", s, loc); return v }
+	str := func(s string) *string { return &s }
+	inst, _ := json.Marshal("2026-10-26T09:00:00-05:00")
+	edit := EventPatch{Instance: inst, Start: str("2026-10-26T10:00"), End: str("2026-10-26T11:00")}
+
+	before := &component{start: at("2026-10-19T09:00"), end: at("2026-10-19T10:00")}
+	first := edit
+	if err := anchorToSeries(&first, before, "FREQ=DAILY", loc); err != nil || *first.Start != "2026-10-19T10:00:00-05:00" {
+		t.Fatalf("first edit: %v %v", err, first.Start)
+	}
+
+	after := &component{start: at("2026-10-19T10:00"), end: at("2026-10-19T11:00")} // what the first edit saved
+	second := edit
+	if err := anchorToSeries(&second, after, "FREQ=DAILY", loc); !errors.Is(err, errConflict) {
+		t.Errorf("second edit: err = %v, start = %v; want a conflict", err, second.Start)
 	}
 }

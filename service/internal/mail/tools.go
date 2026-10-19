@@ -142,7 +142,11 @@ func (s *Service) summaryTool() agent.Tool {
 			for _, c := range append(append([]string{}, categories...), unclassified) {
 				if n := sum.Unread[c]; n > 0 {
 					total += n
-					counts = append(counts, fmt.Sprintf("%d %s", n, strings.ReplaceAll(c, "_", " ")))
+					label := strings.ReplaceAll(c, "_", " ")
+					if c == unclassified {
+						label = "not sorted yet (urgency unknown)"
+					}
+					counts = append(counts, fmt.Sprintf("%d %s", n, label))
 				}
 			}
 			var text string

@@ -36,3 +36,17 @@ func TestPromptContext(t *testing.T) {
 		t.Errorf("hostile subject should be one flat line inside the wrapper:\n%s", text)
 	}
 }
+
+func TestPromptContextDoesNotCallUnsortedMailCalm(t *testing.T) {
+	f := newFixture(t, func(o *fixtureOpts) { o.noModel = true })
+	f.deliver("INBOX", mailSpec{subject: "Could be anything"})
+	f.deliver("INBOX", mailSpec{subject: "Also unknown"})
+	f.sweep()
+	text, err := f.svc.PromptContext(t.Context(), f.clock.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(text, "none urgent") || !strings.Contains(text, "2 not sorted yet") {
+		t.Errorf("unsorted mail must not read as non-urgent:\n%s", text)
+	}
+}

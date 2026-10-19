@@ -1,7 +1,7 @@
 import { keepPreviousData, MutationCache, QueryCache, QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { applyApproval, freshest } from "./approvals";
-import type { Approval, CalendarEvent, Message, Task } from "./model";
+import { asApproval, type Approval, type CalendarEvent, type Message, type Task } from "./model";
 import { DOMAINS, keys, type Domain } from "./queryKeys";
 import {
   ApiError,
@@ -37,6 +37,13 @@ export function createQueryClient(onError: (message: string, key: string) => voi
       },
     }),
     mutationCache: new MutationCache({
+      onSuccess: (data, _vars, _ctx, mutation) => {
+        // An allowed action that ran and failed still answers 200: say so, wherever it was decided.
+        const approval = mutation.meta?.reportsApprovalFailure ? asApproval(data) : undefined;
+        if (approval?.status === "failed") {
+          onError(approval.result ? `That didn't work: ${approval.result}` : "That didn't work.", `approval-failed-${approval.id}`);
+        }
+      },
       onError: (error, _vars, _ctx, mutation) => {
         // A decision somebody else made first is not a failure: the card refetches and shows it.
         if (mutation.meta?.handles409 && error instanceof ApiError && error.status === 409) return;
@@ -323,7 +330,7 @@ export function useDecideApproval() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, decision }: { id: string; decision: ApprovalDecision }) => approvalsApi.decide(id, decision),
-    meta: { handles409: true },
+    meta: { handles409: true, reportsApprovalFailure: true },
     onSuccess: (approval) => applyApproval(qc, approval),
     // Allowing can change mail, and a 409 means somebody decided first: either way, look again.
     onSettled: () => Promise.all([qc.invalidateQueries({ queryKey: ["approvals"] }), qc.invalidateQueries({ queryKey: ["mail"] })]),

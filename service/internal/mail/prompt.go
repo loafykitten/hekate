@@ -38,12 +38,17 @@ func (s *Service) PromptContext(ctx context.Context, _ time.Time) (string, error
 	if important > 0 {
 		parts = append(parts, fmt.Sprintf("%d important", important))
 	}
-	if other := total - reply - important; other > 0 {
+	unsorted := sum.Unread[unclassified]
+	if other := total - reply - important - unsorted; other > 0 {
 		word := "other"
-		if len(parts) == 0 {
+		if len(parts) == 0 && unsorted == 0 {
 			word = "unread, none urgent"
 		}
 		parts = append(parts, fmt.Sprintf("%d %s", other, word))
+	}
+	if unsorted > 0 {
+		// Not yet read by the classifier: anything could be in there.
+		parts = append(parts, fmt.Sprintf("%d not sorted yet, so their urgency is unknown", unsorted))
 	}
 	text := "Unread: " + strings.Join(parts, ", ") + "."
 	if len(sum.Attention) == 0 {

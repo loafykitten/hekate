@@ -398,7 +398,7 @@ func (s *Service) setUnread(ctx context.Context, id int64, unread bool) error {
 
 // markGone records that a message is no longer where Hekate last saw it.
 func (s *Service) markGone(ctx context.Context, id int64) {
-	_, err := s.db.ExecContext(ctx, `UPDATE mail_messages SET gone = 1, folder = '',
+	_, err := s.db.ExecContext(ctx, `UPDATE mail_messages SET gone = 1, folder = '', uid = 0,
 		left_inbox_at = COALESCE(left_inbox_at, ?) WHERE id = ?`, stamp(s.now()), id)
 	if err != nil {
 		s.log.Error("cannot mark mail gone", "id", id, "error", err)
@@ -408,7 +408,7 @@ func (s *Service) markGone(ctx context.Context, id int64) {
 // markGoneAt marks a row gone only if it is still where r says, so a row that
 // was relocated in the meantime keeps its new place.
 func (s *Service) markGoneAt(ctx context.Context, r row) {
-	_, err := s.db.ExecContext(ctx, `UPDATE mail_messages SET gone = 1, folder = '',
+	_, err := s.db.ExecContext(ctx, `UPDATE mail_messages SET gone = 1, folder = '', uid = 0,
 		left_inbox_at = COALESCE(left_inbox_at, ?) WHERE id = ? AND folder = ? AND uidvalidity = ? AND uid = ?`,
 		stamp(s.now()), r.ID, r.Folder, r.Validity, r.UID)
 	if err != nil {

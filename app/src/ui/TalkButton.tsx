@@ -11,8 +11,8 @@ interface Props {
   label: string;
 }
 
-// The big round push-to-talk button. Press and hold talks and release sends; a quick tap
-// latches listening until the next tap. The ring follows the microphone level.
+// The big round talk button: one click or tap starts listening, the next ends it and sends.
+// The ring follows the microphone level.
 export function TalkButton({ phase, latched, disabled, label }: Props) {
   const conversation = useConversation();
   const ringRef = useRef<HTMLSpanElement>(null);
@@ -45,7 +45,7 @@ export function TalkButton({ phase, latched, disabled, label }: Props) {
         id="talk-button"
         className={styles.button}
         aria-disabled={disabled || undefined}
-        aria-pressed={phase === "listening"}
+        aria-pressed={phase === "listening" || phase === "starting"}
         aria-label={label}
         onPointerDown={(e) => {
           if (e.button !== 0) return;

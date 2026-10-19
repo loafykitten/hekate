@@ -333,7 +333,11 @@ func (ss *session) transcribe(id string, pcm []int16, gen uint64) {
 	}
 	ctx, cancel := context.WithTimeout(ss.ctx, sttTimeout)
 	defer cancel()
+	began := time.Now()
 	text, err := stt.Transcribe(ctx, pcm, proto.PTTSampleRate)
+	// Audio length and timing only: what was said is never logged.
+	ss.s.log.Info("transcribed", "client_id", ss.id, "audio_s", float64(len(pcm))/proto.PTTSampleRate,
+		"ms", time.Since(began).Milliseconds(), "chars", len(strings.TrimSpace(text)))
 	switch {
 	case ss.ctx.Err() != nil:
 		return // the client left

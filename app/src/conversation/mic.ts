@@ -91,6 +91,22 @@ export class MicCapture {
     return this._active ? this.smoothed : 0;
   }
 
+  // Creates the audio context (suspended until a press resumes it) and loads the capture
+  // worklet ahead of time, so the first press only waits for the microphone to open.
+  prepare(): void {
+    if (this.ctx || typeof AudioContext === "undefined") return;
+    try {
+      const ctx = (this.ctx = new AudioContext({ latencyHint: "interactive" }));
+      const loaded = ctx.audioWorklet.addModule(workletUrl);
+      this.loaded = loaded;
+      loaded.catch(() => {
+        if (this.loaded === loaded) this.loaded = undefined; // the press tries again
+      });
+    } catch {
+      // The press creates it instead.
+    }
+  }
+
   // Resolves true once chunks are flowing, false if stop() was called first. Throws MicError.
   async start(): Promise<boolean> {
     if (this._active || this.stream) throw new MicError("busy", "Already capturing.");

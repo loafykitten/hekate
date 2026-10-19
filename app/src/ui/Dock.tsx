@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { MAX_TEXT_LENGTH } from "../conversation/protocol";
 import { useConversation, useConversationState } from "./ConversationContext";
 import styles from "./Dock.module.css";
 import { KeyboardIcon, MicIcon, SendIcon } from "./icons";
 import { useKeyboardInset } from "./keyboardInset";
-import { talkCopy } from "./talkCopy";
+import { talkCopy, talkVerb } from "./talkCopy";
 import { TalkButton } from "./TalkButton";
 
 type Mode = "voice" | "text";
@@ -56,7 +56,8 @@ export function Dock({ onOpenLog, logOpen }: Props) {
     requestAnimationFrame(() => (next === "text" ? inputRef.current : toggleRef.current)?.focus({ preventScroll: true }));
   }
 
-  // Space is hold-to-talk on desktop, unless a text field or button has the keyboard.
+  // Space works like the talk button on desktop (press to start, press again to end), unless a
+  // text field or button has the keyboard.
   useEffect(() => {
     if (mode !== "voice" || logOpen) return;
     let down = false;
@@ -91,7 +92,8 @@ export function Dock({ onOpenLog, logOpen }: Props) {
   }, [conversation, mode, logOpen]);
 
   const connected = state.connection === "open";
-  const copy = talkCopy(state.phase, state.latched, connected, state.capabilities?.stt);
+  const verb = useMemo(() => talkVerb(), []);
+  const copy = talkCopy(state.phase, connected, state.capabilities?.stt, verb);
   const busy = state.phase === "thinking" || state.phase === "speaking";
 
   function send() {

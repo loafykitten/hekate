@@ -83,6 +83,13 @@
   animation: spin 1.3s linear infinite;
 }
 
+/* Starting: pressed, but the mic isn't open yet. A quick arc says "wait", and the button only
+   lights up once it is really listening. */
+.wrap[data-phase="starting"] .halo {
+  opacity: 1;
+  animation: spin 0.7s linear infinite;
+}
+
 .wrap[data-phase="transcribing"] .button,
 .wrap[data-phase="thinking"] .button {
   background: radial-gradient(circle at 35% 28%, #e9c07a, #c98d2f 60%, #a97020);

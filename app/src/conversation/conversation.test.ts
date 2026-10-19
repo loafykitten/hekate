@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConversationClient } from "./client";
-import { Conversation, TAP_MS, type MicLike } from "./conversation";
+import { Conversation, type MicLike } from "./conversation";
 import { FakeSocket, FakeSpeech, READY } from "./fakes";
 import { MicError } from "./mic";
 
@@ -126,19 +126,24 @@ describe("Conversation: typed input", () => {
 });
 
 describe("Conversation: push-to-talk", () => {
-  it("holds: start, stream chunks, release sends ptt_end after the mic flushed", async () => {
+  it("toggles: a press starts and streams chunks, the next press sends ptt_end after the mic flushed", async () => {
     const t = setup();
     t.conversation.pressTalk();
     expect(t.types()).toEqual(["ptt_start"]);
     expect(t.socket.json[0]).toMatchObject({ sample_rate: 16000 });
-    expect(t.state().phase).toBe("listening");
+    expect(t.state().phase).toBe("starting"); // nothing is recorded until the mic is open
     await vi.advanceTimersByTimeAsync(0); // mic.start resolves
+    expect(t.state().phase).toBe("listening");
 
     const audio = new Int16Array([1, 2]).buffer;
     t.chunk(audio);
     expect(t.socket.sent.at(-1)).toBe(audio);
 
-    t.tick(TAP_MS + 100);
+    t.tick(3000);
+    t.conversation.releaseTalk(); // letting go doesn't end it, even after a long hold
+    expect(t.state()).toMatchObject({ phase: "listening", latched: true });
+    expect(t.mic.stop).not.toHaveBeenCalled();
+    t.conversation.pressTalk(); // the next press does
     t.conversation.releaseTalk();
     expect(t.state().phase).toBe("transcribing");
     expect(t.mic.stop).toHaveBeenCalledOnce();
@@ -153,7 +158,7 @@ describe("Conversation: push-to-talk", () => {
     expect(t.state().phase).toBe("thinking");
   });
 
-  it("a quick tap latches listening, and the next tap sends", async () => {
+  it("a quick tap starts listening, and the next tap sends", async () => {
     const t = setup();
     t.conversation.pressTalk();
     await vi.advanceTimersByTimeAsync(0);
@@ -174,7 +179,9 @@ describe("Conversation: push-to-talk", () => {
     const t = setup();
     t.conversation.pressTalk();
     await vi.advanceTimersByTimeAsync(0);
+    t.conversation.releaseTalk();
     t.tick(500);
+    t.conversation.pressTalk();
     t.conversation.releaseTalk();
     await vi.advanceTimersByTimeAsync(0);
     t.socket.receive({ type: "transcript", id: t.socket.json[0].id, text: "" });
@@ -188,8 +195,9 @@ describe("Conversation: push-to-talk", () => {
     t.socket.receive(seg("t1", 0, "One."));
     t.conversation.pressTalk();
     expect(t.types()).toEqual(["interrupt", "ptt_start"]);
-    expect(t.state().phase).toBe("listening");
+    expect(t.state().phase).toBe("starting");
     await vi.advanceTimersByTimeAsync(0);
+    expect(t.state().phase).toBe("listening");
   });
 
   it("cancels the recording when the mic is blocked", async () => {
@@ -205,11 +213,14 @@ describe("Conversation: push-to-talk", () => {
     expect(t.state().toasts[0].text).toContain("Microphone access is blocked");
   });
 
-  it("discards a hold that ended before the mic was ready", async () => {
+  it("keeps starting through a release, and a second tap before the mic opens cancels", async () => {
     let finish: (ok: boolean) => void = () => {};
     const t = setup({ startImpl: () => new Promise<boolean>((r) => (finish = r)) });
     t.conversation.pressTalk();
-    t.tick(900); // a long press, still waiting on the permission prompt
+    t.tick(900); // still waiting on the permission prompt
+    t.conversation.releaseTalk();
+    expect(t.state().phase).toBe("starting");
+    t.conversation.pressTalk(); // changed their mind before anything was recorded
     t.conversation.releaseTalk();
     expect(t.types()).toEqual(["ptt_start", "ptt_cancel"]);
     expect(t.state().phase).toBe("idle");
@@ -288,7 +299,9 @@ describe("Conversation: superseded input and back-to-back turns", () => {
     const t = setup();
     t.conversation.pressTalk();
     await vi.advanceTimersByTimeAsync(0);
-    t.tick(TAP_MS + 100);
+    t.conversation.releaseTalk();
+    t.tick(500);
+    t.conversation.pressTalk();
     t.conversation.releaseTalk();
     await vi.advanceTimersByTimeAsync(0);
     const id = t.socket.json[0].id as string;

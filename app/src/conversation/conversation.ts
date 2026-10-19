@@ -13,7 +13,8 @@ import { MAX_TEXT_LENGTH, type Capabilities, type Notify, type Segment, type Tur
 // and turns their events into one immutable state snapshot (for useSyncExternalStore). Framework
 // free. The one place that knows how input, interruption and playback fit together.
 
-export type Phase = "idle" | "listening" | "transcribing" | "thinking" | "speaking";
+// "starting": pressed, but the microphone is still opening and nothing is recorded yet.
+export type Phase = "idle" | "starting" | "listening" | "transcribing" | "thinking" | "speaking";
 
 export interface Toast {
   id: number;
@@ -39,7 +40,7 @@ export interface ConversationState {
   // Set once connected; reset when the connection drops.
   capabilities?: Capabilities;
   phase: Phase;
-  // Tap-to-latch listening (as opposed to holding the button).
+  // The press that started listening has been let go; the next press ends it.
   latched: boolean;
   caption?: { id: number; text: string };
   // The tool she's running right now, e.g. "Checking your calendar".
@@ -53,8 +54,6 @@ export interface ConversationState {
   historyEpoch: number;
 }
 
-// A press shorter than this latches listening on instead of ending it on release.
-export const TAP_MS = 250;
 const PENDING_TIMEOUT_MS = 60_000;
 const MAX_LIVE = 40; // live entries kept for the log while history hasn't caught up
 
@@ -75,6 +74,8 @@ export interface ConversationDeps {
 }
 
 export interface MicLike {
+  // Optional warm-up before the first press, so a press waits only for the microphone itself.
+  prepare?(): void;
   start(): Promise<boolean>;
   stop(): Promise<void>;
   readonly level: number;
@@ -277,10 +278,6 @@ export class Conversation {
       (ok) => {
         if (!ok) return;
         capture.ready = true;
-        if (this.capture === capture && capture.released && !capture.latched) {
-          // Let go while the permission prompt or the device was still opening.
-          this.cancelCapture();
-        }
         this.emit();
       },
       (e: unknown) => {
@@ -293,18 +290,15 @@ export class Conversation {
     this.emit();
   }
 
-  // Release of the talk button (or Space).
+  // Release of the talk button (or Space). Talking is a toggle: the press started it, and it
+  // keeps listening until the next press ends it.
   releaseTalk() {
     const capture = this.capture;
     if (!capture || !this.pressOwnsCapture) return;
     this.pressOwnsCapture = false;
     capture.released = true;
-    if (this.now() - capture.pressedAt < TAP_MS) {
-      capture.latched = true;
-      this.emit();
-    } else {
-      this.finishCapture();
-    }
+    capture.latched = true;
+    this.emit();
   }
 
   // The press was taken away from us (OS interruption): discard rather than send half a thought.
@@ -394,6 +388,7 @@ export class Conversation {
     this.dismissToast("offline-talk");
     // Anything still live was lost with the old connection; history has what was saved.
     this.capabilities = capabilities;
+    if (capabilities.stt) this.mic.prepare?.();
     this.live = [];
     this.historyEpoch++;
     this.emit();
@@ -594,7 +589,7 @@ export class Conversation {
   }
 
   private phase(): Phase {
-    if (this.capture) return "listening";
+    if (this.capture) return this.capture.ready ? "listening" : "starting";
     if (this.pending?.stage === "transcript") return "transcribing";
     if (this.pending) return "thinking";
     if (this.myTurn) return this.spoke || this.player?.busy ? "speaking" : "thinking";

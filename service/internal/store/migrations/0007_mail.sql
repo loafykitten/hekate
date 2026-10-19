@@ -1,6 +1,7 @@
 -- Per-account sync state for the INBOX.
 CREATE TABLE mail_accounts (
     name          TEXT PRIMARY KEY, -- the account's label from the configuration
+    identity      TEXT NOT NULL DEFAULT '', -- user|host the cache belongs to; a change empties the cache
     uidvalidity   INTEGER NOT NULL DEFAULT 0, -- INBOX UIDVALIDITY the cache was built against; 0 before the first sync
     last_uid      INTEGER NOT NULL DEFAULT 0, -- highest INBOX UID already fetched
     last_sweep_at TEXT, -- UTC RFC 3339, last successful sweep

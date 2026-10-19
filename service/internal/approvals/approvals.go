@@ -289,12 +289,17 @@ func (s *Service) Request(ctx context.Context, r Request) (Approval, error) {
 	now := s.now()
 
 	if r.Scope != "" {
-		res, err := s.db.ExecContext(ctx, `UPDATE approval_rules SET uses = uses + 1 WHERE kind = ? AND scope = ?`, r.Kind, r.Scope)
-		if err != nil {
-			return Approval{}, fmt.Errorf("look up rule: %w", err)
-		}
-		if n, _ := res.RowsAffected(); n > 0 {
-			return s.runByRule(ctx, exec, r, payload, now)
+		for _, scope := range append([]string{r.Scope}, r.Within...) {
+			if scope == "" {
+				continue
+			}
+			res, err := s.db.ExecContext(ctx, `UPDATE approval_rules SET uses = uses + 1 WHERE kind = ? AND scope = ?`, r.Kind, scope)
+			if err != nil {
+				return Approval{}, fmt.Errorf("look up rule: %w", err)
+			}
+			if n, _ := res.RowsAffected(); n > 0 {
+				return s.runByRule(ctx, exec, r, payload, now)
+			}
 		}
 	}
 
@@ -456,7 +461,7 @@ func (s *Service) notify(ctx context.Context, a Approval) {
 	}
 	pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), deliverTimout)
 	defer cancel()
-	if _, err := s.pusher.Send(pctx, push.Payload{Title: notifyTitle, Body: a.Title, URL: "/", Tag: "approval-" + a.ID}, push.UrgencyHigh); err != nil {
+	if _, err := s.pusher.Send(pctx, push.Payload{Title: notifyTitle, Body: a.Title, URL: "/?menu=today", Tag: "approval-" + a.ID}, push.UrgencyHigh); err != nil {
 		s.log.Error("cannot send push for approval", "id", a.ID, "error", err)
 	}
 }

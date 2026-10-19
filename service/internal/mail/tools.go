@@ -435,11 +435,31 @@ func (s *Service) trashTool() agent.Tool {
 			if key := sharedSender(rows); key != "" {
 				title += " from " + oneLine(senderLabel(key), 80)
 				req.Scope, req.ScopeLabel = "from:"+key, "mail from "+oneLine(senderLabel(key), 80)
+				req.Within = withinScopes(key)
 			}
 			req.Title = title + " to Trash?"
 			return s.ask(ctx, req)
 		}),
 	}
+}
+
+// withinScopes lists the broader sender scopes whose "Always" also covers key
+// (an address or "@domain"): its domain and each parent domain, as mail rules
+// match them. "news@mail.example.org" gives "from:@mail.example.org" and
+// "from:@example.org".
+func withinScopes(key string) []string {
+	domain := strings.TrimPrefix(key, "@")
+	if i := strings.LastIndexByte(domain, '@'); i >= 0 {
+		domain = domain[i+1:]
+	}
+	var out []string
+	for strings.Contains(domain, ".") {
+		if scope := "from:@" + domain; scope != "from:"+key {
+			out = append(out, scope)
+		}
+		_, domain, _ = strings.Cut(domain, ".")
+	}
+	return out
 }
 
 func (s *Service) unsubscribeTool() agent.Tool {
@@ -473,6 +493,7 @@ func (s *Service) unsubscribeTool() agent.Tool {
 				Detail:     "Sends a one-click unsubscribe request to the sender's server. Nothing is emailed.",
 				Scope:      "from:" + r.FromAddr,
 				ScopeLabel: "mail from " + who,
+				Within:     withinScopes(r.FromAddr),
 				Payload:    payloadOf(idPayload{ID: r.ID}),
 			})
 		}),

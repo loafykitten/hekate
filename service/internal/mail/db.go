@@ -318,6 +318,48 @@ func (s *Service) accountState(ctx context.Context, name string) (accountState, 
 	return st, nil
 }
 
+// bindAccounts ties each account's cache to the mailbox it came from. When an
+// account keeps its label but points at a different user or host, its cached
+// messages are dropped: their ids would otherwise reach into the new mailbox,
+// and a pending approval could act on an unrelated message there. Ids are
+// never reused, so approvals for the old messages find nothing.
+func (s *Service) bindAccounts(ctx context.Context) error {
+	now := stamp(s.now())
+	for _, a := range s.accounts {
+		identity := strings.ToLower(a.cfg.User) + "|" + strings.ToLower(a.cfg.Host)
+		var stored string
+		err := s.db.QueryRowContext(ctx, `SELECT identity FROM mail_accounts WHERE name = ?`, a.cfg.Name).Scan(&stored)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			if _, err := s.db.ExecContext(ctx, `INSERT INTO mail_accounts (name, identity, updated_at) VALUES (?, ?, ?)`,
+				a.cfg.Name, identity, now); err != nil {
+				return fmt.Errorf("mail: record account %q: %w", a.cfg.Name, err)
+			}
+			continue
+		case err != nil:
+			return fmt.Errorf("mail: load account %q: %w", a.cfg.Name, err)
+		case stored == identity:
+			continue
+		}
+		s.log.Warn("mail account now points at a different mailbox; clearing its cache", "account", a.cfg.Name)
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("mail: reset account %q: %w", a.cfg.Name, err)
+		}
+		_, err1 := tx.ExecContext(ctx, `DELETE FROM mail_messages WHERE account = ?`, a.cfg.Name)
+		_, err2 := tx.ExecContext(ctx, `UPDATE mail_accounts SET identity = ?, uidvalidity = 0, last_uid = 0, last_sweep_at = NULL,
+			last_error = '', updated_at = ? WHERE name = ?`, identity, now, a.cfg.Name)
+		if err := errors.Join(err1, err2); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("mail: reset account %q: %w", a.cfg.Name, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("mail: reset account %q: %w", a.cfg.Name, err)
+		}
+	}
+	return nil
+}
+
 // saveSync records a successful sync.
 func (s *Service) saveSync(ctx context.Context, name string, validity, lastUID uint32) error {
 	now := stamp(s.now())

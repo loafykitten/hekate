@@ -364,6 +364,23 @@ func TestExecutorOutlivesTheCaller(t *testing.T) {
 	}
 }
 
+func TestBroaderRuleCoversANarrowerRequest(t *testing.T) {
+	f := newFixture(t)
+	domain := f.request(t, "from:@example.com")
+	f.decide(t, domain, DecisionAlways)
+
+	one, err := f.svc.Request(t.Context(), Request{Kind: "mail_trash", Title: "Move 1 message from news@example.com to Trash?",
+		Scope: "from:news@example.com", ScopeLabel: "mail from news@example.com", Within: []string{"from:@example.com"}})
+	if err != nil || one.Status != StatusDone || str(one.DecidedBy) != DecidedByRule {
+		t.Fatalf("one sender under a domain rule = %+v, %v", one, err)
+	}
+	other, _ := f.svc.Request(t.Context(), Request{Kind: "mail_trash", Title: "Move 1 message from a@other.example to Trash?",
+		Scope: "from:a@other.example", ScopeLabel: "mail from a@other.example", Within: []string{"from:@other.example"}})
+	if other.Status != StatusPending {
+		t.Errorf("another domain = %+v, want it to ask", other)
+	}
+}
+
 func TestRuleRunOutlivesTheCaller(t *testing.T) {
 	f := newFixture(t)
 	if err := f.svc.Register("slow", func(ctx context.Context, _ json.RawMessage) (string, error) {
@@ -493,7 +510,7 @@ func TestNotify(t *testing.T) {
 		notes[0].Card.Kind != "approval" || !strings.Contains(string(notes[0].Card.Data), `"id":"`+a.ID+`"`) {
 		t.Fatalf("notes = %+v", notes)
 	}
-	if len(f.push.sent) != 1 || f.push.sent[0].Body != "Always trash noise?" {
+	if len(f.push.sent) != 1 || f.push.sent[0].Body != "Always trash noise?" || f.push.sent[0].URL != "/?menu=today" {
 		t.Errorf("push = %+v", f.push.sent)
 	}
 }

@@ -46,6 +46,10 @@ type Request struct {
 	Scope string
 	// ScopeLabel says Scope in words, e.g. "mail from example.com".
 	ScopeLabel string
+	// Within lists broader scopes whose standing rule also covers this
+	// request, e.g. "from:@example.com" for a request scoped to one sender
+	// there. "Always" still stores Scope.
+	Within []string
 	// Payload is what the Executor needs to run the action.
 	Payload json.RawMessage
 	// Notify tells the owner by push and a notify event, for requests made

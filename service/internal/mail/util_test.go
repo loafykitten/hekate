@@ -1,8 +1,10 @@
 package mail
 
 import (
+	"slices"
 	"strconv"
 	"strings"
+	"testing"
 
 	"github.com/emersion/go-imap/v2"
 )
@@ -21,4 +23,17 @@ func mustID(s string) int64 {
 		panic(err)
 	}
 	return n
+}
+
+func TestWithinScopes(t *testing.T) {
+	for key, want := range map[string][]string{
+		"news@mail.example.org": {"from:@mail.example.org", "from:@example.org"},
+		"@mail.example.org":     {"from:@example.org"},
+		"a@example.org":         {"from:@example.org"},
+		"@example.org":          nil,
+	} {
+		if got := withinScopes(key); !slices.Equal(got, want) {
+			t.Errorf("withinScopes(%q) = %q, want %q", key, got, want)
+		}
+	}
 }

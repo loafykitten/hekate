@@ -224,6 +224,9 @@ func New(o Options) (*Service, error) {
 		s.accounts = append(s.accounts, a)
 		s.byName[cfg.Name] = a
 	}
+	if err := s.bindAccounts(context.Background()); err != nil {
+		return nil, err
+	}
 	if s.appr != nil {
 		for kind, exec := range map[string]approvals.Executor{
 			KindTrash: s.execTrash, KindUnsubscribe: s.execUnsubscribe, KindBulk: s.execBulk, KindRuleCreate: s.execRuleCreate,

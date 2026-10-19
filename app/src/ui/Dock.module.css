@@ -133,3 +133,9 @@
   text-align: center;
   user-select: none;
 }
+
+/* The menu is modal; the dock waits behind it instead of peeking out beside it. */
+:global(html[data-menu-open]) .dock {
+  opacity: 0;
+  pointer-events: none;
+}

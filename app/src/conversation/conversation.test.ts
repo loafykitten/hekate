@@ -314,3 +314,103 @@ describe("Conversation: superseded input and back-to-back turns", () => {
     expect(speech.stopped).toBe(1);
   });
 });
+
+const memoryCard = (id = "m1") => ({ kind: "memory", id, title: "Saved", data: { items: [] } });
+const remindersCard = { kind: "reminders", id: "r1", title: "Reminder", data: { items: [], highlight: ["7"] } };
+
+describe("Conversation: cards, notices and invalidation", () => {
+  function startTurn(t: ReturnType<typeof setup>, turn = "t1", origin = "c1") {
+    t.socket.receive({ type: "turn_start", turn_id: turn, input_id: "x", origin, user_text: "hi" });
+  }
+
+  it("shows cards from turns this client started", () => {
+    const t = setup();
+    startTurn(t);
+    t.socket.receive({ type: "card", turn_id: "t1", card: memoryCard() });
+    expect(t.state().cards.map((c) => [c.card.kind, c.source])).toEqual([["memory", "turn"]]);
+  });
+
+  it("ignores cards from another client's turn, unknown kinds and malformed cards", () => {
+    const t = setup();
+    startTurn(t, "t1", "someone-else");
+    t.socket.receive({ type: "card", turn_id: "t1", card: memoryCard() });
+    expect(t.state().cards).toEqual([]);
+    t.socket.receive({ type: "turn_end", turn_id: "t1", status: "done", text: "", model: "m", usage: { input_tokens: 0, output_tokens: 0, cost_usd: null } });
+    startTurn(t, "t2");
+    t.socket.receive({ type: "card", turn_id: "t2", card: { kind: "hologram", id: "h", title: "", data: {} } });
+    t.socket.receive({ type: "card", turn_id: "t2", card: { kind: "tasks", id: "t", title: "", data: "nope" } });
+    expect(t.state().cards).toEqual([]);
+  });
+
+  it("keeps the latest three and clears them when the next turn starts", () => {
+    const t = setup();
+    startTurn(t);
+    for (const id of ["a", "b", "c", "d"]) t.socket.receive({ type: "card", turn_id: "t1", card: memoryCard(id) });
+    expect(t.state().cards.filter((c) => !c.leaving).map((c) => c.card.id)).toEqual(["d", "c", "b"]);
+    startTurn(t, "t2");
+    expect(t.state().cards.filter((c) => !c.leaving)).toEqual([]);
+  });
+
+  it("lets cards expire after about 45 seconds", () => {
+    const t = setup();
+    startTurn(t);
+    t.socket.receive({ type: "card", turn_id: "t1", card: memoryCard() });
+    vi.advanceTimersByTime(44_000);
+    expect(t.state().cards.filter((c) => !c.leaving)).toHaveLength(1);
+    vi.advanceTimersByTime(2_000);
+    expect(t.state().cards.filter((c) => !c.leaving)).toHaveLength(0);
+  });
+
+  it("dismisses a card on request", () => {
+    const t = setup();
+    startTurn(t);
+    t.socket.receive({ type: "card", turn_id: "t1", card: memoryCard() });
+    t.conversation.dismissCard(t.state().cards[0].key);
+    expect(t.state().cards.filter((c) => !c.leaving)).toEqual([]);
+  });
+
+  it("turns notify into a banner and a card, with a soft gesture when she knows one", () => {
+    const t = setup({ ready: { ...READY, gestures: ["waving", "acknowledging"] } });
+    const play = vi.fn();
+    t.conversation.attachStage({ character: { playGesture: play }, speech: {}, bubble: undefined } as never);
+    t.socket.receive({ type: "notify", id: "n1", kind: "reminder", title: "Reminder", body: "Call the dentist", card: remindersCard });
+    expect(t.state().notices).toEqual([{ id: "n1", title: "Reminder", body: "Call the dentist", section: "reminders" }]);
+    expect(t.state().cards.map((c) => [c.card.kind, c.source])).toEqual([["reminders", "notify"]]);
+    expect(play).toHaveBeenCalledWith("acknowledging");
+    vi.advanceTimersByTime(13_000);
+    expect(t.state().notices).toEqual([]);
+  });
+
+  it("shows a notice without a card, and stays quiet if she has no acknowledging gesture", () => {
+    const t = setup();
+    const play = vi.fn();
+    t.conversation.attachStage({ character: { playGesture: play }, speech: {}, bubble: undefined } as never);
+    t.socket.receive({ type: "notify", id: "n2", kind: "reminder", title: "Stretch", body: "" });
+    expect(t.state().notices).toHaveLength(1);
+    expect(t.state().cards).toEqual([]);
+    expect(play).not.toHaveBeenCalled();
+  });
+
+  it("passes invalidate domains on, and everything again after a reconnect", () => {
+    const t = setup();
+    const seen: string[][] = [];
+    t.conversation.onInvalidate((d) => seen.push(d));
+    t.socket.receive({ type: "invalidate", domains: ["tasks", "calendar"] });
+    expect(seen).toEqual([["tasks", "calendar"]]);
+    t.socket.drop();
+    t.conversation.client.reconnectNow();
+    FakeSocket.last.open();
+    FakeSocket.last.receive(READY);
+    expect(seen.at(-1)).toEqual(["tasks", "reminders", "calendar", "memory", "weather"]);
+  });
+});
+
+describe("Conversation: authoritative turn text", () => {
+  it("an interrupted reply nobody heard is empty in the live log", () => {
+    const t = setup();
+    t.socket.receive({ type: "turn_start", turn_id: "t1", input_id: "x", origin: "c1", user_text: "hi" });
+    t.socket.receive(seg("t1", 0, "Never heard."));
+    t.socket.receive({ ...turnEnd("t1", ""), status: "interrupted" });
+    expect(t.state().live.find((e) => e.role === "assistant")?.text).toBe("");
+  });
+});

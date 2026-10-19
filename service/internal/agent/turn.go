@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/loafykitten/hekate/service/internal/config"
@@ -98,8 +99,10 @@ func (r *turnRun) begin() error {
 	if err != nil {
 		return fmt.Errorf("load history: %w", err)
 	}
+	now := a.now()
 	r.msgs = BuildMessages(PromptInput{
-		Tamer: a.tamer, Gestures: a.Gestures(), Now: a.now(), Location: a.loc, History: hist,
+		Tamer: a.tamer, Gestures: a.Gestures(), Now: now, Location: a.loc, History: hist,
+		Context: gatherContext(t.ctx, a.sources, now, t.userText, r.log),
 	})
 	return nil
 }
@@ -136,13 +139,18 @@ func (r *turnRun) loop(ctx context.Context) error {
 			return nil
 		}
 		r.msgs = append(r.msgs, llm.Message{Role: llm.RoleAssistant, Content: rd.text, ToolCalls: rd.calls})
-		for _, call := range rd.calls {
-			content, executed := r.runTool(ctx, call)
-			if !executed {
+		outcomes := r.runCalls(ctx, rd.calls)
+		for i, call := range rd.calls {
+			o := outcomes[i]
+			if !o.executed {
 				return ctx.Err()
 			}
-			rd.results[call.ID] = content
-			r.msgs = append(r.msgs, llm.Message{Role: llm.RoleTool, ToolCallID: call.ID, Content: content})
+			if o.escalate && !r.deeper {
+				r.model, r.deeper = a.deep, true
+				r.log.Info("escalating to the deep model", "model", a.deep.Name)
+			}
+			rd.results[call.ID] = o.content
+			r.msgs = append(r.msgs, llm.Message{Role: llm.RoleTool, ToolCallID: call.ID, Content: o.content})
 		}
 	}
 }
@@ -216,11 +224,67 @@ func (r *turnRun) recordUsage(rd *roundRec, res *llm.Result, took time.Duration)
 		"finish", res.FinishReason, "ms", took.Milliseconds(), "request_id", res.RequestID)
 }
 
-// runTool executes one call. It reports false when the turn was cancelled
-// before the call produced a result.
-func (r *turnRun) runTool(ctx context.Context, call llm.ToolCall) (content string, executed bool) {
+// toolOutcome is what one call produced.
+type toolOutcome struct {
+	content  string
+	executed bool // false when the turn was cancelled before the call had a result
+	escalate bool // a successful think_deeper
+}
+
+// runCalls executes one round of calls. Consecutive read-only calls run in
+// parallel (bounded); anything that changes data runs alone and in order, so a
+// read after a write sees the write. Outcomes keep the model's call order.
+func (r *turnRun) runCalls(ctx context.Context, calls []llm.ToolCall) []toolOutcome {
+	out := make([]toolOutcome, len(calls))
+	// Number the calls up front: the per-turn budget follows the model's order.
+	first := r.calls + 1
+	r.calls += len(calls)
+
+	for i := 0; i < len(calls); {
+		j := i
+		for j < len(calls) && r.isRead(calls[j]) {
+			j++
+		}
+		if j-i < 2 { // a lone call, or a non-read one
+			j = i + 1
+		}
+		if j-i == 1 {
+			out[i] = r.runTool(ctx, calls[i], first+i)
+			if !out[i].executed {
+				return out
+			}
+			i = j
+			continue
+		}
+		sem := make(chan struct{}, maxParallelReads)
+		var wg sync.WaitGroup
+		for k := i; k < j; k++ {
+			wg.Go(func() {
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				out[k] = r.runTool(ctx, calls[k], first+k)
+			})
+		}
+		wg.Wait()
+		for k := i; k < j; k++ {
+			if !out[k].executed {
+				return out
+			}
+		}
+		i = j
+	}
+	return out
+}
+
+func (r *turnRun) isRead(call llm.ToolCall) bool {
+	t, ok := r.a.tools.Get(call.Name)
+	return ok && t.Effect == EffectRead
+}
+
+// runTool executes one call, the n-th of the turn. It is safe to run several
+// at once: it touches only the hub and the store.
+func (r *turnRun) runTool(ctx context.Context, call llm.ToolCall, n int) toolOutcome {
 	a := r.a
-	r.calls++
 	tool, found := a.tools.Get(call.Name)
 	label := "Working on it"
 	if found {
@@ -240,21 +304,21 @@ func (r *turnRun) runTool(ctx context.Context, call llm.ToolCall) (content strin
 	switch {
 	case !found:
 		runErr = fmt.Errorf("unknown tool %q", call.Name)
-	case r.calls > a.limits.MaxCalls:
+	case n > a.limits.MaxCalls:
 		runErr = errors.New("too many tool calls this turn; answer with what you have")
 	case !json.Valid(args):
 		runErr = errors.New("arguments are not valid JSON")
 	default:
-		tctx, cancel := context.WithTimeout(ctx, tool.Timeout)
+		tctx, cancel := context.WithTimeout(withTurnID(ctx, r.t.id), tool.Timeout)
 		res, runErr = safeRun(tctx, tool, args)
 		cancel()
 	}
 	if runErr != nil && ctx.Err() != nil {
-		return "", false // cancelled mid-call: no result to replay
+		return toolOutcome{} // cancelled mid-call: no result to replay
 	}
 
 	state, status := proto.ActivityDone, "ok"
-	content = res.Content
+	content := res.Content
 	if runErr != nil {
 		state, status = proto.ActivityError, "error"
 		content = "error: " + runErr.Error()
@@ -262,12 +326,7 @@ func (r *turnRun) runTool(ctx context.Context, call llm.ToolCall) (content strin
 	content = clipRunes(content, maxToolResultChars)
 	a.hub.Broadcast(proto.NewActivity(r.t.id, call.Name, label, state))
 	if runErr == nil && res.Card != nil {
-		a.hub.Broadcast(proto.NewCard(r.t.id, proto.Card{
-			Kind: res.Card.Kind, ID: res.Card.ID, Title: res.Card.Title, Data: res.Card.Data}))
-	}
-	if runErr == nil && call.Name == ThinkDeeper && !r.deeper {
-		r.model, r.deeper = a.deep, true
-		r.log.Info("escalating to the deep model", "model", a.deep.Name)
+		a.hub.Broadcast(proto.NewCard(r.t.id, *res.Card))
 	}
 
 	dbctx, cancel := a.dbCtx()
@@ -282,7 +341,7 @@ func (r *turnRun) runTool(ctx context.Context, call llm.ToolCall) (content strin
 	}); err != nil {
 		r.log.Error("cannot record activity", "error", err)
 	}
-	return content, true
+	return toolOutcome{content: content, executed: true, escalate: runErr == nil && call.Name == ThinkDeeper}
 }
 
 // safeRun runs a tool and turns a panic into an error.

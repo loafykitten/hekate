@@ -49,6 +49,7 @@ func newFakeConv() *fakeConv { return &fakeConv{sayCh: make(chan said, 8)} }
 
 func (f *fakeConv) ConversationID() string { return "default" }
 func (f *fakeConv) Gestures() []string     { return []string{"waving"} }
+func (f *fakeConv) Timezone() string       { return "America/Chicago" }
 func (f *fakeConv) Say(origin, id, text string) {
 	f.mu.Lock()
 	f.said = append(f.said, said{origin, id, text})

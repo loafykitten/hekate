@@ -5,7 +5,6 @@ package server
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"os"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"github.com/loafykitten/hekate/service/internal/buildinfo"
+	"github.com/loafykitten/hekate/service/internal/httpx"
 	"github.com/loafykitten/hekate/service/internal/proto"
 	"github.com/loafykitten/hekate/service/internal/voice"
 )
@@ -38,6 +38,9 @@ type Options struct {
 	STT voice.Transcriber
 	TTS bool
 
+	// API registers REST routes of feature packages (tasks, reminders, ...).
+	API []func(*http.ServeMux)
+
 	// PingInterval and PingTimeout default to 20 s and 10 s; tests shorten them.
 	PingInterval time.Duration
 	PingTimeout  time.Duration
@@ -52,6 +55,7 @@ type Server struct {
 	startedAt time.Time
 	conv      Conversation
 	hub       *Hub
+	api       []func(*http.ServeMux)
 	stt       voice.Transcriber
 	tts       bool
 	pingEvery time.Duration
@@ -121,6 +125,7 @@ func New(o Options) *Server {
 		startedAt: time.Now().UTC(),
 		conv:      o.Conversation,
 		hub:       o.Hub,
+		api:       o.API,
 		stt:       o.STT,
 		tts:       o.TTS,
 		pingEvery: cmp.Or(o.PingInterval, pingInterval),
@@ -156,7 +161,16 @@ func (s *Server) Routes() http.Handler {
 	// All methods: "GET /" would conflict with the method-less /api/ catch-all.
 	mux.HandleFunc("/", s.handleStatic)
 
-	return chain(mux,
+	// State-changing requests must come from this origin. Without this, a page
+	// on another site, opened on one of the owner's (allowlisted) devices, could
+	// fire simple cross-origin POSTs at the API: the reverse proxy would see an
+	// allowed device. Uses Sec-Fetch-Site, falling back to Origin.
+	csrf := http.NewCrossOriginProtection()
+	csrf.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
+	}))
+
+	return chain(csrf.Handler(mux),
 		s.requestID,
 		s.accessLog,
 		s.recoverer,
@@ -167,6 +181,9 @@ func (s *Server) Routes() http.Handler {
 // apiRoutes is where feature milestones register /api/... endpoints.
 func (s *Server) apiRoutes(mux *http.ServeMux) {
 	s.conversationRoutes(mux)
+	for _, register := range s.api {
+		register(mux)
+	}
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -199,12 +216,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
+func writeJSON(w http.ResponseWriter, status int, v any) { httpx.JSON(w, status, v) }
 
 // reservedPrefix reports paths the SPA fallback must never claim.
 func reservedPrefix(p string) bool {

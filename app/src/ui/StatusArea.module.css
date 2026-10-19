@@ -85,3 +85,9 @@
     transform: translateY(6px);
   }
 }
+
+/* A phone's card row takes this spot; she hears you anyway. */
+:global(html[data-cards-phone]) .area {
+  opacity: 0;
+  transition: opacity var(--duration) var(--ease);
+}

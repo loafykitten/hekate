@@ -24,7 +24,9 @@ export default defineConfig({
     devAssets(),
     VitePWA({
       registerType: "autoUpdate",
-      strategies: "generateSW",
+      strategies: "injectManifest",
+      srcDir: "src",
+      filename: "sw.ts",
       pwaAssets: { config: "pwa-assets.config.ts", overrideManifestIcons: true },
       manifest: {
         name: "Hekate",
@@ -36,26 +38,11 @@ export default defineConfig({
         theme_color: themeColor,
         background_color: backgroundColor,
       },
-      workbox: {
-        cleanupOutdatedCaches: true,
-        clientsClaim: true,
-        // The plugin adds manifest.webmanifest itself; globbing it too creates a conflicting entry.
+      // The worker lives in src/sw.ts: precaching and runtime caching as before, plus web push.
+      injectManifest: {
+        // The plugin adds the web manifest to the precache itself. Globbing it here too would list
+        // it twice with different revisions, and workbox-precaching throws on that at startup.
         globPatterns: ["**/*.{js,css,html,svg,png,ico}"],
-        // Deep links fall back to the app shell, but never the service or the character files.
-        navigateFallback: "index.html",
-        navigateFallbackDenylist: [/^\/api\//, /^\/healthz/, /^\/character\//],
-        runtimeCaching: [
-          {
-            // The 5-11 MB model loads from cache on revisits and refreshes in the background.
-            urlPattern: ({ url }) => url.pathname === "/character/manifest.json" || /^\/character\/[\w.-]+\.glb$/.test(url.pathname),
-            handler: "StaleWhileRevalidate",
-            options: {
-              cacheName: "hekate-character",
-              expiration: { maxEntries: 6 },
-              cacheableResponse: { statuses: [200] },
-            },
-          },
-        ],
       },
     }),
   ],

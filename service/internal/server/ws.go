@@ -36,6 +36,7 @@ const (
 type Conversation interface {
 	ConversationID() string
 	Gestures() []string
+	Timezone() string
 	Say(origin, inputID, text string)
 	Interrupt(turnID string, heardSeq int)
 	Hush()
@@ -124,7 +125,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	// broadcast can't slip between the snapshot and registration.
 	gestures := s.conv.Gestures() // may read the manifest; keep it outside the lock
 	if !s.hub.addWithFirst(ss.cl, func() any {
-		return proto.NewReady(ss.id, s.conv.ConversationID(), s.capabilities(), gestures)
+		return proto.NewReady(ss.id, s.conv.ConversationID(), s.capabilities(), gestures, s.conv.Timezone())
 	}) {
 		_ = conn.Close(websocket.StatusGoingAway, "shutting down")
 		return

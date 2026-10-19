@@ -322,3 +322,44 @@ func TestStatusWriterPassesThroughBody(t *testing.T) {
 		t.Error("empty body")
 	}
 }
+
+// A page on another site, opened on one of the owner's devices, must not be
+// able to change anything (the reverse proxy only sees an allowed device).
+func TestCrossOriginMutationsRefused(t *testing.T) {
+	called := 0
+	h := New(Options{API: []func(*http.ServeMux){func(mux *http.ServeMux) {
+		mux.HandleFunc("POST /api/tasks/{id}/complete", func(w http.ResponseWriter, _ *http.Request) {
+			called++
+			w.WriteHeader(http.StatusNoContent)
+		})
+	}}}).Routes()
+
+	tests := []struct {
+		name    string
+		headers map[string]string
+		want    int
+	}{
+		{"cross-site fetch metadata", map[string]string{"Sec-Fetch-Site": "cross-site"}, http.StatusForbidden},
+		{"same-site but other origin", map[string]string{"Sec-Fetch-Site": "same-site"}, http.StatusForbidden},
+		{"foreign Origin, no metadata", map[string]string{"Origin": "https://evil.example"}, http.StatusForbidden},
+		{"same origin", map[string]string{"Sec-Fetch-Site": "same-origin"}, http.StatusNoContent},
+		{"same Origin header", map[string]string{"Origin": "http://hekate.test"}, http.StatusNoContent},
+		{"non-browser client", nil, http.StatusNoContent},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "http://hekate.test/api/tasks/1/complete", nil)
+			for k, v := range tt.headers {
+				r.Header.Set(k, v)
+			}
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != tt.want {
+				t.Errorf("status = %d, want %d", w.Code, tt.want)
+			}
+		})
+	}
+	if called != 3 {
+		t.Errorf("handler ran %d times, want 3", called)
+	}
+}

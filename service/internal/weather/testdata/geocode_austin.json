@@ -1,0 +1,45 @@
+{
+ "results": [
+  {
+   "id": 4671654,
+   "name": "Austin",
+   "latitude": 30.26715,
+   "longitude": -97.74306,
+   "elevation": 149.0,
+   "feature_code": "PPLA",
+   "country_code": "US",
+   "admin1_id": 4736286,
+   "timezone": "America/Chicago",
+   "population": 974447,
+   "country_id": 6252001,
+   "country": "United States",
+   "admin1": "Texas",
+   "admin2": "Travis"
+  },
+  {
+   "id": 5024719,
+   "name": "Austin",
+   "latitude": 43.66663,
+   "longitude": -92.97464,
+   "feature_code": "PPL",
+   "country_code": "US",
+   "timezone": "America/Chicago",
+   "population": 24718,
+   "country": "United States",
+   "admin1": "Minnesota",
+   "admin2": "Mower"
+  },
+  {
+   "id": 2077963,
+   "name": "Austin",
+   "latitude": -37.5,
+   "longitude": 144.0,
+   "feature_code": "PPL",
+   "country_code": "AU",
+   "timezone": "Australia/Melbourne",
+   "country": "Australia",
+   "admin1": "Victoria"
+  }
+ ],
+ "generationtime_ms": 0.9
+}

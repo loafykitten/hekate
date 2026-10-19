@@ -1,7 +1,8 @@
 .pill {
   position: fixed;
-  top: calc(var(--space-3) + var(--safe-top));
-  right: calc(var(--space-3) + var(--safe-right));
+  top: calc(var(--space-3) + var(--safe-top) + 4px);
+  left: 50%;
+  translate: -50% 0;
   z-index: var(--z-overlay);
   display: flex;
   align-items: center;

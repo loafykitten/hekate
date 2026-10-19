@@ -10,19 +10,28 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/loafykitten/hekate/service/internal/agent"
 	"github.com/loafykitten/hekate/service/internal/buildinfo"
+	"github.com/loafykitten/hekate/service/internal/calendar"
 	"github.com/loafykitten/hekate/service/internal/config"
 	"github.com/loafykitten/hekate/service/internal/llm"
 	"github.com/loafykitten/hekate/service/internal/logging"
+	"github.com/loafykitten/hekate/service/internal/memory"
+	"github.com/loafykitten/hekate/service/internal/push"
+	"github.com/loafykitten/hekate/service/internal/reminders"
 	"github.com/loafykitten/hekate/service/internal/server"
 	"github.com/loafykitten/hekate/service/internal/store"
+	"github.com/loafykitten/hekate/service/internal/tasks"
 	"github.com/loafykitten/hekate/service/internal/voice"
 	"github.com/loafykitten/hekate/service/internal/voice/elevenlabs"
 	"github.com/loafykitten/hekate/service/internal/voice/parakeet"
+	"github.com/loafykitten/hekate/service/internal/weather"
+	"github.com/loafykitten/hekate/service/internal/web"
 )
 
 const shutdownTimeout = 10 * time.Second
@@ -83,6 +92,50 @@ func run() error {
 	if cfg.NeuralwattAPIKey == "" {
 		logger.Warn("NEURALWATT_API_KEY is not set: she cannot answer until it is")
 	}
+
+	// Daily-life features. They emit invalidate/notify events through the hub.
+	taskSvc, err := tasks.New(tasks.Options{Store: db, Location: cfg.Location, Events: hub, Logger: logger.Logger})
+	if err != nil {
+		return fmt.Errorf("build tasks: %w", err)
+	}
+	pushSvc, err := push.New(ctx, push.Options{Store: db, Subject: cfg.PushSubject, Logger: logger.Logger})
+	if err != nil {
+		return fmt.Errorf("build push: %w", err)
+	}
+	remSvc, err := reminders.New(reminders.Options{Store: db, Location: cfg.Location, Events: hub, Push: pushSvc, Logger: logger.Logger})
+	if err != nil {
+		return fmt.Errorf("build reminders: %w", err)
+	}
+	memSvc, err := memory.New(memory.Options{Store: db, Location: cfg.Location, Events: hub, Logger: logger.Logger})
+	if err != nil {
+		return fmt.Errorf("build memory: %w", err)
+	}
+
+	toolList := slices.Concat(taskSvc.Tools(), remSvc.Tools(), memSvc.Tools())
+	sources := []agent.Source{{Name: "What you know about {{tamer}}", Source: memSvc}}
+	api := []func(*http.ServeMux){taskSvc.Routes, remSvc.Routes, pushSvc.Routes, memSvc.Routes}
+
+	// World tools: calendar (CalDAV), web search/read, weather.
+	invalidate := func(domain string) { hub.Invalidate(domain) }
+	calSvc := calendar.New(calendar.Options{
+		URL: cfg.CalDAVURL, Username: cfg.CalDAVUsername, Password: cfg.CalDAVPassword,
+		CalendarName: cfg.CalDAVCalendar, Location: cfg.Location, Logger: logger.Logger, OnChange: invalidate,
+	})
+	webSvc := web.New(web.Options{BraveAPIKey: cfg.BraveAPIKey, Logger: logger.Logger})
+	weatherSvc := weather.New(weather.Options{
+		Settings: db, Units: cfg.Units, Location: cfg.Location, Logger: logger.Logger, OnChange: invalidate,
+	})
+	toolList = slices.Concat(toolList, calSvc.Tools(), webSvc.Tools(), weatherSvc.Tools())
+	sources = append(sources,
+		agent.Source{Name: "Calendar", Source: calSvc},
+		agent.Source{Name: "Weather at home", Source: weatherSvc},
+	)
+	api = append(api, calSvc.Register, webSvc.Register, weatherSvc.Register)
+
+	tools, err := agent.NewRegistry(toolList...)
+	if err != nil {
+		return fmt.Errorf("register tools: %w", err)
+	}
 	ag, err := agent.New(agent.Options{
 		LLM: llm.New(llm.Config{
 			BaseURL: cfg.NeuralwattBaseURL,
@@ -92,6 +145,8 @@ func run() error {
 		Store:     db,
 		Hub:       hub,
 		Synth:     synth,
+		Tools:     tools,
+		Context:   sources,
 		Logger:    logger.Logger,
 		Tamer:     cfg.TamerName,
 		Location:  cfg.Location,
@@ -106,6 +161,10 @@ func run() error {
 		return fmt.Errorf("start agent: %w", err)
 	}
 
+	// The reminder scheduler runs until the process is told to stop.
+	var background sync.WaitGroup
+	background.Go(func() { remSvc.Run(ctx) })
+
 	srv := server.New(server.Options{
 		Logger:       logger.Logger,
 		DB:           db,
@@ -115,6 +174,7 @@ func run() error {
 		Hub:          hub,
 		STT:          stt,
 		TTS:          synth != nil,
+		API:          api,
 	})
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,
@@ -154,6 +214,7 @@ func run() error {
 	if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("serve: %w", err)
 	}
+	background.Wait()
 	logger.Info("stopped")
 	return nil
 }

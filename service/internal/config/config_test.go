@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
-	"time"
 )
 
 func env(m map[string]string) func(string) string {
@@ -27,8 +26,8 @@ func TestDefaults(t *testing.T) {
 	if cfg.WebDir != "" || cfg.AssetsDir != "" {
 		t.Errorf("optional dirs should be empty: %+v", cfg)
 	}
-	if cfg.Location != time.Local {
-		t.Errorf("location = %v, want Local", cfg.Location)
+	if cfg.Location == nil || cfg.Location.String() == "Local" {
+		t.Errorf("location = %v, want the system zone by name", cfg.Location)
 	}
 }
 
@@ -174,5 +173,53 @@ func TestLogValueHidesKeys(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), `"llm_configured":true`) || !strings.Contains(buf.String(), `"tts_configured":true`) {
 		t.Errorf("configured flags missing: %s", buf.String())
+	}
+}
+
+func TestM2Settings(t *testing.T) {
+	env := map[string]string{
+		"CALDAV_URL": "http://127.0.0.1:5232", "CALDAV_USERNAME": "owner", "CALDAV_PASSWORD": "pw",
+		"BRAVE_API_KEY": "k", "HEKATE_UNITS": "metric", "HEKATE_PUSH_SUBJECT": "https://example.com",
+	}
+	cfg, err := LoadFrom(func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CalDAVURL != "http://127.0.0.1:5232/" || cfg.CalDAVCalendar != "Calendar" || cfg.CalDAVPassword.Reveal() != "pw" {
+		t.Errorf("caldav = %q %q", cfg.CalDAVURL, cfg.CalDAVCalendar)
+	}
+	if cfg.Units != "metric" || cfg.PushSubject != "https://example.com" || cfg.BraveAPIKey.Reveal() != "k" {
+		t.Errorf("units/push/brave = %q %q", cfg.Units, cfg.PushSubject)
+	}
+
+	defaults, err := LoadFrom(func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaults.CalDAVURL != "" || defaults.Units != "imperial" {
+		t.Errorf("defaults: caldav %q units %q", defaults.CalDAVURL, defaults.Units)
+	}
+
+	for k, v := range map[string]string{"HEKATE_UNITS": "kelvin", "HEKATE_PUSH_SUBJECT": "me", "CALDAV_URL": "ftp://x"} {
+		if _, err := LoadFrom(func(key string) string {
+			if key == k {
+				return v
+			}
+			return ""
+		}); err == nil {
+			t.Errorf("%s=%q: want error", k, v)
+		}
+	}
+}
+
+// With no zone configured, the location must still have a real IANA name:
+// browsers reject Go's "Local".
+func TestDefaultZoneIsNamed(t *testing.T) {
+	cfg, err := LoadFrom(func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name := cfg.Location.String(); name == "Local" || name == "" {
+		t.Errorf("default zone = %q", name)
 	}
 }

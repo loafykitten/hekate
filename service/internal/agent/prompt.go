@@ -27,6 +27,9 @@ type PromptInput struct {
 	Now      time.Time // converted to Location for display
 	Location *time.Location
 	History  []store.Message // oldest first; may include the current user message
+	// Context holds what the context sources contributed; it follows the clock
+	// in the "Now" section, each block under its source's name.
+	Context []ContextBlock
 }
 
 // BuildMessages assembles the system prompt (persona, rules, the clock) and
@@ -64,6 +67,9 @@ func SystemPrompt(in PromptInput) string {
 	}
 	b.WriteString("\n\n")
 	b.WriteString(nowBlock(in.Now, in.Location))
+	for _, c := range in.Context {
+		b.WriteString("\n\n### " + strings.NewReplacer("{{tamer}}", tamer).Replace(c.Name) + "\n\n" + c.Text)
+	}
 	return b.String()
 }
 

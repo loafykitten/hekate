@@ -22,3 +22,8 @@
 .button:hover {
   background: var(--surface-strong);
 }
+
+.right {
+  left: auto;
+  right: calc(var(--space-3) + var(--safe-right));
+}

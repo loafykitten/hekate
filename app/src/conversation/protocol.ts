@@ -12,6 +12,7 @@ export interface Ready {
   conversation_id: string;
   capabilities: Capabilities;
   gestures: string[];
+  timezone?: string; // IANA zone the service schedules in
 }
 
 export interface Transcript {
@@ -94,6 +95,22 @@ export interface CapabilitiesChanged {
   capabilities: Capabilities;
 }
 
+// Something fired with no turn running (a reminder). `card` has the same shape as a turn's card.
+export interface Notify {
+  type: "notify";
+  id: string;
+  kind: string;
+  title: string;
+  body: string;
+  card?: unknown;
+}
+
+// Data changed (by REST or by her tools): refetch those sections of the menu.
+export interface Invalidate {
+  type: "invalidate";
+  domains: string[];
+}
+
 export type ServerMessage =
   | Ready
   | CapabilitiesChanged
@@ -103,7 +120,9 @@ export type ServerMessage =
   | Segment
   | Card
   | TurnEnd
-  | ServerError;
+  | ServerError
+  | Notify
+  | Invalidate;
 export type ServerMessageType = ServerMessage["type"];
 
 export type ClientMessage =
@@ -134,6 +153,8 @@ const SERVER_TYPES: ReadonlySet<string> = new Set<ServerMessageType>([
   "card",
   "turn_end",
   "error",
+  "notify",
+  "invalidate",
 ]);
 
 // Parses one text frame. Returns undefined for anything that isn't a known server message, so

@@ -22,23 +22,50 @@
   --text-xs: 0.75rem;
   --text-sm: 0.8125rem;
   --text-md: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+  --weight-medium: 500;
+  --weight-bold: 650;
 
   /* Space and shape */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
+  --radius-xl: 22px;
   --radius-pill: 999px;
+  --tap: 44px;
+
+  /* Panels, cards and form fields (menu and cards) */
+  --panel-bg: rgba(27, 22, 43, 0.97);
+  --card-bg: rgba(33, 27, 52, 0.94);
+  --card-border: rgba(255, 255, 255, 0.13);
+  --field-bg: rgba(255, 255, 255, 0.07);
+  --hairline: rgba(255, 255, 255, 0.09);
+  --accent-soft: rgba(240, 168, 60, 0.16);
+  --accent-line: rgba(240, 168, 60, 0.5);
+  --danger-soft: rgba(239, 122, 133, 0.16);
+  --ok-soft: rgba(122, 217, 154, 0.16);
+  --fg-subtle: rgba(243, 238, 252, 0.45);
+  --shadow-card: 0 10px 32px rgba(0, 0, 0, 0.4), 0 1px 0 rgba(255, 255, 255, 0.06) inset;
 
   /* Motion */
   --ease: cubic-bezier(0.2, 0, 0, 1);
   --duration: 200ms;
+  --duration-slow: 320ms;
 
   /* Layering and safe areas (the page is edge to edge under black-translucent) */
   --z-overlay: 10;
+  --z-cards: 9;
+  --z-menu: 20;
+  --z-toast: 30;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-right: env(safe-area-inset-right, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);

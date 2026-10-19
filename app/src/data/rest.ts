@@ -1,0 +1,194 @@
+import {
+  asCoreEntry,
+  asEvent,
+  asMemory,
+  asReminder,
+  asTask,
+  asTaskList,
+  asWeather,
+  isRec,
+  list,
+  type CalendarEvent,
+  type CoreEntry,
+  type Memory,
+  type Task,
+  type TaskList,
+  type Weather,
+} from "./model";
+
+// The REST half of docs/PROTOCOL.md: a thin typed client. Errors carry the service's
+// `{ "error": "message" }` text so the UI can show it as is.
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+type Query = Record<string, string | number | undefined>;
+
+export interface RequestOptions {
+  body?: unknown;
+  query?: Query;
+  signal?: AbortSignal;
+}
+
+function withQuery(path: string, query?: Query): string {
+  if (!query) return path;
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(query)) if (v !== undefined && v !== "") params.set(k, String(v));
+  const s = params.toString();
+  return s ? `${path}?${s}` : path;
+}
+
+// Returns the parsed JSON body, or undefined for 204.
+export async function request(method: string, path: string, { body, query, signal }: RequestOptions = {}): Promise<unknown> {
+  let res: Response;
+  try {
+    res = await fetch(withQuery(`/api${path}`, query), {
+      method,
+      signal,
+      headers: { Accept: "application/json", ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") throw e;
+    throw new ApiError("Can't reach Hekate.", 0);
+  }
+  if (res.status === 204) return undefined;
+  let json: unknown;
+  try {
+    json = await res.json();
+  } catch {
+    // An SPA fallback page or a proxy error is not the service's answer.
+    throw new ApiError(res.ok ? "Hekate sent something unexpected." : `Hekate answered ${res.status}.`, res.status);
+  }
+  if (!res.ok) {
+    const message = isRec(json) && typeof json.error === "string" && json.error ? json.error : `Hekate answered ${res.status}.`;
+    throw new ApiError(message, res.status);
+  }
+  return json;
+}
+
+function field(body: unknown, name: string): unknown {
+  return isRec(body) ? body[name] : undefined;
+}
+
+function one<T>(body: unknown, parse: (v: unknown) => T | undefined): T {
+  const value = parse(body);
+  if (value === undefined) throw new ApiError("Hekate sent something unexpected.", 200);
+  return value;
+}
+
+function many<T>(body: unknown, name: string, parse: (v: unknown) => T | undefined): T[] {
+  // A missing or null array is an empty list (a Go nil slice encodes as null).
+  if (!isRec(body)) throw new ApiError("Hekate sent something unexpected.", 200);
+  return list(body[name], parse);
+}
+
+// --- tasks ---------------------------------------------------------------------------------
+
+export type TaskFields = Partial<Pick<Task, "title" | "notes" | "list" | "due" | "rrule" | "priority">>;
+
+export const tasksApi = {
+  list: async (params: { list?: string; status?: "open" | "done" | "all" }, signal?: AbortSignal) =>
+    many(await request("GET", "/tasks", { query: { list: params.list, status: params.status }, signal }), "tasks", asTask),
+  lists: async (signal?: AbortSignal): Promise<TaskList[]> => many(await request("GET", "/lists", { signal }), "lists", asTaskList),
+  create: async (fields: TaskFields & { title: string }) => one(await request("POST", "/tasks", { body: fields }), asTask),
+  patch: async (id: string, fields: TaskFields) => one(await request("PATCH", `/tasks/${encodeURIComponent(id)}`, { body: fields }), asTask),
+  // `due` is the occurrence being completed, so a repeated request can't complete the next one too.
+  complete: async (id: string, due?: string | null) =>
+    one(await request("POST", `/tasks/${encodeURIComponent(id)}/complete`, due ? { body: { due } } : undefined), asTask),
+  reopen: async (id: string) => one(await request("POST", `/tasks/${encodeURIComponent(id)}/reopen`), asTask),
+  remove: async (id: string) => void (await request("DELETE", `/tasks/${encodeURIComponent(id)}`)),
+};
+
+// --- reminders -----------------------------------------------------------------------------
+
+export type ReminderFields = { text?: string; at?: string; rrule?: string | null };
+
+export const remindersApi = {
+  list: async (status: "upcoming" | "past" | "all", signal?: AbortSignal) =>
+    many(await request("GET", "/reminders", { query: { status }, signal }), "reminders", asReminder),
+  create: async (fields: ReminderFields & { text: string; at: string }) =>
+    one(await request("POST", "/reminders", { body: fields }), asReminder),
+  patch: async (id: string, fields: ReminderFields) =>
+    one(await request("PATCH", `/reminders/${encodeURIComponent(id)}`, { body: fields }), asReminder),
+  snooze: async (id: string, minutes: number) =>
+    one(await request("POST", `/reminders/${encodeURIComponent(id)}/snooze`, { body: { minutes } }), asReminder),
+  done: async (id: string) => one(await request("POST", `/reminders/${encodeURIComponent(id)}/done`), asReminder),
+  remove: async (id: string) => void (await request("DELETE", `/reminders/${encodeURIComponent(id)}`)),
+};
+
+// --- push ----------------------------------------------------------------------------------
+
+export const pushApi = {
+  key: async (): Promise<string> => {
+    const key = field(await request("GET", "/push/key"), "public_key");
+    if (typeof key !== "string" || !key) throw new ApiError("Hekate has no push key.", 200);
+    return key;
+  },
+  subscribe: async (subscription: unknown) => void (await request("POST", "/push/subscriptions", { body: subscription })),
+  unsubscribe: async (endpoint: string) => void (await request("DELETE", "/push/subscriptions", { body: { endpoint } })),
+  test: async () => void (await request("POST", "/push/test")),
+};
+
+// --- calendar ------------------------------------------------------------------------------
+
+export interface CalendarStatus {
+  configured: boolean;
+  calendar_name?: string;
+}
+
+// `instance` names the occurrence an edit was made from, so the service applies a moved start or
+// a new end to a recurring series relative to that occurrence.
+export type EventFields = Partial<Pick<CalendarEvent, "title" | "start" | "end" | "all_day" | "location" | "notes" | "rrule" | "instance" | "version">>;
+
+export const calendarApi = {
+  status: async (signal?: AbortSignal): Promise<CalendarStatus> => {
+    const body = await request("GET", "/calendar/status", { signal });
+    return {
+      configured: field(body, "configured") === true,
+      calendar_name: typeof field(body, "calendar_name") === "string" ? (field(body, "calendar_name") as string) : undefined,
+    };
+  },
+  events: async (from: string, to: string, signal?: AbortSignal) =>
+    many(await request("GET", "/calendar/events", { query: { from, to }, signal }), "events", asEvent),
+  create: async (fields: EventFields & { title: string; start: string }) =>
+    one(await request("POST", "/calendar/events", { body: fields }), asEvent),
+  patch: async (uid: string, fields: EventFields) =>
+    one(await request("PATCH", `/calendar/events/${encodeURIComponent(uid)}`, { body: fields }), asEvent),
+  remove: async (uid: string) => void (await request("DELETE", `/calendar/events/${encodeURIComponent(uid)}`)),
+};
+
+// --- memory --------------------------------------------------------------------------------
+
+export type MemoryFields = Partial<Pick<Memory, "content" | "kind" | "importance" | "follow_up_at">>;
+
+export const memoryApi = {
+  list: async (params: { q?: string; kind?: string; limit?: number }, signal?: AbortSignal) =>
+    many(await request("GET", "/memory", { query: params, signal }), "memories", asMemory),
+  patch: async (id: string, fields: MemoryFields) =>
+    one(await request("PATCH", `/memory/${encodeURIComponent(id)}`, { body: fields }), asMemory),
+  remove: async (id: string) => void (await request("DELETE", `/memory/${encodeURIComponent(id)}`)),
+  core: async (signal?: AbortSignal): Promise<CoreEntry[]> => many(await request("GET", "/memory/core", { signal }), "entries", asCoreEntry),
+  putCore: async (key: string, value: string) =>
+    one(await request("PUT", `/memory/core/${encodeURIComponent(key)}`, { body: { value } }), asCoreEntry),
+  removeCore: async (key: string) => void (await request("DELETE", `/memory/core/${encodeURIComponent(key)}`)),
+};
+
+// --- weather -------------------------------------------------------------------------------
+
+// Null when the service doesn't know where she is (404): not an error, just nothing to show.
+export async function fetchWeather(place?: string, signal?: AbortSignal): Promise<Weather | null> {
+  try {
+    return one(await request("GET", "/weather", { query: { place }, signal }), asWeather);
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) return null;
+    throw e;
+  }
+}

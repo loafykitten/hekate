@@ -20,6 +20,8 @@ const (
 	TypeCard         = "card"
 	TypeTurnEnd      = "turn_end"
 	TypeError        = "error"
+	TypeNotify       = "notify"
+	TypeInvalidate   = "invalidate"
 )
 
 // Error codes the service sends.
@@ -54,6 +56,7 @@ type Ready struct {
 	ConversationID string       `json:"conversation_id"`
 	Capabilities   Capabilities `json:"capabilities"`
 	Gestures       []string     `json:"gestures"`
+	Timezone       string       `json:"timezone"` // IANA zone the service schedules in
 }
 
 // CapabilitiesChanged tells clients that what the service can do changed after
@@ -69,11 +72,11 @@ func NewCapabilities(c Capabilities) CapabilitiesChanged {
 }
 
 // NewReady builds a ready message; a nil gesture list is sent as [].
-func NewReady(clientID, conversationID string, caps Capabilities, gestures []string) Ready {
+func NewReady(clientID, conversationID string, caps Capabilities, gestures []string, timezone string) Ready {
 	if gestures == nil {
 		gestures = []string{}
 	}
-	return Ready{TypeReady, clientID, conversationID, caps, gestures}
+	return Ready{TypeReady, clientID, conversationID, caps, gestures, timezone}
 }
 
 // Transcript is the push-to-talk result for input ID.

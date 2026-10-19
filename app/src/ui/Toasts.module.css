@@ -2,7 +2,7 @@
   position: fixed;
   top: calc(64px + var(--safe-top));
   left: 50%;
-  z-index: calc(var(--z-overlay) + 20);
+  z-index: var(--z-toast);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -49,6 +49,61 @@
   color: var(--fg-muted);
   font-size: 1.25rem;
   line-height: 1;
+  cursor: pointer;
+}
+
+.toast[data-kind="notice"] {
+  gap: var(--space-3);
+  padding: var(--space-2) 4px var(--space-2) var(--space-3);
+  border-color: var(--accent-line);
+  background:
+    linear-gradient(90deg, rgba(240, 168, 60, 0.14), transparent 70%),
+    rgba(30, 24, 48, 0.94);
+}
+
+.bell {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.bell svg {
+  width: 18px;
+  height: 18px;
+}
+
+.notice {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.notice strong {
+  font-size: 0.9375rem;
+  font-weight: var(--weight-bold);
+}
+
+.notice span {
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+
+.action {
+  flex: none;
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-weight: var(--weight-bold);
   cursor: pointer;
 }
 

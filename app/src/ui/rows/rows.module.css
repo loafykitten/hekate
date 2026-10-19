@@ -1,0 +1,202 @@
+.row {
+  position: relative;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.line {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  min-height: 56px;
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  min-height: 56px;
+  padding: 11px var(--space-2) 11px var(--space-2);
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  position: relative;
+}
+
+button.body {
+  padding-right: 28px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background var(--duration) var(--ease);
+}
+
+button.body:hover {
+  background: var(--surface);
+}
+
+.chevron {
+  position: absolute;
+  top: 18px;
+  right: 6px;
+  width: 16px;
+  height: 16px;
+  color: var(--fg-subtle);
+  transition: rotate var(--duration) var(--ease);
+}
+
+.row[data-expanded] .chevron {
+  rotate: 90deg;
+}
+
+.title {
+  color: var(--fg);
+  font-size: var(--text-md);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.title[data-done] {
+  color: var(--fg-subtle);
+  text-decoration: line-through;
+  text-decoration-color: var(--fg-subtle);
+}
+
+.notes {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--fg-muted);
+  font-size: 0.875rem;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  min-height: 0;
+}
+
+.meta:empty {
+  display: none;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  line-height: 1.5;
+}
+
+.badge svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+
+.badge[data-tone="accent"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.badge[data-tone="danger"] {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.when {
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+}
+
+.time {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 2px;
+  width: 80px;
+  padding: 14px 0 0 var(--space-2);
+  color: var(--fg);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+.time[data-allday] {
+  color: var(--accent);
+  font-size: var(--text-sm);
+}
+
+.timeEnd {
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+  font-weight: 400;
+}
+
+.memoryText {
+  color: var(--fg);
+  font-size: 0.9375rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.stars {
+  display: inline-flex;
+  gap: 3px;
+  padding: 0 2px;
+}
+
+.stars i {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: var(--hairline);
+}
+
+.stars i[data-on] {
+  background: var(--accent);
+}
+
+/* A card's items sit tighter than the menu's. */
+.row[data-compact] .line,
+.row[data-compact] .body {
+  min-height: 44px;
+}
+
+.row[data-compact] .body {
+  padding-block: 8px;
+}
+
+.row[data-compact] .title {
+  font-size: 0.9375rem;
+}
+
+.row[data-compact] .time {
+  padding-top: 11px;
+}
+
+/* Highlight: the item she just touched. */
+.row[data-highlight] {
+  border-radius: var(--radius-md);
+  background: linear-gradient(90deg, var(--accent-soft), transparent 85%);
+  box-shadow: inset 2px 0 0 var(--accent);
+}

@@ -1,0 +1,122 @@
+/* Phone: a swipeable row above the dock. */
+.stack {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--keyboard-inset, 0px) + 136px + var(--safe-bottom));
+  z-index: var(--z-cards);
+  display: flex;
+  gap: var(--space-3);
+  /* Side padding doubles as the snap inset so the next card peeks in. */
+  padding: 20px calc(var(--space-4) + var(--safe-right)) 20px calc(var(--space-4) + var(--safe-left));
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-padding-inline: var(--space-4);
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  /* New cards arrive at the start; don't let the browser keep an older one in view instead. */
+  overflow-anchor: none;
+  pointer-events: none;
+  --card-max-height: min(36dvh, 300px);
+}
+
+.stack::-webkit-scrollbar {
+  display: none;
+}
+
+.stack[data-hidden] {
+  visibility: hidden;
+  opacity: 0;
+}
+
+.slot {
+  flex: 0 0 min(86vw, 380px);
+  min-width: 0;
+  max-width: min(86vw, 380px);
+  display: flex;
+  align-items: flex-start;
+  scroll-snap-align: start;
+  pointer-events: auto;
+  /* Sideways scrolls the row; upward drags are ours (swipe to dismiss). */
+  touch-action: pan-x;
+  animation: enter-up 320ms var(--ease) both;
+  transition:
+    transform 200ms var(--ease),
+    opacity 200ms var(--ease);
+}
+
+.slot[data-leaving] {
+  pointer-events: none;
+  animation: leave-up 220ms var(--ease) both;
+}
+
+/* A lone card is centered rather than hugging the left edge. */
+.slot:only-child {
+  margin-inline: auto;
+}
+
+@keyframes enter-up {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.97);
+  }
+}
+
+@keyframes leave-up {
+  to {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.96);
+  }
+}
+
+/* Wide: a column to her right, below the top bar. */
+.stack[data-wide] {
+  top: calc(72px + var(--safe-top));
+  left: auto;
+  right: calc(var(--space-4) + var(--safe-right));
+  bottom: calc(var(--space-4) + var(--safe-bottom));
+  width: 340px;
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+  flex-direction: column;
+  align-items: stretch;
+  padding: 0 0 var(--space-6);
+  overflow-x: hidden;
+  overflow-y: auto;
+  scroll-snap-type: none;
+  --card-max-height: min(46dvh, 420px);
+  /* Let the page behind it receive pointer events between the cards. */
+  pointer-events: none;
+}
+
+.stack[data-wide] .slot {
+  flex: none;
+  max-width: none;
+  touch-action: pan-y;
+  margin-inline: 0;
+  animation-name: enter-right;
+}
+
+.stack[data-wide] .slot[data-leaving] {
+  animation-name: leave-right;
+}
+
+@keyframes enter-right {
+  from {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+}
+
+@keyframes leave-right {
+  to {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+}
+
+/* Weather has the most to show; on wide screens it gets more room before it scrolls. On a phone
+   it keeps the same cap as every card so it never reaches her face. */
+.stack[data-wide] .slot[data-kind="weather"] {
+  --card-max-height: min(72dvh, 560px);
+}

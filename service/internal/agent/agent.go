@@ -30,6 +30,7 @@ const ConversationID = "default"
 const (
 	defaultMaxRounds   = 6
 	defaultMaxCalls    = 12
+	maxParallelReads   = 4
 	defaultTurnTimeout = 90 * time.Second
 	maxReplyTokens     = 4096
 	maxToolResultChars = 8000
@@ -52,6 +53,7 @@ type Options struct {
 	Hub       Hub
 	Synth     voice.Synthesizer // nil: text-only replies
 	Tools     *Registry         // nil: only think_deeper
+	Context   []Source          // prompt context, in the order given
 	Logger    *slog.Logger
 	Tamer     string
 	Location  *time.Location
@@ -69,6 +71,7 @@ type Agent struct {
 	hub      Hub
 	synth    voice.Synthesizer
 	tools    *Registry
+	sources  []Source
 	log      *slog.Logger
 	tamer    string
 	loc      *time.Location
@@ -156,7 +159,7 @@ func New(o Options) (*Agent, error) {
 		}
 	}
 	a := &Agent{
-		llm: o.LLM, store: o.Store, hub: o.Hub, synth: o.Synth, tools: reg, log: o.Logger,
+		llm: o.LLM, store: o.Store, hub: o.Hub, synth: o.Synth, tools: reg, sources: o.Context, log: o.Logger,
 		tamer: o.Tamer, loc: o.Location, chat: o.Chat, deep: o.Deep,
 		gestures: newGestureSource(o.AssetsDir), limits: o.Limits, now: o.Now,
 	}
@@ -214,6 +217,14 @@ func (a *Agent) Shutdown(ctx context.Context) error {
 func (a *Agent) ConversationID() string { return ConversationID }
 
 // Gestures lists the gesture names the character can perform.
+// Timezone is the IANA zone the agent schedules and speaks in.
+func (a *Agent) Timezone() string {
+	if a.loc == nil {
+		return "UTC"
+	}
+	return a.loc.String()
+}
+
 func (a *Agent) Gestures() []string {
 	names, err := a.gestures.Names()
 	if err != nil {

@@ -1,0 +1,35 @@
+{
+  "type": "search",
+  "query": {"original": "kitsune folklore", "show_strict_warning": false},
+  "web": {
+    "type": "search",
+    "results": [
+      {
+        "title": "Kitsune - <strong>Folklore</strong> of the fox spirit",
+        "url": "https://www.example.org/wiki/Kitsune",
+        "description": "A <strong>kitsune</strong> is a fox in Japanese folklore &amp; legend. Foxes are said to gain power with age.",
+        "profile": {"name": "Example Encyclopedia", "url": "https://www.example.org"},
+        "meta_url": {"scheme": "https", "netloc": "www.example.org", "hostname": "www.example.org", "path": "wiki Kitsune"},
+        "age": "March 3, 2024"
+      },
+      {
+        "title": "Fox spirits in myth",
+        "url": "http://folk.example.net/foxes?id=7",
+        "description": "Nine-tailed foxes appear in many traditions.",
+        "meta_url": {"hostname": ""}
+      },
+      {
+        "title": "A link that must be dropped",
+        "url": "javascript:alert(1)",
+        "description": "not a web link"
+      },
+      {
+        "title": "Also dropped",
+        "url": "//no-scheme.example.com/x",
+        "description": "no scheme"
+      },
+      {"title": "Third real result", "url": "https://third.example.com/", "description": "   spaced \n out  "}
+    ]
+  },
+  "mixed": {"type": "mixed", "main": [{"type": "web", "index": 0, "all": false}]}
+}

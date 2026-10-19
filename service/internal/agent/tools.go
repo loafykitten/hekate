@@ -1,15 +1,19 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/loafykitten/hekate/service/internal/llm"
+	"github.com/loafykitten/hekate/service/internal/proto"
 )
 
 // Effect classifies what a tool can do, which later milestones use to decide
@@ -48,13 +52,8 @@ type Result struct {
 	Card *Card
 }
 
-// Card is something to show next to her.
-type Card struct {
-	Kind  string
-	ID    string
-	Title string
-	Data  json.RawMessage
-}
+// Card is something to show next to her; it is the wire shape from PROTOCOL.md.
+type Card = proto.Card
 
 // Registry holds the tools available to the model.
 type Registry struct {
@@ -139,4 +138,30 @@ func ThinkDeeperTool() Tool {
 			return Result{Content: "Deeper thinking is on. Carry on and answer now."}, nil
 		},
 	}
+}
+
+// DecodeArgs unmarshals a tool's arguments, rejecting unknown fields so a
+// misspelt argument is reported back to the model instead of silently ignored.
+func DecodeArgs(raw json.RawMessage, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return fmt.Errorf("bad arguments: %w", err)
+	}
+	return nil
+}
+
+// ID is a record id in tool arguments. Models write 12 or "12" about equally
+// often (the cards and results show ids as strings), so both are accepted.
+type ID int64
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (id *ID) UnmarshalJSON(b []byte) error {
+	s := strings.Trim(strings.TrimSpace(string(b)), `"`)
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n <= 0 {
+		return fmt.Errorf("id %s is not a positive whole number", b)
+	}
+	*id = ID(n)
+	return nil
 }

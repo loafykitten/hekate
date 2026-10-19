@@ -17,7 +17,7 @@ client whose input started a turn (`origin` matches its `client_id`) plays the a
 
 | type | fields | meaning |
 |---|---|---|
-| `ready` | `client_id`, `conversation_id`, `capabilities: { stt, tts }`, `gestures: string[]` | Sent once on connect. `stt`/`tts` are false when unconfigured. |
+| `ready` | `client_id`, `conversation_id`, `capabilities: { stt, tts }`, `gestures: string[]`, `timezone` | Sent once on connect. `stt`/`tts` are false when unconfigured. `timezone` is the IANA zone the service schedules in; clients display times in it. |
 | `capabilities` | `capabilities: { stt, tts }` | What the service can do changed after connecting (e.g. speech-to-text finished loading). |
 | `transcript` | `id`, `text`, `superseded?` | Push-to-talk result for input `id`. An empty `text` means nothing was heard, and no turn follows. `superseded: true` means newer input (from any device) arrived while it was transcribed, so it was dropped. |
 | `turn_start` | `turn_id`, `input_id`, `origin`, `user_text` | She's answering `user_text`. |
@@ -141,7 +141,7 @@ to connected clients. A repeating reminder is rescheduled to its next occurrence
 | `GET /api/push/key` | | `{ public_key }` (VAPID, base64url) |
 | `POST /api/push/subscriptions` | the browser's `PushSubscription.toJSON()` | 204 |
 | `DELETE /api/push/subscriptions` | `{ endpoint }` | 204 |
-| `POST /api/push/test` | | 204, sends a test notification |
+| `POST /api/push/test` | | 204 after sending a test notification; 409 when no device is subscribed; 502 when every push service rejected it |
 
 Push payload (JSON): `{ title, body, url, tag }`. The service worker shows it, and a click
 focuses or opens `url`.
@@ -170,6 +170,8 @@ focuses or opens `url`.
 | `GET /api/calendar/events?from=&to=` (default today through +7 days) | | `{ events: [Event] }` sorted by start |
 | `POST /api/calendar/events` | `{ title, start, end?, all_day?, location?, notes?, rrule? }` | `Event` (201) |
 | `PATCH /api/calendar/events/{uid}` | Event fields (applies to the whole series) | `Event` |
+
+All-day events use an exclusive end date (RFC 5545): a one-day event on the 20th has `start: "2026-10-20"`, `end: "2026-10-21"`. Renamon can only edit or delete events she created; the owner can change any event through REST.
 | `DELETE /api/calendar/events/{uid}` | | 204 (whole series) |
 
 ### Memory
@@ -216,4 +218,4 @@ from stored or fetched data, never from model text. Shapes of `data` by `kind`:
 | type | fields | meaning |
 |---|---|---|
 | `notify` | `id`, `kind: "reminder"`, `title`, `body`, `card?` | Something fired. The app shows it even with no turn running. |
-| `invalidate` | `domains: ("tasks" \| "reminders" \| "calendar" \| "memory")[]` | Data changed; refetch those menu sections. |
+| `invalidate` | `domains: ("tasks" \| "reminders" \| "calendar" \| "memory" \| "weather")[]` | Data changed; refetch those menu sections (`weather`: the home place changed). |

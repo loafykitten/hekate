@@ -4,7 +4,10 @@ import { ConversationClient, type ConnectionStatus } from "./client";
 import type { LiveEntry } from "./log";
 import { MicCapture, MicError, classifyMicError, setAudioSession } from "./mic";
 import { SegmentPlayer } from "./player";
-import { MAX_TEXT_LENGTH, type Capabilities, type Segment, type TurnEnd } from "./protocol";
+import { parseCard } from "../data/model";
+import { setZone } from "../data/time";
+import { CardDeck, type DeckEntry } from "./deck";
+import { MAX_TEXT_LENGTH, type Capabilities, type Notify, type Segment, type TurnEnd } from "./protocol";
 
 // The conversation as the UI sees it: owns the socket, the segment player and the microphone,
 // and turns their events into one immutable state snapshot (for useSyncExternalStore). Framework
@@ -19,6 +22,18 @@ export interface Toast {
   text: string;
 }
 
+// A `notify` event: shown as a banner even with no turn running.
+export interface Notice {
+  id: string;
+  title: string;
+  body: string;
+  // The menu section it belongs to, when it has one.
+  section?: "reminders";
+}
+
+export const NOTICE_MS = 12_000;
+export const ACK_GESTURE = "acknowledging";
+
 export interface ConversationState {
   connection: ConnectionStatus;
   // Set once connected; reset when the connection drops.
@@ -30,6 +45,9 @@ export interface ConversationState {
   // The tool she's running right now, e.g. "Checking your calendar".
   activity?: string;
   toasts: Toast[];
+  notices: Notice[];
+  // Cards beside her, newest first.
+  cards: readonly DeckEntry[];
   live: LiveEntry[];
   // Bumps whenever server-side history may have changed (connect, turn end).
   historyEpoch: number;
@@ -73,6 +91,8 @@ export class Conversation {
     phase: "idle",
     latched: false,
     toasts: [],
+    notices: [],
+    cards: [],
     live: [],
     historyEpoch: 0,
   };
@@ -97,6 +117,10 @@ export class Conversation {
   private toastTimers = new Map<number, ReturnType<typeof setTimeout>>();
   private toastSeq = 0;
   private everOpen = false;
+  private readonly deck = new CardDeck(() => this.emit());
+  private notices: Notice[] = [];
+  private noticeTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private invalidateListeners = new Set<(domains: string[]) => void>();
 
   constructor(deps: ConversationDeps = {}) {
     this.client = deps.client ?? new ConversationClient();
@@ -112,13 +136,16 @@ export class Conversation {
     const c = this.client;
     this.unsubscribers = [
       c.onStatus((s) => this.onStatus(s)),
-      c.on("ready", (m) => this.onReady(m.capabilities)),
+      c.on("ready", (m) => this.onReady(m.capabilities, m.timezone)),
+      c.on("capabilities", (m) => this.onCapabilities(m.capabilities)),
       c.on("transcript", (m) => this.onTranscript(m.id, m.text, m.superseded)),
       c.on("turn_start", (m) => this.onTurnStart(m.turn_id, m.origin, m.user_text)),
       c.on("activity", (m) => this.onActivity(m.tool, m.label, m.state)),
       c.on("segment", (m) => this.onSegment(m)),
-      c.on("capabilities", (m) => this.onCapabilities(m.capabilities)),
       c.on("turn_end", (m) => this.onTurnEnd(m.turn_id, m.text, m.status)),
+      c.on("card", (m) => this.onCard(m.turn_id, m.card)),
+      c.on("notify", (m) => this.onNotify(m)),
+      c.on("invalidate", (m) => this.emitInvalidate(m.domains)),
       c.on("error", (m) => this.onError(m.code, m.message, m.input_id)),
     ];
     c.connect();
@@ -132,6 +159,9 @@ export class Conversation {
     this.dropInFlight();
     for (const t of this.toastTimers.values()) clearTimeout(t);
     this.toastTimers.clear();
+    for (const t of this.noticeTimers.values()) clearTimeout(t);
+    this.noticeTimers.clear();
+    this.deck.clear();
     clearTimeout(this.captionTimer);
   }
 
@@ -156,6 +186,25 @@ export class Conversation {
   };
 
   getState = (): ConversationState => this.state;
+
+  // Called with the menu domains whose data changed on the server. A fresh connection reports
+  // every domain, since changes made while it was down were missed.
+  onInvalidate(listener: (domains: string[]) => void): () => void {
+    this.invalidateListeners.add(listener);
+    return () => this.invalidateListeners.delete(listener);
+  }
+
+  dismissCard(key: string) {
+    this.deck.dismiss(key);
+  }
+
+  dismissNotice(id: string) {
+    clearTimeout(this.noticeTimers.get(id));
+    this.noticeTimers.delete(id);
+    if (!this.notices.some((n) => n.id === id)) return;
+    this.notices = this.notices.filter((n) => n.id !== id);
+    this.emit();
+  }
 
   // 0..1 microphone level while listening.
   micLevel(): number {
@@ -329,7 +378,9 @@ export class Conversation {
     this.emit();
   }
 
-  private onReady(capabilities: Capabilities) {
+  private onReady(capabilities: Capabilities, timezone?: string) {
+    // Show times in the zone the service schedules in, not the device's.
+    if (timezone) setZone({ tz: timezone });
     this.dismissToast("connection");
     this.dismissToast("offline-send");
     this.dismissToast("offline-talk");
@@ -338,6 +389,7 @@ export class Conversation {
     this.live = [];
     this.historyEpoch++;
     this.emit();
+    this.emitInvalidate(["tasks", "reminders", "calendar", "memory", "weather"]);
   }
 
   private onTranscript(id: string, text: string, superseded = false) {
@@ -367,6 +419,7 @@ export class Conversation {
       this.myTurn = this.lastMyTurn = turnId;
       this.spoke = false;
       this.clearPending();
+      this.deck.clear(); // the last answer's cards make way for this one's
     } else if (this.player?.busy || this.myTurn) {
       // Another device started a turn: whatever this one was still saying is superseded.
       this.player?.stop();
@@ -420,6 +473,37 @@ export class Conversation {
       this.player?.finishTurn(turnId);
     }
     this.emit();
+  }
+
+  // Only turns this client started show cards (the other device shows its own).
+  private onCard(turnId: string, raw: unknown) {
+    if (turnId !== this.myTurn) return;
+    const card = parseCard(raw);
+    if (card) this.deck.add(card, "turn");
+  }
+
+  private onNotify(m: Notify) {
+    const card = m.card === undefined ? undefined : parseCard(m.card);
+    if (card) this.deck.add(card, "notify");
+    const notice: Notice = {
+      id: m.id,
+      title: m.title || "Hekate",
+      body: m.body || "",
+      section: m.kind === "reminder" ? "reminders" : undefined,
+    };
+    clearTimeout(this.noticeTimers.get(notice.id));
+    this.notices = [...this.notices.filter((n) => n.id !== notice.id), notice].slice(-2);
+    this.noticeTimers.set(
+      notice.id,
+      setTimeout(() => this.dismissNotice(notice.id), NOTICE_MS),
+    );
+    // A soft nod, unless she's in the middle of talking.
+    if (!this.player?.busy && this.client.ready?.gestures.includes(ACK_GESTURE)) this.stage?.character?.playGesture(ACK_GESTURE);
+    this.emit();
+  }
+
+  private emitInvalidate(domains: string[]) {
+    for (const listener of [...this.invalidateListeners]) listener(domains);
   }
 
   private onError(code: string, message: string, inputId?: string) {
@@ -513,6 +597,8 @@ export class Conversation {
       caption: this.caption,
       activity: [...this.running.values()].at(-1),
       toasts: this.toasts,
+      notices: this.notices,
+      cards: this.deck.items,
       live: this.live,
       capabilities: this.capabilities,
       historyEpoch: this.historyEpoch,
@@ -525,6 +611,8 @@ export class Conversation {
       s.caption === next.caption &&
       s.activity === next.activity &&
       s.toasts === next.toasts &&
+      s.notices === next.notices &&
+      s.cards === next.cards &&
       s.live === next.live &&
       s.capabilities === next.capabilities &&
       s.historyEpoch === next.historyEpoch;

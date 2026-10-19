@@ -249,3 +249,22 @@ func TestCollectMessages(t *testing.T) {
 		t.Errorf("an unanswered tool call must not be stored: %+v", msgs)
 	}
 }
+
+func TestRulesCoverMemoryAndLocalTimes(t *testing.T) {
+	got := SystemPrompt(PromptInput{Tamer: "Ember", Gestures: []string{"waving"}, Now: time.Now()})
+	for _, want := range []string{
+		"local time unless a tool says otherwise",
+		"## Memory",
+		`"What you know about Ember"`,
+		"Only say \"I'll remember that\" after the save succeeded.",
+		"follow_up_at",
+		"memory_forget",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prompt lacks %q", want)
+		}
+	}
+	if strings.Index(got, "## Memory") > strings.Index(got, "## Performing") {
+		t.Error("Performing must stay the last rules section: the no-gesture note is appended to it")
+	}
+}

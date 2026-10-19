@@ -259,10 +259,11 @@ type env struct {
 }
 
 type envOpts struct {
-	synth  voice.Synthesizer
-	tools  []Tool
-	limits Limits
-	noKey  bool
+	synth   voice.Synthesizer
+	tools   []Tool
+	sources []Source
+	limits  Limits
+	noKey   bool
 }
 
 var testChat = config.Model{Name: "chat-model", Effort: "low"}
@@ -307,7 +308,7 @@ func newEnv(t *testing.T, script func(n int, req llmReq) (int, []string), o envO
 	}
 	h := newRecHub()
 	a, err := New(Options{
-		LLM: client, Store: db, Hub: h, Synth: o.synth, Tools: reg, Tamer: "Rika",
+		LLM: client, Store: db, Hub: h, Synth: o.synth, Tools: reg, Context: o.sources, Tamer: "Rika",
 		Location: time.UTC, Chat: testChat, Deep: testDeep, AssetsDir: writeManifest(t, "waving", "thankful"),
 		Limits: o.limits,
 		Now:    func() time.Time { return time.Date(2026, 10, 19, 14, 5, 0, 0, time.UTC) },

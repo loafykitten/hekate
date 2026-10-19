@@ -1,6 +1,9 @@
 .root {
   position: fixed;
   inset: 0;
+  /* On wide screens the menu pushes her aside so she stays in view. */
+  transform: translateX(var(--stage-shift, 0px));
+  transition: transform var(--duration-slow) var(--ease);
 }
 
 .canvas {

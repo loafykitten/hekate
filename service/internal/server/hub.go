@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"sync"
+
+	"github.com/loafykitten/hekate/service/internal/proto"
 )
 
 // sendQueue is how many frames a client may have waiting. A segment with audio
@@ -66,6 +68,12 @@ func (h *Hub) Broadcast(msg any) {
 	}
 }
 
+// Invalidate implements proto.Events.
+func (h *Hub) Invalidate(domains ...string) { h.Broadcast(proto.NewInvalidate(domains...)) }
+
+// Notify implements proto.Events.
+func (h *Hub) Notify(n proto.Notify) { h.Broadcast(n) }
+
 // add registers a client; it reports false once the hub is closed.
 func (h *Hub) add(c *client) bool {
 	return h.addWithFirst(c, nil)
@@ -118,3 +126,5 @@ func (h *Hub) Close() {
 		c.once.Do(c.kick)
 	}
 }
+
+var _ proto.Events = (*Hub)(nil)

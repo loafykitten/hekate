@@ -20,12 +20,14 @@ The user is new to 3D. Explain 3D topics in plain terms and make the asset decis
 
 ## Where things stand
 
-**Update 2026-10-19 (evening):** milestones M0–M2 of `docs/PLAN.md` are merged and auto-deployed
-to the homelab: the Go service (agent on GLM 5.3, ElevenLabs v4 voice, local Parakeet speech-to-
-text, tasks/reminders/push/memory/CalDAV calendar/web/weather) and the React PWA (push-to-talk,
-cards, menu). The rest of this document describes the original character slice, which the app
-still builds on; `docs/PLAN.md`, `docs/DEVELOPMENT.md` and `docs/PROTOCOL.md` describe the current
-system. Next: M3 (mail) and M4 (proactive: briefings, heartbeat, reflection).
+**Update 2026-10-19 (late):** milestones M0–M3 of `docs/PLAN.md` are merged and auto-deployed to
+the homelab: the Go service (agent on GLM 5.3, ElevenLabs v4 voice, local Parakeet speech-to-text,
+tasks/reminders/push/memory/CalDAV calendar/web/weather, IMAP mail with approvals and rules) and
+the React PWA (tap-to-talk with a mic that opens with the app on desktop, cards, menu, mail).
+The character has 24 clips, including idle variations. The rest of this document describes the
+original character slice, which the app still builds on; `docs/PLAN.md`, `docs/DEVELOPMENT.md`
+and `docs/PROTOCOL.md` describe the current system. Next: see "Next" in `docs/PLAN.md` (change
+requests, Telegram, voice off), then M4 (proactive).
 
 The **vertical slice** (first session) proved the model works as an avatar:
 
@@ -183,21 +185,6 @@ commands are in `NOTES.md`. Note: rebuilding changes nothing unless sources or s
 - Idea to carry into planning: map ElevenLabs tags to faces (`[laughs]` → `eyeSquint` +
   `mouthSmile`, `[sighs]` → `browDown`) using the existing morphs.
 
-## Planning agenda (next session)
-
-1. **Homelab service**: language/runtime, LLM provider and model, ElevenLabs integration, tag
-   parsing, conversation memory, how the service is reached from phone/desktop (auth, network:
-   LAN/VPN/tunnel), and how it serves assets.
-2. **Payload/stream contract**: message shapes for whole replies and streamed sentences, audio
-   format, timing data, gesture/expression events, interruption (user speaks while she talks).
-3. **Clients**: the web slice as the shared renderer; packaging for desktop (e.g. a webview
-   shell) and phone (PWA vs a native wrapper); mic input / speech-to-text; upper-body framing on
-   phones (she's small on phone screens today).
-4. **Character features**: viseme lip sync from TTS timings, ElevenLabs tag → expression map,
-   more gestures (Mixamo), optional gesture rebase onto `idle_2`.
-5. **Repo hygiene**: the project isn't a git repo yet; init before real work. Keep assets out
-   (the `.gitignore` already covers them).
-
 ## Open questions / things to verify early
 
 - ~~ElevenLabs timestamps with audio tags~~ **Answered 2026-10-19**: tags *do* appear in the
@@ -207,9 +194,6 @@ commands are in `NOTES.md`. Note: rebuilding changes nothing unless sources or s
   `eleven_v3` ~1.7 s (supports tags), `eleven_flash_v2_5` ~0.26 s (no tags). **Default is now
   `eleven_v4`** (same timestamps and tag behavior, ~1.25 s vs v3's ~2.65 s for a typical sentence;
   `eleven_v4_turbo` ~0.9 s), measured 2026-10-19.
-- **Homelab OS/hardware**: unknown. `say` (macOS) is only a dev placeholder.
-- Which LLM and whether the user wants local inference on the homelab or an API.
-- How the user wants to talk to it (push-to-talk, wake word, typing).
 
 ## Licensing and hygiene
 

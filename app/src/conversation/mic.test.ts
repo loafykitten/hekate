@@ -193,6 +193,8 @@ describe("MicCapture keeping the mic open", () => {
     audio.resolveModule();
     const chunks: ArrayBuffer[] = [];
     const mic = new MicCapture((c) => chunks.push(c), { stayOpen: true });
+    mic.prepare(); // the app connected and wants the mic
+    await vi.waitFor(() => expect(audio.nodes).toHaveLength(1));
 
     expect(await mic.start()).toBe(true);
     await mic.stop();

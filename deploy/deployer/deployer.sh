@@ -83,8 +83,10 @@ deploy_locked() {
   local logs
   logs="$(docker logs --tail 20 "$(compose ps -aq "$SERVICE")" 2>&1 | tail -c 2000)"
   if [[ -n "$current" ]]; then
-    HEKATE_IMAGE="$PREVIOUS" compose up -d --no-deps "$SERVICE" >/dev/null 2>&1
-    if healthy ""; then
+    # Only call it a rollback once the previous image itself is running and healthy.
+    if HEKATE_IMAGE="$PREVIOUS" compose up -d --no-deps "$SERVICE" >/dev/null 2>&1 \
+      && [[ "$(running_image)" == "$current" ]] \
+      && healthy "$(image_commit "$current")"; then
       log deploy_failed_rolled_back commit="$commit" tail="$logs"
     else
       log rollback_failed commit="$commit" tail="$logs"

@@ -54,7 +54,9 @@ set_status pending "Reviewing with $model"
 
 out="$(mktemp)"
 prompt="You are reviewing pull request #$pr in the Hekate repo. The change is exactly
-\`git diff origin/$base...HEAD\` (run it; also \`git log origin/$base..HEAD\`). Read surrounding code as needed.
+\`git diff origin/$base...HEAD -- . ':(exclude)**/package-lock.json' ':(exclude)**/go.sum'\`
+(lockfiles are excluded on purpose; also run \`git log origin/$base..HEAD\`). Read surrounding code as needed,
+but keep the review focused on the diff.
 Read docs/PLAN.md and docs/DEVELOPMENT.md for intent and conventions. Report real problems:
 correctness bugs, security issues (this repo is public: flag any secret, private hostname/IP or
 personal data), data loss, broken gates, races, missing tests for risky logic, and clear
@@ -62,8 +64,9 @@ violations of the documented conventions. Severity: blocker = must not merge; ma
 fix before merge; minor/nit = optional. Verdict is approve when there are no blocker or major
 findings. Do not report style preferences as major."
 
-log="$(mktemp)"
-trap 'rm -f "$out" "$log"' EXIT
+# Progress goes to .git/ai-review.log so a slow review can be watched (tail -f).
+log="$(git rev-parse --absolute-git-dir)/ai-review.log"
+trap 'rm -f "$out"' EXIT
 if ! codex exec -m "$model" -c model_reasoning_effort="high" -s read-only --ephemeral \
   --output-schema scripts/ai-review.schema.json -o "$out" "$prompt" >"$log" 2>&1; then
   tail -20 "$log" >&2

@@ -328,23 +328,8 @@ func (s *Service) accountState(ctx context.Context, name string) (accountState, 
 // cache too, so stale copies never mix into counts, lists or the noise report.
 func (s *Service) bindAccounts(ctx context.Context) error {
 	now := stamp(s.now())
-	names := make([]any, 0, len(s.accounts))
-	for _, a := range s.accounts {
-		names = append(names, a.cfg.Name)
-	}
-	notConfigured := "1"
-	if len(names) > 0 {
-		notConfigured = "account NOT IN (?" + strings.Repeat(", ?", len(names)-1) + ")"
-	}
-	res, err := s.db.ExecContext(ctx, `DELETE FROM mail_messages WHERE `+notConfigured, names...)
-	if err != nil {
-		return fmt.Errorf("mail: drop mail of removed accounts: %w", err)
-	}
-	if n, _ := res.RowsAffected(); n > 0 {
-		s.log.Info("dropped cached mail of accounts no longer configured", "messages", n)
-	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM mail_accounts WHERE `+strings.Replace(notConfigured, "account", "name", 1), names...); err != nil {
-		return fmt.Errorf("mail: drop removed accounts: %w", err)
+	if err := s.dropUnconfigured(ctx); err != nil {
+		return err
 	}
 	for _, a := range s.accounts {
 		identity := strings.ToLower(a.cfg.User) + "|" + strings.ToLower(a.cfg.Host)
@@ -376,6 +361,40 @@ func (s *Service) bindAccounts(ctx context.Context) error {
 		}
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("mail: reset account %q: %w", a.cfg.Name, err)
+		}
+	}
+	return nil
+}
+
+// dropUnconfigured removes the cache and state of account labels that are no
+// longer configured.
+func (s *Service) dropUnconfigured(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT account FROM mail_messages UNION SELECT name FROM mail_accounts`)
+	if err != nil {
+		return fmt.Errorf("mail: list cached accounts: %w", err)
+	}
+	var stale []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("mail: list cached accounts: %w", err)
+		}
+		if s.byName[name] == nil {
+			stale = append(stale, name)
+		}
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return fmt.Errorf("mail: list cached accounts: %w", err)
+	}
+	for _, name := range stale {
+		s.log.Info("dropping cached mail of an account no longer configured", "account", name)
+		_, err1 := s.db.ExecContext(ctx, `DELETE FROM mail_messages WHERE account = ?`, name)
+		_, err2 := s.db.ExecContext(ctx, `DELETE FROM mail_accounts WHERE name = ?`, name)
+		if err := errors.Join(err1, err2); err != nil {
+			return fmt.Errorf("mail: drop account %q: %w", name, err)
 		}
 	}
 	return nil

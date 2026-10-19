@@ -50,7 +50,9 @@ func (g *noiseGroup) add(unread bool, category string, addr string) {
 	g.addresses[addr] = true
 }
 
-func (g *noiseGroup) noisy() bool { return g.count >= noiseMinCount && !g.read && !g.wanted && !g.unsure }
+func (g *noiseGroup) noisy() bool {
+	return g.count >= noiseMinCount && !g.read && !g.wanted && !g.unsure
+}
 
 // noiseReport proposes archive rules for senders whose mail goes unopened. It
 // runs at most weekly and returns how many proposals it raised.

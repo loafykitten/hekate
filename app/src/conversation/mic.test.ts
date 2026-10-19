@@ -26,8 +26,10 @@ function stubAudio(refusals: string[] = []) {
   let resolveModule!: () => void;
   const moduleLoaded = new Promise<void>((r) => (resolveModule = r));
   const streams: { stopped: boolean }[] = [];
-  // Each worklet node: the messages it got, and a way to play the worklet's side.
-  const nodes: { sent: unknown[]; emit: (data: unknown) => void }[] = [];
+  // Each worklet node: the messages it got, and a way to play the worklet's side. By default a
+  // flush delivers a last partial chunk of the recording, then the acknowledgment; with
+  // `manualFlush` the test sends those itself.
+  const nodes: { sent: unknown[]; emit: (data: unknown) => void; manualFlush: boolean }[] = [];
   const node = () => ({ connect: (n: unknown) => n, disconnect: () => {} });
   vi.stubGlobal("navigator", {
     mediaDevices: {
@@ -68,15 +70,22 @@ function stubAudio(refusals: string[] = []) {
       disconnect = () => {};
       constructor() {
         const sent: unknown[] = [];
+        const entry = { sent, emit: (data: unknown) => port.onmessage?.({ data }), manualFlush: false };
         const port = {
           onmessage: null as ((e: { data: unknown }) => void) | null,
           postMessage: (m: unknown) => {
             sent.push(m);
-            if (m === "flush") queueMicrotask(() => port.onmessage?.({ data: "flushed" }));
+            const flush = (m as { flush?: number }).flush;
+            if (flush !== undefined && !entry.manualFlush) {
+              queueMicrotask(() => {
+                port.onmessage?.({ data: { id: flush, pcm: new Int16Array([7]).buffer } });
+                port.onmessage?.({ data: { flushed: flush } });
+              });
+            }
           },
         };
         this.port = port;
-        nodes.push({ sent, emit: (data) => port.onmessage?.({ data }) });
+        nodes.push(entry);
       }
     },
   );
@@ -172,15 +181,18 @@ describe("MicCapture keeping the mic open", () => {
     await mic.stop();
     expect(audio.streams[0].stopped).toBe(false); // still open: the indicator stays on
 
+    expect(chunks).toHaveLength(1); // the last partial chunk, delivered before the acknowledgment
+    chunks.length = 0;
+
     // Audio while open but not recording never reaches the page's callback.
-    audio.nodes[0].emit(new Int16Array([5, 5]).buffer);
+    audio.nodes[0].emit({ id: 1, pcm: new Int16Array([5, 5]).buffer });
     expect(chunks).toHaveLength(0);
 
     expect(await mic.start()).toBe(true);
     expect(audio.requests).toHaveLength(1); // no second getUserMedia
     expect(audio.nodes).toHaveLength(1);
-    expect(audio.nodes[0].sent).toEqual(["start", "flush", "start"]);
-    audio.nodes[0].emit(new Int16Array([1, 2]).buffer);
+    expect(audio.nodes[0].sent).toEqual([{ start: 1 }, { flush: 1 }, { start: 2 }]);
+    audio.nodes[0].emit({ id: 2, pcm: new Int16Array([1, 2]).buffer });
     expect(chunks).toHaveLength(1);
     await mic.stop();
 
@@ -198,5 +210,31 @@ describe("MicCapture keeping the mic open", () => {
     expect(await mic.start()).toBe(true);
     await mic.stop();
     expect(audio.streams[0].stopped).toBe(true);
+  });
+});
+
+describe("MicCapture recording handoff", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("a cancelled recording's late audio never joins the next one", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const audio = stubAudio();
+    audio.resolveModule();
+    const chunks: number[] = [];
+    const mic = new MicCapture((c) => chunks.push(new Int16Array(c)[0]), { keepOpenMs: 60_000 });
+    expect(await mic.start()).toBe(true);
+    const node = audio.nodes[0];
+    node.manualFlush = true;
+    const stopping = mic.stop(); // cancel: nobody waits for it
+    expect(await mic.start()).toBe(true); // and start again right away
+
+    node.emit({ id: 1, pcm: new Int16Array([111]).buffer }); // the old recording's buffered audio
+    node.emit({ flushed: 1 });
+    node.emit({ id: 2, pcm: new Int16Array([222]).buffer });
+    await stopping;
+    expect(chunks).toEqual([222]);
   });
 });

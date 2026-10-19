@@ -90,7 +90,11 @@ export class MicCapture {
   private mute?: GainNode;
   private source?: MediaStreamAudioSourceNode;
   private generation = 0;
-  private flushed?: () => void;
+  // The recording whose audio is forwarded: set when one starts, kept while its last chunks
+  // drain after stop(), cleared once they have. Chunks from any other recording are dropped.
+  private recordingId = 0;
+  private forwarding?: number;
+  private flushed?: (id: number) => void;
   private smoothed = 0;
   private _active = false;
   private idleTimer?: ReturnType<typeof setTimeout>;
@@ -171,12 +175,13 @@ export class MicCapture {
         numberOfOutputs: 1,
         outputChannelCount: [1],
       });
-      node.port.onmessage = (e: MessageEvent) => {
-        if (e.data === "flushed") return this.flushed?.();
-        if (!this._active) return; // never forward audio outside a recording
-        const chunk = e.data as ArrayBuffer;
-        this.smoothed = Math.max(pcmLevel(new Int16Array(chunk)), this.smoothed * 0.7);
-        this.onChunk(chunk);
+      node.port.onmessage = (e: MessageEvent<{ id?: number; pcm?: ArrayBuffer; flushed?: number }>) => {
+        const { id, pcm, flushed } = e.data;
+        if (flushed !== undefined) return this.flushed?.(flushed);
+        // Only the current recording's audio, never a cancelled one's or anything in between.
+        if (!pcm || id === undefined || id !== this.forwarding) return;
+        this.smoothed = Math.max(pcmLevel(new Int16Array(pcm)), this.smoothed * 0.7);
+        this.onChunk(pcm);
       };
       // Some browsers only run worklets that are connected to the destination; keep it silent.
       const mute = ctx.createGain();
@@ -205,19 +210,23 @@ export class MicCapture {
     this.generation++;
     const node = this.node;
     const wasActive = this._active;
+    const ending = this.forwarding;
     this._active = false;
     const keepOpen = this.keepOpenMs > 0 && wasActive && this.isOpen();
     if (!keepOpen) this.stream?.getTracks().forEach((t) => t.stop()); // the mic indicator goes off now
-    if (node && wasActive) {
+    if (node && wasActive && ending !== undefined) {
+      // The ending recording keeps forwarding until the worklet says its last chunk is out.
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, FLUSH_TIMEOUT_MS);
-        this.flushed = () => {
+        this.flushed = (id) => {
+          if (id !== ending) return;
           clearTimeout(timer);
           resolve();
         };
-        node.port.postMessage("flush");
+        node.port.postMessage({ flush: ending });
       });
     }
+    if (this.forwarding === ending) this.forwarding = undefined;
     this.flushed = undefined;
     if (keepOpen && this.isOpen()) {
       clearTimeout(this.idleTimer);
@@ -232,6 +241,7 @@ export class MicCapture {
     if (this._active) return;
     clearTimeout(this.idleTimer);
     this.generation++;
+    this.forwarding = undefined;
     this.release();
     setAudioSession("playback");
     void this.ctx?.suspend().catch(() => {});
@@ -251,7 +261,9 @@ export class MicCapture {
     if (generation !== this.generation) return false; // stopped while resuming
     this.smoothed = 0;
     this._active = true;
-    node.port.postMessage("start");
+    const id = ++this.recordingId;
+    this.forwarding = id; // from now on, a previous recording's late chunks are dropped
+    node.port.postMessage({ start: id });
     return true;
   }
 

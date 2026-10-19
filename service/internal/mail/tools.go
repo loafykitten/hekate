@@ -251,7 +251,10 @@ func (s *Service) readTool() agent.Tool {
 			if title == "" {
 				title = "Email"
 			}
-			return agent.Result{Content: sb.String(), Card: &agent.Card{Kind: "mail_message", ID: msg.ID, Title: oneLine(title, 120), Data: data}}, nil
+			// History keeps only that it was read: bodies are never stored.
+			stored := fmt.Sprintf("Read email id %s (the body is not kept; read it again if it's needed).", msg.ID)
+			return agent.Result{Content: sb.String(), Stored: stored,
+				Card: &agent.Card{Kind: "mail_message", ID: msg.ID, Title: oneLine(title, 120), Data: data}}, nil
 		}),
 	}
 }

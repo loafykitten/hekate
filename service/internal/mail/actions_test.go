@@ -1,6 +1,7 @@
 package mail
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -171,5 +172,21 @@ func TestActionsOnMessagesGoneFromServer(t *testing.T) {
 	}
 	if _, err := f.svc.Archive(t.Context(), []int64{424242}); err == nil || !strings.Contains(err.Error(), "424242") {
 		t.Errorf("unknown id err = %v", err)
+	}
+}
+
+func TestNoMoveCapabilityLeavesMailAlone(t *testing.T) {
+	f := newFixture(t, func(o *fixtureOpts) { o.noMove = true })
+	f.deliver("INBOX", mailSpec{subject: "Stay put"})
+	f.sweep()
+	id := f.id("Stay put")
+	if _, err := f.svc.Archive(t.Context(), []int64{id}); !errors.Is(err, errNoMove) {
+		t.Fatalf("archive without MOVE = %v, want errNoMove", err)
+	}
+	if got := f.serverUIDs("INBOX"); len(got) != 1 {
+		t.Errorf("inbox UIDs = %v, want the message still there", got)
+	}
+	if got := f.serverUIDs("Archive"); len(got) != 0 {
+		t.Errorf("archive UIDs = %v, want none", got)
 	}
 }

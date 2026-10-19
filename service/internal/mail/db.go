@@ -144,8 +144,8 @@ func (s *Service) Messages(ctx context.Context, q Query) ([]Message, error) {
 	if !s.Configured() {
 		return []Message{}, nil
 	}
-	if q.Category != "" && !validCategory(q.Category) {
-		return nil, httpx.BadRequest("category must be one of %s", strings.Join(categories, ", "))
+	if q.Category != "" && q.Category != unclassified && !validCategory(q.Category) {
+		return nil, httpx.BadRequest("category must be one of %s or %s", strings.Join(categories, ", "), unclassified)
 	}
 	if q.Account != "" && s.byName[q.Account] == nil {
 		return nil, httpx.BadRequest("no mail account named %q", q.Account)
@@ -184,7 +184,11 @@ func (s *Service) Messages(ctx context.Context, q Query) ([]Message, error) {
 			args = append(args, "%"+likeEscape(from)+"%", "%"+likeEscape(from)+"%")
 		}
 	}
-	if q.Category != "" {
+	switch q.Category {
+	case "":
+	case unclassified:
+		where = append(where, "m.category IS NULL")
+	default:
 		where = append(where, "m.category = ?")
 		args = append(args, q.Category)
 	}
@@ -398,6 +402,17 @@ func (s *Service) markGone(ctx context.Context, id int64) {
 		left_inbox_at = COALESCE(left_inbox_at, ?) WHERE id = ?`, stamp(s.now()), id)
 	if err != nil {
 		s.log.Error("cannot mark mail gone", "id", id, "error", err)
+	}
+}
+
+// markGoneAt marks a row gone only if it is still where r says, so a row that
+// was relocated in the meantime keeps its new place.
+func (s *Service) markGoneAt(ctx context.Context, r row) {
+	_, err := s.db.ExecContext(ctx, `UPDATE mail_messages SET gone = 1, folder = '',
+		left_inbox_at = COALESCE(left_inbox_at, ?) WHERE id = ? AND folder = ? AND uidvalidity = ? AND uid = ?`,
+		stamp(s.now()), r.ID, r.Folder, r.Validity, r.UID)
+	if err != nil {
+		s.log.Error("cannot mark mail gone", "id", r.ID, "error", err)
 	}
 }
 

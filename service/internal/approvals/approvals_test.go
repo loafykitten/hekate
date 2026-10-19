@@ -363,6 +363,33 @@ func TestExecutorOutlivesTheCaller(t *testing.T) {
 	}
 }
 
+func TestRuleRunOutlivesTheCaller(t *testing.T) {
+	f := newFixture(t)
+	if err := f.svc.Register("slow", func(ctx context.Context, _ json.RawMessage) (string, error) {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+			return "finished", nil
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	slow := Request{Kind: "slow", Title: "Slow?", Scope: "s", ScopeLabel: "slow things"}
+	a, err := f.svc.Request(t.Context(), slow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.decide(t, a, DecisionAlways)
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() { time.Sleep(10 * time.Millisecond); cancel() }()
+	// The turn is interrupted mid-run; the rule's action and its record must not be.
+	got, err := f.svc.Request(ctx, slow)
+	if err != nil || got.Status != StatusDone || str(got.Result) != "finished" || str(got.DecidedBy) != DecidedByRule {
+		t.Fatalf("rule run = %+v, %v", got, err)
+	}
+}
+
 func TestDecideRunsOnce(t *testing.T) {
 	f := newFixture(t)
 	a := f.request(t, "")

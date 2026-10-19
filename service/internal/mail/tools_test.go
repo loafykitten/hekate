@@ -121,6 +121,9 @@ func TestSummarySearchReadTools(t *testing.T) {
 	if !strings.Contains(res.Content, "Can you confirm Thursday?") || !strings.Contains(res.Content, "untrusted") {
 		t.Errorf("read:\n%s", res.Content)
 	}
+	if res.Stored == "" || strings.Contains(res.Stored, "Thursday") {
+		t.Errorf("history must keep only a placeholder, got %q", res.Stored)
+	}
 	var card struct {
 		Message Message `json:"message"`
 		Excerpt string  `json:"excerpt"`

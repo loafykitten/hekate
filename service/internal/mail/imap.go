@@ -61,10 +61,20 @@ func (s *Service) run(ctx context.Context, a *account, fn func(c *imapclient.Cli
 	if err := s.ensure(ctx, a); err != nil {
 		return err
 	}
-	_ = a.nc.SetDeadline(time.Now().Add(opTimeout))
-	stop := context.AfterFunc(ctx, func() { _ = a.nc.SetDeadline(time.Now()) })
+	nc := a.nc
+	_ = nc.SetDeadline(time.Now().Add(opTimeout))
+	// Cancelling aborts the call by expiring the deadline. If the callback has
+	// already started, wait for it, so it can't touch the connection after
+	// this call dropped or reused it.
+	fired := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		defer close(fired)
+		_ = nc.SetDeadline(time.Now())
+	})
 	err := fn(a.conn)
-	stop()
+	if !stop() {
+		<-fired
+	}
 	if err != nil {
 		// A refusal from the server, or a problem with what was asked for,
 		// leaves the connection fine; anything else may have broken it.
@@ -304,6 +314,12 @@ func moveUIDs(c *imapclient.Client, folder string, validity uint32, uids []imap.
 	}
 	if len(live) == 0 {
 		return m, nil
+	}
+	// Without MOVE the client falls back to COPY + STORE \Deleted + EXPUNGE,
+	// which can lose mail when the copy fails and expunges anything else
+	// already flagged deleted. Refuse instead.
+	if !c.Caps().Has(imap.CapMove) {
+		return moved{}, errNoMove
 	}
 	data, err := c.Move(imap.UIDSetNum(live...), dest).Wait()
 	if err != nil {

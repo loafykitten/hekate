@@ -83,6 +83,9 @@ func TestRESTStatusSummaryAndList(t *testing.T) {
 	if _, out = r.do("GET", "/api/mail/messages?category=promo", ""); len(subjects(out)) != 1 {
 		t.Errorf("category filter = %v", subjects(out))
 	}
+	if code, out = r.do("GET", "/api/mail/messages?category=unclassified", ""); code != 200 || len(subjects(out)) != 0 {
+		t.Errorf("unclassified filter = %d %v (everything here is classified)", code, subjects(out))
+	}
 	if _, out = r.do("GET", "/api/mail/messages?unread=true", ""); len(subjects(out)) != 3 {
 		t.Errorf("unread filter = %v", subjects(out))
 	}

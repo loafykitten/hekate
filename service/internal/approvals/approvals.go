@@ -321,16 +321,23 @@ func (s *Service) Request(ctx context.Context, r Request) (Approval, error) {
 }
 
 // runByRule runs a request a standing rule covers and records it as decided.
+// The record is written as running first, so a restart mid-action shows up,
+// and finished on a context the caller can't cancel, like the action itself.
 func (s *Service) runByRule(ctx context.Context, exec Executor, r Request, payload string, now time.Time) (Approval, error) {
-	status, result := s.run(ctx, exec, r.Payload)
-	res, err := s.db.ExecContext(ctx, `INSERT INTO approvals (kind, title, detail, scope, scope_label, payload, status, result, decided_by, created_at, expires_at, decided_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'rule', ?, ?, ?)`,
-		r.Kind, r.Title, r.Detail, r.Scope, r.ScopeLabel, payload, status, result, stamp(now), stamp(now.Add(expiry)), stamp(s.now()))
+	res, err := s.db.ExecContext(ctx, `INSERT INTO approvals (kind, title, detail, scope, scope_label, payload, status, decided_by, created_at, expires_at, decided_at)
+		VALUES (?, ?, ?, ?, ?, ?, 'running', 'rule', ?, ?, ?)`,
+		r.Kind, r.Title, r.Detail, r.Scope, r.ScopeLabel, payload, stamp(now), stamp(now.Add(expiry)), stamp(now))
 	if err != nil {
 		return Approval{}, fmt.Errorf("record approval run by rule: %w", err)
 	}
 	id, err := res.LastInsertId()
 	if err != nil {
+		return Approval{}, fmt.Errorf("record approval run by rule: %w", err)
+	}
+	ctx = context.WithoutCancel(ctx)
+	status, result := s.run(ctx, exec, r.Payload)
+	if _, err := s.db.ExecContext(ctx, `UPDATE approvals SET status = ?, result = ?, decided_at = ? WHERE id = ? AND status = 'running'`,
+		status, result, stamp(s.now()), id); err != nil {
 		return Approval{}, fmt.Errorf("record approval run by rule: %w", err)
 	}
 	a, err := s.get(ctx, id)

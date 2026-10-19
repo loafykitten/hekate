@@ -31,6 +31,14 @@ func (s *Service) ReadBody(ctx context.Context, id int64) (Message, Body, error)
 	}
 	var raw []byte
 	err = s.run(ctx, a, func(c *imapclient.Client) error {
+		// Reload under the account's lock: an archive or rule may have moved it
+		// while this read waited.
+		if r, err = s.rowByID(ctx, id); err != nil {
+			return err
+		}
+		if r.Gone || r.UID == 0 || r.Folder == "" {
+			return ErrGone
+		}
 		m, err := fetchRaw(c, r.Folder, r.Validity, []imap.UID{imap.UID(r.UID)}, maxRawBody)
 		if err != nil {
 			return err
@@ -39,8 +47,10 @@ func (s *Service) ReadBody(ctx context.Context, id int64) (Message, Body, error)
 		return nil
 	})
 	if errors.Is(err, ErrGone) || (err == nil && len(raw) == 0) {
-		s.markGone(ctx, id)
-		s.changed()
+		if !r.Gone && r.UID != 0 && r.Folder != "" {
+			s.markGoneAt(ctx, r)
+			s.changed()
+		}
 		return r.message(), Body{}, ErrGone
 	}
 	if err != nil {

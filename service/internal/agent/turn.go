@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -25,6 +26,7 @@ type roundRec struct {
 	text    string // raw text the model wrote this round
 	calls   []llm.ToolCall
 	results map[string]string // tool call id -> result sent back to the model
+	stored  map[string]string // tool call id -> what history keeps instead, when it differs
 }
 
 // complete reports whether every call has a result, so the round can be
@@ -138,7 +140,7 @@ func (r *turnRun) loop(ctx context.Context) error {
 			// calls, sometimes ends the turn with nothing to say.
 			r.msgs = append(r.msgs, llm.Message{Role: llm.RoleSystem, Content: outOfToolsNote})
 		}
-		rd := &roundRec{index: round, model: r.model.Name, results: map[string]string{}}
+		rd := &roundRec{index: round, model: r.model.Name, results: map[string]string{}, stored: map[string]string{}}
 		r.rounds = append(r.rounds, rd)
 		if err := r.llmRound(ctx, rd, specs); err != nil {
 			return err
@@ -159,6 +161,9 @@ func (r *turnRun) loop(ctx context.Context) error {
 				r.log.Info("escalating to the deep model", "model", a.deep.Name)
 			}
 			rd.results[call.ID] = o.content
+			if o.stored != "" {
+				rd.stored[call.ID] = o.stored
+			}
 			r.msgs = append(r.msgs, llm.Message{Role: llm.RoleTool, ToolCallID: call.ID, Content: o.content})
 		}
 	}
@@ -236,8 +241,9 @@ func (r *turnRun) recordUsage(rd *roundRec, res *llm.Result, took time.Duration)
 // toolOutcome is what one call produced.
 type toolOutcome struct {
 	content  string
-	executed bool // false when the turn was cancelled before the call had a result
-	escalate bool // a successful think_deeper
+	stored   string // what history keeps instead of content; empty: content
+	executed bool   // false when the turn was cancelled before the call had a result
+	escalate bool   // a successful think_deeper
 }
 
 // runCalls executes one round of calls. Consecutive read-only calls run in
@@ -333,6 +339,10 @@ func (r *turnRun) runTool(ctx context.Context, call llm.ToolCall, n int) toolOut
 		content = "error: " + runErr.Error()
 	}
 	content = clipRunes(content, maxToolResultChars)
+	stored := ""
+	if runErr == nil && res.Stored != "" {
+		stored = clipRunes(res.Stored, maxToolResultChars)
+	}
 	a.hub.Broadcast(proto.NewActivity(r.t.id, call.Name, label, state))
 	if runErr == nil && res.Card != nil {
 		a.hub.Broadcast(proto.NewCard(r.t.id, *res.Card))
@@ -346,11 +356,11 @@ func (r *turnRun) runTool(ctx context.Context, call llm.ToolCall, n int) toolOut
 	}
 	if err := a.store.AddActivity(dbctx, store.Activity{
 		TurnID: r.t.id, Tool: call.Name, Effect: effect, Args: call.Arguments,
-		Result: clipRunes(content, 200), Status: status, DurationMS: time.Since(began).Milliseconds(),
+		Result: clipRunes(cmp.Or(stored, content), 200), Status: status, DurationMS: time.Since(began).Milliseconds(),
 	}); err != nil {
 		r.log.Error("cannot record activity", "error", err)
 	}
-	return toolOutcome{content: content, executed: true, escalate: runErr == nil && call.Name == ThinkDeeper}
+	return toolOutcome{content: content, stored: stored, executed: true, escalate: runErr == nil && call.Name == ThinkDeeper}
 }
 
 // safeRun runs a tool and turns a panic into an error.
@@ -457,8 +467,12 @@ func collectMessages(turnID string, rounds []*roundRec, segs []segRecord, keep i
 		base.ToolCalls = encodeToolCalls(rd.calls)
 		out = append(out, base)
 		for _, c := range rd.calls {
+			content, ok := rd.stored[c.ID]
+			if !ok {
+				content = rd.results[c.ID]
+			}
 			out = append(out, store.Message{ConversationID: ConversationID, TurnID: turnID, Role: store.RoleTool,
-				Content: rd.results[c.ID], ToolCallID: c.ID})
+				Content: content, ToolCallID: c.ID})
 		}
 	}
 	return out, strings.Join(texts, " ")

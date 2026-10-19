@@ -238,6 +238,7 @@ type fixture struct {
 type fixtureOpts struct {
 	noModel  bool
 	noise    bool // leave the weekly noise report due
+	noMove   bool // the server lacks MOVE
 	httpc    *http.Client
 	accounts []config.MailAccount
 }
@@ -260,11 +261,15 @@ func newFixture(t *testing.T, opts ...func(*fixtureOpts)) *fixture {
 	}
 	mem := imapmemserver.New()
 	mem.AddUser(f.user)
+	caps := imap.CapSet{imap.CapIMAP4rev1: {}, imap.CapUIDPlus: {}, imap.CapMove: {}, imap.CapIdle: {}}
+	if fo.noMove {
+		delete(caps, imap.CapMove)
+	}
 	srv := imapserver.New(&imapserver.Options{
 		NewSession: func(*imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
 			return mem.NewSession(), nil, nil
 		},
-		Caps:         imap.CapSet{imap.CapIMAP4rev1: {}, imap.CapUIDPlus: {}, imap.CapMove: {}, imap.CapIdle: {}},
+		Caps:         caps,
 		InsecureAuth: true,
 	})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

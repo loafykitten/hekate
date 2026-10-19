@@ -103,6 +103,8 @@ var (
 	ErrNotConfigured = &httpx.Error{Status: http.StatusServiceUnavailable, Msg: "mail isn't set up yet"}
 	// ErrGone means the message is no longer on the server where Hekate last saw it.
 	ErrGone = &httpx.Error{Status: http.StatusNotFound, Msg: "that message is no longer on the mail server"}
+	// errNoMove means the server can't move mail atomically, so Hekate won't move it.
+	errNoMove = &httpx.Error{Status: http.StatusBadGateway, Msg: "this mail server can't move messages safely (no IMAP MOVE)"}
 )
 
 func errNoMessage(id int64) *httpx.Error { return httpx.NotFound("no mail with id %d", id) }

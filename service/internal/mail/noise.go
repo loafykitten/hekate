@@ -37,6 +37,7 @@ type noiseGroup struct {
 	count     int
 	read      bool // any message was opened
 	wanted    bool // any message was classified as something she shouldn't clean away
+	unsure    bool // any message has no category yet, so it could be anything
 	addresses map[string]bool
 }
 
@@ -45,10 +46,11 @@ func (g *noiseGroup) add(unread bool, category string, addr string) {
 	g.read = g.read || !unread
 	g.wanted = g.wanted || category == CategoryNeedsReply || category == CategoryImportant ||
 		category == CategoryPersonal || category == CategoryReceipt
+	g.unsure = g.unsure || category == ""
 	g.addresses[addr] = true
 }
 
-func (g *noiseGroup) noisy() bool { return g.count >= noiseMinCount && !g.read && !g.wanted }
+func (g *noiseGroup) noisy() bool { return g.count >= noiseMinCount && !g.read && !g.wanted && !g.unsure }
 
 // noiseReport proposes archive rules for senders whose mail goes unopened. It
 // runs at most weekly and returns how many proposals it raised.

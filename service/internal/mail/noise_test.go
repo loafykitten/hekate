@@ -167,3 +167,12 @@ func TestExpiredProposalCanBeRepeated(t *testing.T) {
 }
 
 func withNoise(o *fixtureOpts) { o.noise = true }
+
+func TestNoiseReportWaitsForUnsortedMail(t *testing.T) {
+	f := newFixture(t, withNoise, func(o *fixtureOpts) { o.noModel = true })
+	f.deliverN("Deals <deals@shop.example.net>", 5) // unread, but never classified: could be anything
+	f.sweep()
+	if got := rulesFrom(t, f); len(got) != 0 {
+		t.Errorf("proposals from unsorted mail = %q", got)
+	}
+}

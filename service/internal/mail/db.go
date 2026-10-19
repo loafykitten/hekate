@@ -323,8 +323,29 @@ func (s *Service) accountState(ctx context.Context, name string) (accountState, 
 // messages are dropped: their ids would otherwise reach into the new mailbox,
 // and a pending approval could act on an unrelated message there. Ids are
 // never reused, so approvals for the old messages find nothing.
+//
+// Labels no longer configured (an account removed or renamed) lose their
+// cache too, so stale copies never mix into counts, lists or the noise report.
 func (s *Service) bindAccounts(ctx context.Context) error {
 	now := stamp(s.now())
+	names := make([]any, 0, len(s.accounts))
+	for _, a := range s.accounts {
+		names = append(names, a.cfg.Name)
+	}
+	notConfigured := "1"
+	if len(names) > 0 {
+		notConfigured = "account NOT IN (?" + strings.Repeat(", ?", len(names)-1) + ")"
+	}
+	res, err := s.db.ExecContext(ctx, `DELETE FROM mail_messages WHERE `+notConfigured, names...)
+	if err != nil {
+		return fmt.Errorf("mail: drop mail of removed accounts: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		s.log.Info("dropped cached mail of accounts no longer configured", "messages", n)
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM mail_accounts WHERE `+strings.Replace(notConfigured, "account", "name", 1), names...); err != nil {
+		return fmt.Errorf("mail: drop removed accounts: %w", err)
+	}
 	for _, a := range s.accounts {
 		identity := strings.ToLower(a.cfg.User) + "|" + strings.ToLower(a.cfg.Host)
 		var stored string

@@ -3,17 +3,19 @@ import { talkCopy } from "./talkCopy";
 
 describe("talkCopy", () => {
   it("disables the button offline and when speech-to-text is unavailable", () => {
-    expect(talkCopy("idle", false, false, undefined)).toMatchObject({ disabled: true, hint: "Offline" });
-    expect(talkCopy("idle", false, true, false)).toMatchObject({ disabled: true });
-    expect(talkCopy("idle", false, true, false).hint).toMatch(/type/i);
+    expect(talkCopy("idle", false, undefined, "Tap")).toMatchObject({ disabled: true, hint: "Offline" });
+    expect(talkCopy("idle", true, false, "Tap")).toMatchObject({ disabled: true });
+    expect(talkCopy("idle", true, false, "Tap").hint).toMatch(/type/i);
   });
 
-  it("describes each state, and tells a latched recording apart from a held one", () => {
-    expect(talkCopy("idle", false, true, true)).toMatchObject({ disabled: false, hint: "Hold to talk" });
-    expect(talkCopy("listening", false, true, true).hint).toBe("Release to send");
-    expect(talkCopy("listening", true, true, true).hint).toMatch(/Tap to send/);
-    expect(talkCopy("transcribing", false, true, true).disabled).toBe(true);
-    expect(talkCopy("speaking", false, true, true).disabled).toBe(false);
-    expect(talkCopy("thinking", false, true, true).disabled).toBe(false);
+  it("describes each state of the toggle, in the device's own verb", () => {
+    expect(talkCopy("idle", true, true, "Tap")).toMatchObject({ disabled: false, hint: "Tap to talk" });
+    expect(talkCopy("idle", true, true, "Click").hint).toBe("Click to talk");
+    expect(talkCopy("starting", true, true, "Tap")).toMatchObject({ disabled: false, hint: "Opening the mic…" });
+    expect(talkCopy("listening", true, true, "Tap").hint).toBe("Tap again to end");
+    expect(talkCopy("listening", true, true, "Click").hint).toBe("Click again to end");
+    expect(talkCopy("speaking", true, true, "Click")).toMatchObject({ disabled: false, hint: "Click to interrupt" });
+    expect(talkCopy("transcribing", true, true, "Tap").disabled).toBe(true);
+    expect(talkCopy("thinking", true, true, "Tap").disabled).toBe(false);
   });
 });

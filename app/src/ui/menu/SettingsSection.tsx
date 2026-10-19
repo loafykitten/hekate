@@ -198,7 +198,7 @@ function Voice() {
     <section>
       <SectionTitle>Voice</SectionTitle>
       <div className={styles.group}>
-        {row("Listening", "Hold the mic button to talk. Needs speech recognition on the homelab.", capabilities?.stt)}
+        {row("Listening", "Tap or click the mic button to talk, and again when you're done. Needs speech recognition on the homelab.", capabilities?.stt)}
         {row("Her voice", "Without it she answers in the speech bubble only.", capabilities?.tts)}
       </div>
       {connection !== "open" && <p className={styles.callout} style={{ marginTop: "var(--space-3)" }}>Voice status appears once Hekate is connected.</p>}

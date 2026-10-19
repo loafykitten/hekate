@@ -102,3 +102,31 @@ describe("MicCapture lifecycle", () => {
     expect(audio.requests).toHaveLength(1);
   });
 });
+
+describe("MicCapture.prepare", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("loads the worklet ahead of the press, and the press reuses it", async () => {
+    const audio = stubAudio();
+    audio.resolveModule();
+    let contexts = 0;
+    const Base = globalThis.AudioContext;
+    vi.stubGlobal(
+      "AudioContext",
+      class extends (Base as unknown as new () => object) {
+        constructor() {
+          super();
+          contexts++;
+        }
+      },
+    );
+    const mic = new MicCapture(() => {});
+    mic.prepare();
+    expect(contexts).toBe(1);
+    expect(await mic.start()).toBe(true);
+    expect(contexts).toBe(1);
+  });
+});

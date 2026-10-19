@@ -288,3 +288,11 @@ describe("spring-forward gap", () => {
     expect(fromDateTimeInputs("2027-03-14", "03:30", z)).toBe("2027-03-14T03:30:00-05:00");
   });
 });
+
+describe("dueFromInputs and skipped times", () => {
+  it("never turns a skipped time into 'no due' (which would clear a deadline)", () => {
+    const due = dueFromInputs("2027-03-14", "02:30", "2027-03-10T09:00:00-06:00", { tz: "America/Chicago" });
+    expect(due).not.toBeNull();
+    expect(due).toBe("");
+  });
+});

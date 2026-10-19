@@ -47,7 +47,7 @@ function TaskEditor({ task, lists, busy, onSave, onCancel, onDelete, deleting }:
   const [list, setList] = useState(task.list);
   const first = useAutoFocus<HTMLInputElement>();
   const needsDate = rrule !== null && date === "";
-  const valid = title.trim() !== "" && list.trim() !== "" && !needsDate;
+  const valid = title.trim() !== "" && list.trim() !== "" && !needsDate && localTimeExists(date, time);
 
   function save() {
     const due = dueFromInputs(date, time, base.due);

@@ -373,5 +373,6 @@ export function dueFromInputs(date: string, time: string, original?: string | nu
   if (!date) return null;
   if (!time) return date;
   const timed = original && !isDateOnly(original) ? original : undefined;
-  return timestampFromInputs(date, time, timed, z) || null;
+  // "" (not null) for a time that doesn't exist: null would mean "no due" and clear a deadline.
+  return timestampFromInputs(date, time, timed, z);
 }

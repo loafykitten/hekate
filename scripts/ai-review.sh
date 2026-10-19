@@ -17,7 +17,12 @@ done
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 
-pr_json="$(gh pr view --json number,headRefOid,baseRefName,url)"
+# GitHub can take a few seconds to see a fresh push; wait for the PR head to match HEAD.
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  pr_json="$(gh pr view --json number,headRefOid,baseRefName,url)"
+  [[ "$(jq -r .headRefOid <<<"$pr_json")" == "$(git rev-parse HEAD)" ]] && break
+  sleep 3
+done
 pr="$(jq -r .number <<<"$pr_json")"
 head="$(jq -r .headRefOid <<<"$pr_json")"
 base="$(jq -r .baseRefName <<<"$pr_json")"

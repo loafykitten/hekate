@@ -28,7 +28,7 @@ head="$(jq -r .headRefOid <<<"$pr_json")"
 base="$(jq -r .baseRefName <<<"$pr_json")"
 repo="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
 
-if [[ -n "$(git status --porcelain)" ]]; then
+if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
   echo "Working tree is dirty; commit and push before reviewing." >&2
   exit 1
 fi

@@ -665,3 +665,32 @@ func TestDoneDuringLongSnoozeResumesSchedule(t *testing.T) {
 		}
 	}
 }
+
+// Done after a long snooze skips regular occurrences; they count toward COUNT.
+func TestDoneDuringSnoozeSpendsCount(t *testing.T) {
+	f := newFixture(t)
+	r := f.create(t, "Water", "2026-10-20T09:00", "FREQ=HOURLY;COUNT=3") // 09:00, 10:00, 11:00
+	f.clock.set(f.at("2026-10-20T09:00"))
+	if n, err := f.svc.fireDue(t.Context(), 0); err != nil || n != 1 {
+		t.Fatalf("fire: %d %v", n, err)
+	}
+	if _, err := f.svc.Snooze(t.Context(), mustID(r.ID), 180); err != nil {
+		t.Fatal(err)
+	}
+	f.clock.set(f.at("2026-10-20T10:30"))
+	if _, err := f.svc.Done(t.Context(), mustID(r.ID)); err != nil {
+		t.Fatal(err)
+	}
+	fired := 0
+	for _, at := range []string{"2026-10-20T11:00", "2026-10-20T12:00", "2026-10-20T13:00"} {
+		f.clock.set(f.at(at))
+		n, err := f.svc.fireDue(t.Context(), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fired += n
+	}
+	if fired != 1 {
+		t.Errorf("fired %d more times after Done, want 1 (only 11:00 is left of COUNT=3)", fired)
+	}
+}

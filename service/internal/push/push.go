@@ -287,7 +287,7 @@ func (s *Service) sendOne(ctx context.Context, body []byte, sub webpush.Subscrip
 	host := endpointHost(sub.Endpoint) // the path is a capability; keep it out of logs
 	resp, err := webpush.SendNotificationWithContext(ctx, body, &sub, &webpush.Options{
 		HTTPClient:      s.client,
-		Subscriber:      s.subject,
+		Subscriber:      subscriber(s.subject),
 		TTL:             ttl,
 		Urgency:         urgency,
 		VAPIDPublicKey:  s.public,
@@ -322,4 +322,11 @@ func endpointHost(endpoint string) string {
 		return u.Host
 	}
 	return "unknown"
+}
+
+// subscriber adapts our VAPID subject to webpush-go, which adds "mailto:" to any
+// subject that isn't an https URL; passing ours unchanged would produce
+// "mailto:mailto:…", which push services may reject.
+func subscriber(subject string) string {
+	return strings.TrimPrefix(subject, "mailto:")
 }

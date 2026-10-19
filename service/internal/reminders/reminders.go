@@ -436,7 +436,7 @@ func (s *Service) Done(ctx context.Context, id int64) (Reminder, error) {
 		if err1 != nil || err2 != nil || atT.Equal(startT) {
 			return cur, nil
 		}
-		resume, now := startT, s.now()
+		resume, rule, now := startT, *cur.RRule, s.now()
 		if !resume.After(now) {
 			r, err := when.ParseRule(*cur.RRule, startT.In(s.loc), s.loc)
 			if err != nil {
@@ -446,10 +446,11 @@ func (s *Service) Done(ctx context.Context, id int64) (Reminder, error) {
 			if !ok {
 				return s.closeLocked(ctx, id)
 			}
-			resume = next
+			// Occurrences skipped on the way spend a COUNT limit, as when they fire.
+			resume, rule = next, r.Rebase(next)
 		}
-		if _, err := s.db.ExecContext(ctx, `UPDATE reminders SET at = ?, start = ?, updated_at = ? WHERE id = ?`,
-			stamp(resume), stamp(resume), stamp(now), id); err != nil {
+		if _, err := s.db.ExecContext(ctx, `UPDATE reminders SET at = ?, start = ?, rrule = ?, updated_at = ? WHERE id = ?`,
+			stamp(resume), stamp(resume), rule, stamp(now), id); err != nil {
 			return Reminder{}, fmt.Errorf("finish snooze %d: %w", id, err)
 		}
 		s.changed()

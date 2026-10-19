@@ -143,6 +143,11 @@ func TestSendDeliversWithVAPIDAndTTL(t *testing.T) {
 	if auth := r.Header.Get("Authorization"); !strings.HasPrefix(auth, "vapid t=") || !strings.Contains(auth, "k="+s.PublicKey()) {
 		t.Errorf("authorization = %q", auth)
 	}
+	// The VAPID token's subject is our contact exactly once (webpush-go adds
+	// "mailto:" itself).
+	if sub := vapidSubject(t, r.Header.Get("Authorization")); sub != "mailto:test@example.com" {
+		t.Errorf("VAPID sub = %q, want mailto:test@example.com", sub)
+	}
 	if strings.Contains(string(ep.bodies[0]), "Stretch") {
 		t.Error("payload was not encrypted")
 	}
@@ -297,4 +302,25 @@ func TestHTTPSRequiredByDefault(t *testing.T) {
 	if w.Code != 400 || !strings.Contains(w.Body.String(), "https") {
 		t.Errorf("http endpoint = %d %s", w.Code, w.Body)
 	}
+}
+
+// vapidSubject decodes the "sub" claim from a "vapid t=<jwt>, k=<key>" header.
+func vapidSubject(t *testing.T, auth string) string {
+	t.Helper()
+	token, _, _ := strings.Cut(strings.TrimPrefix(auth, "vapid t="), ",")
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		t.Fatalf("not a JWT: %q", token)
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claims struct {
+		Sub string `json:"sub"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		t.Fatal(err)
+	}
+	return claims.Sub
 }

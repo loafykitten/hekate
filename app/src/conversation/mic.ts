@@ -69,17 +69,29 @@ export function setAudioSession(type: "playback" | "play-and-record") {
 const FLUSH_TIMEOUT_MS = 150;
 
 export interface MicOptions {
-  // How long the microphone stays open after a recording, so the next press starts at once.
-  // 0 closes it after every recording. Either way only audio between a press and its end is
-  // ever recorded: the worklet drops everything else.
-  keepOpenMs?: number;
+  // Keep the microphone open while the app is visible, so every press starts at once: it opens
+  // when the app loads or comes back (if permission was already granted) and closes when the app
+  // is hidden. Otherwise it closes after every recording. Either way only audio between a press
+  // and its end is ever recorded: the worklet drops everything else.
+  stayOpen?: boolean;
 }
 
-// Desktop browsers keep the mic open between recordings. Phones close it each time: with the
-// mic open they route audio as a call, which makes her voice quieter.
+// Desktop browsers keep the mic open. Phones close it after each recording: with the mic open
+// they route audio as a call, which makes her voice quieter.
 export function defaultMicOptions(): MicOptions {
   const desktop = typeof window !== "undefined" && window.matchMedia?.("(hover: hover) and (pointer: fine)").matches;
-  return { keepOpenMs: desktop ? 5 * 60_000 : 0 };
+  return { stayOpen: !!desktop };
+}
+
+// Whether the browser has blocked the microphone for this site. Unknown counts as not blocked:
+// opening it then asks, which is expected in an app you talk to.
+async function micBlocked(): Promise<boolean> {
+  try {
+    const status = await navigator.permissions?.query({ name: "microphone" as PermissionName });
+    return status?.state === "denied";
+  } catch {
+    return false;
+  }
 }
 
 export class MicCapture {
@@ -97,19 +109,33 @@ export class MicCapture {
   private flushed?: (id: number) => void;
   private smoothed = 0;
   private _active = false;
-  private idleTimer?: ReturnType<typeof setTimeout>;
-  private readonly keepOpenMs: number;
+  // An open in progress (from a press or from warming up), which a press waits for.
+  private openingTask?: { generation: number; done: Promise<void> };
+  // The open still in progress, if it hasn't been cancelled (stop and close move the generation
+  // on, so a cancelled one is never waited for).
+  private get opening(): Promise<void> | undefined {
+    const task = this.openingTask;
+    return task && task.generation === this.generation ? task.done : undefined;
+  }
+
+  // Set when the user turned down the prompt that warming up raised: no more prompts until a
+  // press opens the mic.
+  private warmRefused = false;
+  private readonly stayOpen: boolean;
+  // prepare() was called: the app wants the mic (speech-to-text is available), so coming back
+  // to the app opens it again.
+  private armed = false;
 
   constructor(
     private readonly onChunk: (chunk: ArrayBuffer) => void,
     options: MicOptions = {},
   ) {
-    this.keepOpenMs = options.keepOpenMs ?? 0;
-    if (this.keepOpenMs > 0 && typeof document !== "undefined") {
-      // Close an idle open mic as soon as the app goes to the background.
+    this.stayOpen = options.stayOpen ?? false;
+    if (this.stayOpen && typeof document !== "undefined") {
       document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") return this.armed && this.prepare();
         // A recording still draining its last chunks closes once it's done (see stop()).
-        if (document.visibilityState === "hidden" && !this._active && this.forwarding === undefined) this.close();
+        if (!this._active && this.forwarding === undefined) this.close();
       });
     }
   }
@@ -125,95 +151,148 @@ export class MicCapture {
 
   // Creates the audio context (suspended until a press resumes it) and loads the capture
   // worklet ahead of time, so the first press only waits for the microphone to open.
+  // With stayOpen it also opens the microphone now, when the user already allowed it.
   prepare(): void {
-    if (this.ctx || typeof AudioContext === "undefined") return;
-    try {
-      const ctx = (this.ctx = new AudioContext({ latencyHint: "interactive" }));
-      const loaded = ctx.audioWorklet.addModule(workletUrl);
-      this.loaded = loaded;
-      loaded.catch(() => {
-        if (this.loaded === loaded) this.loaded = undefined; // the press tries again
-      });
-    } catch {
-      // The press creates it instead.
+    this.armed = true;
+    if (!this.ctx && typeof AudioContext !== "undefined") {
+      try {
+        const ctx = (this.ctx = new AudioContext({ latencyHint: "interactive" }));
+        const loaded = ctx.audioWorklet.addModule(workletUrl);
+        this.loaded = loaded;
+        loaded.catch(() => {
+          if (this.loaded === loaded) this.loaded = undefined; // the press tries again
+        });
+      } catch {
+        // The press creates it instead.
+      }
     }
+    if (this.stayOpen) void this.warm();
+  }
+
+  // Opens the microphone without recording, ahead of the press. The first time, this is where
+  // the browser asks for permission.
+  private async warm(): Promise<void> {
+    const visible = () => typeof document === "undefined" || document.visibilityState === "visible";
+    if (this.warmRefused || this.isOpen() || this.opening || this.stream || !visible()) return;
+    if (!navigator.mediaDevices?.getUserMedia) return;
+    const before = this.generation;
+    if (await micBlocked()) return;
+    // Whatever happened meanwhile wins: a press (it opens the mic itself), the app being hidden,
+    // a close. Each of those moves the generation on.
+    if (this.generation !== before || !visible() || this.opening || this.stream || this.isOpen()) return;
+    const generation = ++this.generation;
+    const opening = this.open(generation, false).then(
+      () => {},
+      (e: unknown) => {
+        console.warn("microphone: couldn't open ahead of time", e); // the press will try, and say why
+        if (classifyMicError(e).kind === "denied") this.warmRefused = true;
+        if (generation === this.generation) this.release();
+      },
+    );
+    const task = { generation, done: opening };
+    this.openingTask = task;
+    await opening;
+    if (this.openingTask === task) this.openingTask = undefined;
   }
 
   // Resolves true once chunks are flowing, false if stop() was called first. Throws MicError.
   async start(): Promise<boolean> {
     if (this._active) throw new MicError("busy", "Already capturing.");
-    clearTimeout(this.idleTimer);
+    // Resume inside the gesture, before anything awaits (iOS needs it there).
+    void this.ctx?.resume().catch(() => {});
+    const pending = this.opening;
+    if (pending) {
+      const generation = this.generation;
+      await pending; // warming up already: wait for it rather than open twice
+      if (generation !== this.generation) return false; // cancelled (or superseded) meanwhile
+    }
     if (this.isOpen()) return this.record(++this.generation);
     if (this.stream) throw new MicError("busy", "Already capturing.");
+    this.warmRefused = false; // the user is asking now
     const devices = navigator.mediaDevices;
     if (!devices?.getUserMedia) {
       const kind = window.isSecureContext ? "unsupported" : "insecure";
       throw new MicError(kind, MESSAGES[kind]);
     }
     const generation = ++this.generation;
-    let stream: MediaStream | undefined;
+    const opened = this.open(generation, true);
+    // Registered so a warm-up starting meanwhile stands aside instead of opening a second time.
+    const opening = opened.then(
+      () => {},
+      () => {},
+    );
+    const task = { generation, done: opening };
+    this.openingTask = task;
     try {
-      // Created and resumed synchronously inside the gesture; reused for later presses.
-      const ctx = (this.ctx ??= new AudioContext({ latencyHint: "interactive" }));
-      const resumed = ctx.resume();
-      setAudioSession("play-and-record");
-      const began = performance.now();
-      stream = await openMic(devices);
-      console.info(`microphone: opened in ${Math.round(performance.now() - began)} ms`);
-      if (generation !== this.generation) return this.dropStale(stream); // released before the stream arrived
-      this.stream = stream;
-      // A device that goes away (unplugged headset) closes the mic; the next press reopens it.
-      stream.getTracks().forEach((t) => t.addEventListener("ended", () => !this._active && this.close()));
-      await resumed.catch(() => {});
-      await ctx.resume(); // iOS can leave the context "interrupted" after the permission prompt
-      this.loaded ??= ctx.audioWorklet.addModule(workletUrl);
-      await this.loaded;
-      // Cancelled while the worklet loaded; a newer capture may already own this.stream.
-      if (generation !== this.generation) return this.dropStale(stream);
-
-      const node = new AudioWorkletNode(ctx, "hekate-pcm-capture", {
-        numberOfInputs: 1,
-        numberOfOutputs: 1,
-        outputChannelCount: [1],
-      });
-      node.port.onmessage = (e: MessageEvent<{ id?: number; pcm?: ArrayBuffer; flushed?: number }>) => {
-        const { id, pcm, flushed } = e.data;
-        if (flushed !== undefined) return this.flushed?.(flushed);
-        // Only the current recording's audio, never a cancelled one's or anything in between.
-        if (!pcm || id === undefined || id !== this.forwarding) return;
-        this.smoothed = Math.max(pcmLevel(new Int16Array(pcm)), this.smoothed * 0.7);
-        this.onChunk(pcm);
-      };
-      // Some browsers only run worklets that are connected to the destination; keep it silent.
-      const mute = ctx.createGain();
-      mute.gain.value = 0;
-      const source = ctx.createMediaStreamSource(stream);
-      source.connect(node).connect(mute).connect(ctx.destination);
-      this.node = node;
-      this.mute = mute;
-      this.source = source;
-      return this.record(generation);
+      if (!(await opened)) return false;
+      return await this.record(generation);
     } catch (e) {
-      if (generation !== this.generation) {
-        this.dropStale(stream);
-        return false;
-      }
+      if (generation !== this.generation) return false;
       this.release();
       setAudioSession("playback");
       console.warn("microphone: capture failed", e);
       throw classifyMicError(e);
+    } finally {
+      if (this.openingTask === task) this.openingTask = undefined;
     }
   }
 
+  // Opens the microphone and builds the capture graph, without recording. Resolves false when
+  // a newer start or stop superseded it (its stream is dropped). Throws what getUserMedia throws.
+  private async open(generation: number, inGesture: boolean): Promise<boolean> {
+    // Created and resumed synchronously inside the gesture; reused for later presses.
+    const ctx = (this.ctx ??= new AudioContext({ latencyHint: "interactive" }));
+    const resumed = inGesture ? ctx.resume() : undefined;
+    if (inGesture) setAudioSession("play-and-record");
+    const began = performance.now();
+    const stream = await openMic(navigator.mediaDevices);
+    console.info(`microphone: opened in ${Math.round(performance.now() - began)} ms`);
+    if (generation !== this.generation) return this.dropStale(stream); // released before the stream arrived
+    this.stream = stream;
+    // A device that goes away (unplugged headset) closes the mic; the next press reopens it.
+    stream.getTracks().forEach((t) => t.addEventListener("ended", () => !this._active && this.close()));
+    if (resumed) {
+      await resumed.catch(() => {});
+      await ctx.resume(); // iOS can leave the context "interrupted" after the permission prompt
+    }
+    this.loaded ??= ctx.audioWorklet.addModule(workletUrl);
+    await this.loaded;
+    // Cancelled while the worklet loaded; a newer capture may already own this.stream.
+    if (generation !== this.generation) return this.dropStale(stream);
+
+    const node = new AudioWorkletNode(ctx, "hekate-pcm-capture", {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      outputChannelCount: [1],
+    });
+    node.port.onmessage = (e: MessageEvent<{ id?: number; pcm?: ArrayBuffer; flushed?: number }>) => {
+      const { id, pcm, flushed } = e.data;
+      if (flushed !== undefined) return this.flushed?.(flushed);
+      // Only the current recording's audio, never a cancelled one's or anything in between.
+      if (!pcm || id === undefined || id !== this.forwarding) return;
+      this.smoothed = Math.max(pcmLevel(new Int16Array(pcm)), this.smoothed * 0.7);
+      this.onChunk(pcm);
+    };
+    // Some browsers only run worklets that are connected to the destination; keep it silent.
+    const mute = ctx.createGain();
+    mute.gain.value = 0;
+    const source = ctx.createMediaStreamSource(stream);
+    source.connect(node).connect(mute).connect(ctx.destination);
+    this.node = node;
+    this.mute = mute;
+    this.source = source;
+    return true;
+  }
+
   // Ends the recording and waits for the last partial chunk so the end of the sentence isn't
-  // clipped. The mic then closes, or stays open (not recording) for keepOpenMs.
+  // clipped. The mic then closes, or with stayOpen stays open (not recording) while visible.
   async stop(): Promise<void> {
     this.generation++;
     const node = this.node;
     const wasActive = this._active;
     const ending = this.forwarding;
     this._active = false;
-    const keepOpen = this.keepOpenMs > 0 && wasActive && this.isOpen();
+    const keepOpen = this.stayOpen && wasActive && this.isOpen();
     if (!keepOpen) this.stream?.getTracks().forEach((t) => t.stop()); // the mic indicator goes off now
     if (node && wasActive && ending !== undefined) {
       // The ending recording keeps forwarding until the worklet says its last chunk is out.
@@ -230,18 +309,13 @@ export class MicCapture {
     if (this.forwarding === ending) this.forwarding = undefined;
     this.flushed = undefined;
     const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
-    if (keepOpen && this.isOpen() && !hidden) {
-      clearTimeout(this.idleTimer);
-      this.idleTimer = setTimeout(() => this.close(), this.keepOpenMs);
-      return;
-    }
+    if (keepOpen && this.isOpen() && !hidden) return;
     this.close();
   }
 
   // Closes the microphone (and the indicator) unless a recording is running.
   close() {
     if (this._active) return;
-    clearTimeout(this.idleTimer);
     this.generation++;
     this.forwarding = undefined;
     this.release();

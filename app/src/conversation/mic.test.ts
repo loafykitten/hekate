@@ -20,6 +20,23 @@ describe("classifyMicError", () => {
   });
 });
 
+// A document whose visibility the test controls.
+function stubDocument() {
+  let visibility = "visible";
+  const listeners: (() => void)[] = [];
+  vi.stubGlobal("document", {
+    get visibilityState() {
+      return visibility;
+    },
+    addEventListener: (_: string, fn: () => void) => listeners.push(fn),
+  });
+  const set = (v: string) => {
+    visibility = v;
+    listeners.forEach((fn) => fn());
+  };
+  return { hide: () => set("hidden"), show: () => set("visible") };
+}
+
 // Minimal Web Audio and getUserMedia doubles: enough to drive MicCapture's lifecycle.
 function stubAudio(refusals: string[] = []) {
   const requests: MediaStreamConstraints[] = [];
@@ -169,13 +186,15 @@ describe("MicCapture keeping the mic open", () => {
     vi.useRealTimers();
   });
 
-  it("stays open between recordings, starts the next at once, and closes when idle", async () => {
-    vi.useFakeTimers();
+  it("stays open between recordings, starts the next at once, and closes when the app is hidden", async () => {
     vi.spyOn(console, "info").mockImplementation(() => {});
+    const page = stubDocument();
     const audio = stubAudio();
     audio.resolveModule();
     const chunks: ArrayBuffer[] = [];
-    const mic = new MicCapture((c) => chunks.push(c), { keepOpenMs: 60_000 });
+    const mic = new MicCapture((c) => chunks.push(c), { stayOpen: true });
+    mic.prepare(); // the app connected and wants the mic
+    await vi.waitFor(() => expect(audio.nodes).toHaveLength(1));
 
     expect(await mic.start()).toBe(true);
     await mic.stop();
@@ -196,10 +215,66 @@ describe("MicCapture keeping the mic open", () => {
     expect(chunks).toHaveLength(1);
     await mic.stop();
 
-    vi.advanceTimersByTime(60_000);
+    expect(audio.streams[0].stopped).toBe(false); // no idle timeout while visible
+    page.hide();
     expect(audio.streams[0].stopped).toBe(true);
-    expect(await mic.start()).toBe(true); // reopens
+    page.show(); // coming back opens it again, ready for the next press
+    await vi.waitFor(() => expect(audio.requests).toHaveLength(2));
+    expect(await mic.start()).toBe(true);
     expect(audio.requests).toHaveLength(2);
+  });
+
+  it("opens on load, so even the first press starts at once", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    stubDocument();
+    const audio = stubAudio();
+    audio.resolveModule();
+    const mic = new MicCapture(() => {}, { stayOpen: true });
+    mic.prepare(); // the app connected
+    await vi.waitFor(() => expect(audio.nodes).toHaveLength(1));
+    expect(audio.nodes[0].sent).toEqual([]); // open, not recording
+    expect(await mic.start()).toBe(true);
+    expect(audio.requests).toHaveLength(1);
+    expect(audio.nodes[0].sent).toEqual([{ start: 1 }]);
+  });
+
+  it("a press while the mic is still opening waits for it instead of opening twice", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    stubDocument();
+    const audio = stubAudio();
+    const mic = new MicCapture(() => {}, { stayOpen: true });
+    mic.prepare();
+    await vi.waitFor(() => expect(audio.requests).toHaveLength(1)); // waiting on the worklet now
+    const pressed = mic.start();
+    audio.resolveModule();
+    expect(await pressed).toBe(true);
+    expect(audio.requests).toHaveLength(1);
+    expect(audio.nodes).toHaveLength(1);
+  });
+
+  it("doesn't ask on load when the mic is blocked, and asks once more only on a press after a refusal", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const page = stubDocument();
+    const audio = stubAudio(["NotAllowedError"]);
+    audio.resolveModule();
+    const mic = new MicCapture(() => {}, { stayOpen: true });
+    mic.prepare(); // the prompt appears, and is turned down
+    await vi.waitFor(() => expect(audio.requests).toHaveLength(1));
+    await Promise.resolve();
+    page.hide();
+    page.show(); // coming back doesn't nag
+    await new Promise((r) => setTimeout(r, 0));
+    expect(audio.requests).toHaveLength(1);
+    expect(await mic.start()).toBe(true); // a press asks again
+    expect(audio.requests).toHaveLength(2);
+
+    const blocked = stubAudio();
+    (navigator as unknown as { permissions: unknown }).permissions = { query: async () => ({ state: "denied" }) };
+    const quiet = new MicCapture(() => {}, { stayOpen: true });
+    quiet.prepare();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(blocked.requests).toHaveLength(0);
   });
 
   it("closes after every recording when not kept open", async () => {
@@ -224,7 +299,7 @@ describe("MicCapture recording handoff", () => {
     const audio = stubAudio();
     audio.resolveModule();
     const chunks: number[] = [];
-    const mic = new MicCapture((c) => chunks.push(new Int16Array(c)[0]), { keepOpenMs: 60_000 });
+    const mic = new MicCapture((c) => chunks.push(new Int16Array(c)[0]), { stayOpen: true });
     expect(await mic.start()).toBe(true);
     const node = audio.nodes[0];
     node.manualFlush = true;
@@ -243,7 +318,7 @@ describe("MicCapture recording handoff", () => {
     const audio = stubAudio();
     audio.resolveModule();
     const chunks: number[] = [];
-    const mic = new MicCapture((c) => chunks.push(new Int16Array(c)[0]), { keepOpenMs: 60_000 });
+    const mic = new MicCapture((c) => chunks.push(new Int16Array(c)[0]), { stayOpen: true });
     expect(await mic.start()).toBe(true);
     const node = audio.nodes[0];
     node.manualFlush = true;
@@ -274,7 +349,7 @@ describe("MicCapture recording handoff", () => {
     const audio = stubAudio();
     audio.resolveModule();
     const chunks: number[] = [];
-    const mic = new MicCapture((c) => chunks.push(new Int16Array(c)[0]), { keepOpenMs: 60_000 });
+    const mic = new MicCapture((c) => chunks.push(new Int16Array(c)[0]), { stayOpen: true });
     expect(await mic.start()).toBe(true);
     const node = audio.nodes[0];
     node.manualFlush = true;
@@ -286,5 +361,67 @@ describe("MicCapture recording handoff", () => {
     await stopping;
     expect(chunks).toEqual([333]);
     expect(audio.streams[0].stopped).toBe(true);
+  });
+
+  it("a press during the warm-up's permission check isn't undone by the warm-up", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    stubDocument();
+    const audio = stubAudio();
+    audio.resolveModule();
+    let answer!: (s: { state: string }) => void;
+    (navigator as unknown as { permissions: unknown }).permissions = {
+      query: () => new Promise((r) => (answer = r)),
+    };
+    const mic = new MicCapture(() => {}, { stayOpen: true });
+    mic.prepare(); // waiting on the permission check
+    const pressed = mic.start();
+    answer({ state: "prompt" });
+    expect(await pressed).toBe(true);
+    expect(mic.active).toBe(true);
+    expect(audio.requests).toHaveLength(1);
+  });
+
+  it("a warm-up doesn't open the mic if the app was hidden during its permission check", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const page = stubDocument();
+    const audio = stubAudio();
+    audio.resolveModule();
+    let answer!: (s: { state: string }) => void;
+    (navigator as unknown as { permissions: unknown }).permissions = {
+      query: () => new Promise((r) => (answer = r)),
+    };
+    const mic = new MicCapture(() => {}, { stayOpen: true });
+    mic.prepare();
+    page.hide();
+    answer({ state: "granted" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(audio.requests).toHaveLength(0);
+  });
+
+  it("a press cancelled while waiting for the warm-up never takes over the next press", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    stubDocument();
+    const audio = stubAudio();
+    const mic = new MicCapture(() => {}, { stayOpen: true });
+    mic.prepare();
+    await vi.waitFor(() => expect(audio.requests).toHaveLength(1)); // warm-up waits on the worklet
+    const first = mic.start(); // waits for the warm-up
+    await mic.stop(); // cancelled
+    const second = mic.start();
+    audio.resolveModule();
+    expect(await first).toBe(false);
+    expect(await second).toBe(true);
+    expect(mic.active).toBe(true);
+  });
+
+  it("coming back to the app doesn't open the mic unless the app asked for it", async () => {
+    const page = stubDocument();
+    const audio = stubAudio();
+    audio.resolveModule();
+    new MicCapture(() => {}, { stayOpen: true }); // never prepared: speech-to-text is off
+    page.hide();
+    page.show();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(audio.requests).toHaveLength(0);
   });
 });

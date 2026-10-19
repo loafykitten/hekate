@@ -599,3 +599,63 @@ func TestAnchorToSeriesIsRepeatableOnACopy(t *testing.T) {
 		t.Errorf("attempts = %v, caller's start = %s", starts, *p.Start)
 	}
 }
+
+// Rules that would pack thousands of times into each day are refused, whether
+// they come from Renamon or from another calendar client.
+func TestDenseRulesRejected(t *testing.T) {
+	hours := "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23"
+	for _, rule := range []string{
+		"FREQ=HOURLY",
+		"FREQ=DAILY;BYHOUR=" + hours + ";BYMINUTE=0,30",
+		"FREQ=WEEKLY;BYHOUR=9;BYMINUTE=" + hours + ";BYSECOND=0,1",
+	} {
+		if _, err := validateRRule(rule); err == nil {
+			t.Errorf("%s accepted", rule)
+		}
+	}
+	for _, rule := range []string{"FREQ=DAILY", "FREQ=WEEKLY;BYDAY=MO,WE", "FREQ=DAILY;BYHOUR=" + hours} {
+		if _, err := validateRRule(rule); err != nil {
+			t.Errorf("%s rejected: %v", rule, err)
+		}
+	}
+}
+
+// Renaming another client's recurring event must not rewrite its schedule in
+// our zone: anchored at 14:00 UTC, it stays 14:00 UTC through the DST change.
+func TestUnrelatedEditKeepsScheduleAsWritten(t *testing.T) {
+	loc, _ := time.LoadLocation("America/Chicago")
+	ser := mustSeries(t, `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//other client//EN
+BEGIN:VEVENT
+UID:standup
+DTSTAMP:20261001T000000Z
+DTSTART:20261019T140000Z
+DTEND:20261019T150000Z
+RRULE:FREQ=WEEKLY
+SUMMARY:Standup
+END:VEVENT
+END:VCALENDAR
+`, loc)
+	title := "Team standup"
+	cur := ser.event(*ser.master, loc, nil)
+	in, err := mergePatch(cur, ser.master, EventPatch{Title: &title}, loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sp, err := resolveSpec(in, loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resched := !sp.start.Equal(ser.master.start) || sp.allDay != ser.master.allDay || sp.rrule != ser.rruleString()
+	if err := ser.applyUpdate(sp, resched, loc, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	m := ser.master.c
+	if got := m.Props.Get(ical.PropDateTimeStart); got.Value != "20261019T140000Z" || got.Params.Get(ical.ParamTimezoneID) != "" {
+		t.Errorf("DTSTART = %q %v, want unchanged 20261019T140000Z", got.Value, got.Params)
+	}
+	if got := m.Props.Get(ical.PropSummary).Value; got != title {
+		t.Errorf("SUMMARY = %q", got)
+	}
+}

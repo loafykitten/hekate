@@ -35,6 +35,8 @@ const (
 
 	// maxInstances caps how many instances of one series a single query yields.
 	maxInstances = 1000
+	maxSteps     = 500_000 // occurrences walked from DTSTART to the end of a range
+	maxPerDay    = 24
 )
 
 // Event is the PROTOCOL.md Event shape: one non-recurring event or one
@@ -391,19 +393,26 @@ func (s *series) masterStarts(from, to time.Time) ([]time.Time, error) {
 		if err != nil {
 			return nil, fmt.Errorf("RRULE %q: %w", rp.Value, err)
 		}
-		if opt.Freq > rrule.DAILY {
-			return nil, fmt.Errorf("RRULE %q: repeating more often than daily is not supported", rp.Value)
+		if err := checkRuleDensity(opt); err != nil {
+			return nil, fmt.Errorf("RRULE %q: %w", rp.Value, err)
 		}
 		opt.Dtstart = m.start
 		rule, err := rrule.NewRRule(*opt)
 		if err != nil {
 			return nil, fmt.Errorf("RRULE %q: %w", rp.Value, err)
 		}
-		n := 0
-		for _, t := range rule.Between(lo, to, true) {
-			add(t)
-			if n++; n >= maxInstances {
+		// Iterate lazily: Between would build every occurrence before any limit
+		// applied. Both the kept instances and the steps to reach the range are
+		// capped, so no stored rule can run away with memory or time.
+		next := rule.Iterator()
+		for n, steps := 0, 0; n < maxInstances && steps < maxSteps; steps++ {
+			t, ok := next()
+			if !ok || t.After(to) {
 				break
+			}
+			if !t.Before(lo) {
+				add(t)
+				n++
 			}
 		}
 	}
@@ -544,7 +553,26 @@ func (s *series) applyUpdate(sp spec, resched bool, loc *time.Location, now time
 	if m == nil {
 		return errors.New("this event has no main entry to edit")
 	}
+	// An edit that doesn't touch the schedule (a new title, notes) keeps the
+	// event's own DTSTART/DTEND/DURATION/RRULE exactly as written, including
+	// their time zone: rewriting them in our zone would move another client's
+	// recurring event across DST changes.
+	keep := !resched && sp.end.Equal(m.end)
+	var saved map[string][]ical.Prop
+	if keep {
+		saved = map[string][]ical.Prop{}
+		for _, name := range []string{ical.PropDateTimeStart, ical.PropDateTimeEnd, ical.PropDuration, ical.PropRecurrenceRule} {
+			saved[name] = m.c.Props[name]
+		}
+	}
 	fillEvent(m.c, sp, loc, now)
+	for name, props := range saved {
+		if props == nil {
+			delete(m.c.Props, name)
+		} else {
+			m.c.Props[name] = props
+		}
+	}
 	seq := 0
 	if p := m.c.Props.Get(ical.PropSequence); p != nil {
 		_, _ = fmt.Sscanf(p.Value, "%d", &seq)
@@ -580,8 +608,21 @@ func validateRRule(v string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("invalid rrule %q: %w", v, err)
 	}
-	if opt.Freq > rrule.DAILY {
-		return "", fmt.Errorf("rrule %q repeats more often than daily, which is not supported", v)
+	if err := checkRuleDensity(opt); err != nil {
+		return "", fmt.Errorf("rrule %q: %w", v, err)
 	}
 	return v, nil
+}
+
+// checkRuleDensity rejects rules that repeat more often than daily, or that use
+// BYHOUR/BYMINUTE/BYSECOND lists to pack more than maxPerDay times into a day.
+func checkRuleDensity(opt *rrule.ROption) error {
+	if opt.Freq > rrule.DAILY {
+		return errors.New("repeating more often than daily is not supported")
+	}
+	perDay := max(1, len(opt.Byhour)) * max(1, len(opt.Byminute)) * max(1, len(opt.Bysecond))
+	if perDay > maxPerDay {
+		return fmt.Errorf("%d times a day is more than the %d supported", perDay, maxPerDay)
+	}
+	return nil
 }

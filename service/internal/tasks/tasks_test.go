@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -405,5 +406,30 @@ func TestUpdate(t *testing.T) {
 	wantStatus(t, err, http.StatusNotFound)
 	if got, _ := f.svc.Get(context.Background(), id); got.Title != "Final draft" {
 		t.Errorf("failed updates changed the task: %+v", got)
+	}
+}
+
+// A repeating task whose rule sets the time of day keeps that time: completing
+// the 09:00 occurrence moves it to tomorrow at 09:00, not back to today.
+func TestTimeOfDayRuleKeepsTheTime(t *testing.T) {
+	f := newFixture(t)
+	f.setNow(time.Date(2026, 10, 20, 8, 0, 0, 0, f.svc.loc))
+	task := mustCreate(t, f.svc, NewTask{Title: "Pills", RRule: "FREQ=DAILY;BYHOUR=9;BYMINUTE=0"})
+	if task.Due == nil || *task.Due != "2026-10-20T09:00:00-05:00" {
+		t.Fatalf("due = %v, want today 09:00 with its time", task.Due)
+	}
+	f.setNow(time.Date(2026, 10, 20, 9, 30, 0, 0, f.svc.loc))
+	id, _ := strconv.ParseInt(task.ID, 10, 64)
+	done, err := f.svc.Complete(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done.Due == nil || *done.Due != "2026-10-21T09:00:00-05:00" {
+		t.Errorf("after completing, due = %v, want tomorrow 09:00", done.Due)
+	}
+
+	// A date-only due can't carry the rule's time.
+	if _, err := f.svc.Create(t.Context(), NewTask{Title: "x", Due: "2026-10-21", RRule: "FREQ=DAILY;BYHOUR=9"}); err == nil {
+		t.Error("date-only due with a time-of-day rule accepted")
 	}
 }

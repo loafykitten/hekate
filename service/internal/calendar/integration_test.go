@@ -515,3 +515,47 @@ func TestIntegrationWrongPassword(t *testing.T) {
 		t.Error("error leaks the password")
 	}
 }
+
+// A spoken edit of a later occurrence's end applies to the series relative to
+// that occurrence (the review case: two hours long, not seven days).
+func TestIntegrationToolEditsLaterOccurrence(t *testing.T) {
+	env := integEnv(t)
+	ctx := context.Background()
+	s := env.service(t, uniqueName(), nil, &changes{}, testNow)
+	tools := map[string]agent.Tool{}
+	for _, tl := range s.Tools() {
+		tools[tl.Name] = tl
+	}
+	run := func(name, args string) agent.Result {
+		t.Helper()
+		res, err := tools[name].Run(ctx, json.RawMessage(args))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		return res
+	}
+	res := run("event_create", `{"title":"Weekly review","start":"2026-10-19T09:00","rrule":"FREQ=WEEKLY"}`)
+	var card cardData
+	if err := json.Unmarshal(res.Card.Data, &card); err != nil || len(card.Items) == 0 {
+		t.Fatalf("card = %s (%v)", res.Card.Data, err)
+	}
+	uid := card.Items[0].UID
+
+	res = run("calendar_events", `{"from":"2026-10-26","to":"2026-10-27"}`)
+	if !strings.Contains(res.Content, "[instance 2026-10-26T09:00:00-05:00]") {
+		t.Fatalf("the model must see the occurrence's instance: %q", res.Content)
+	}
+	run("event_update", `{"uid":"`+uid+`","instance":"2026-10-26T09:00:00-05:00","end":"2026-10-26T11:00"}`)
+
+	evs, err := s.Events(ctx, testNow, testNow.AddDate(0, 0, 14))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ev := range evs {
+		start, _ := time.Parse(time.RFC3339, ev.Start)
+		end, _ := time.Parse(time.RFC3339, ev.End)
+		if end.Sub(start) != 2*time.Hour || start.Hour() != 9 {
+			t.Errorf("occurrence %s–%s, want 09:00 for two hours", ev.Start, ev.End)
+		}
+	}
+}

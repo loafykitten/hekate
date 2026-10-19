@@ -388,14 +388,37 @@ func (s *Service) withRule(due *when.Value, rule string, now time.Time) (*when.V
 	if err != nil {
 		return nil, "", httpx.BadRequest("rrule: %s", err)
 	}
+	timed := ruleHasTimeOfDay(rule)
+	if due != nil && due.DateOnly && timed {
+		// A date can't hold the rule's time, so completing would land on the same
+		// occurrence again.
+		return nil, "", httpx.BadRequest("rrule: a rule with times of day needs a due time too (e.g. 2026-10-20T09:00)")
+	}
 	if due == nil {
 		first, ok := r.First(start)
 		if !ok {
 			return nil, "", httpx.BadRequest("rrule: the rule has no occurrences from today on")
 		}
-		due = &when.Value{T: first, DateOnly: true}
+		due = &when.Value{T: first, DateOnly: !timed}
 	}
 	return due, r.String(), nil
+}
+
+// ruleHasTimeOfDay reports whether an RRULE picks times within a day (hourly,
+// or BYHOUR/BYMINUTE/BYSECOND), which a date-only due can't represent.
+func ruleHasTimeOfDay(rule string) bool {
+	for _, part := range strings.Split(strings.ToUpper(rule), ";") {
+		k, v, _ := strings.Cut(strings.TrimSpace(part), "=")
+		switch k {
+		case "BYHOUR", "BYMINUTE", "BYSECOND":
+			return true
+		case "FREQ":
+			if v == "HOURLY" || v == "MINUTELY" || v == "SECONDLY" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Update changes a task.

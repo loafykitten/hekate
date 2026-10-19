@@ -125,6 +125,7 @@ type updateArgs struct {
 	Location *string `json:"location"`
 	Notes    *string `json:"notes"`
 	RRule    *string `json:"rrule"`
+	Instance *string `json:"instance"`
 }
 
 func (s *Service) updateTool() agent.Tool {
@@ -132,7 +133,9 @@ func (s *Service) updateTool() agent.Tool {
 		Name: "event_update",
 		Description: "Change an event that Hekate created (find its uid with calendar_events). Only the fields you give " +
 			"change; for a repeating event the change applies to the whole series. An empty rrule makes it one-off. " +
-			"Moving a repeating event's start or rule clears its one-off exceptions. " + timeHelp,
+			"Moving a repeating event's start or rule clears its one-off exceptions. When changing the times of a repeating " +
+			"event, give the instance of the occurrence you are looking at (from calendar_events): the new start and end " +
+			"then apply to every occurrence relative to it. " + timeHelp,
 		Schema: schema(`{
 			"uid":{"type":"string"},
 			"title":{"type":"string"},
@@ -141,7 +144,8 @@ func (s *Service) updateTool() agent.Tool {
 			"all_day":{"type":"boolean"},
 			"location":{"type":"string"},
 			"notes":{"type":"string"},
-			"rrule":{"type":"string"}}`, "uid"),
+			"rrule":{"type":"string"},
+			"instance":{"type":"string","description":"For a repeating event: the instance value of the occurrence being changed."}}`, "uid"),
 		Effect:  agent.EffectExternal,
 		Label:   "Updating your calendar",
 		Timeout: toolTimeout,
@@ -157,6 +161,9 @@ func (s *Service) updateTool() agent.Tool {
 				return agent.Result{}, errors.New("uid is required")
 			}
 			p := EventPatch{Title: a.Title, Start: a.Start, End: a.End, AllDay: a.AllDay, Location: a.Location, Notes: a.Notes}
+			if a.Instance != nil {
+				p.Instance, _ = json.Marshal(*a.Instance)
+			}
 			if a.RRule != nil {
 				p.RRule, _ = json.Marshal(*a.RRule)
 			}
@@ -364,6 +371,9 @@ func describe(o occurrence, loc *time.Location) string {
 	line += " [uid " + o.UID + "]"
 	if o.RRule != nil {
 		line += " (repeats: " + *o.RRule + ")"
+		if o.Instance != nil {
+			line += " [instance " + *o.Instance + "]"
+		}
 	}
 	if o.CreatedByHekate {
 		line += " (created by Hekate, editable)"
@@ -388,6 +398,9 @@ func describeEvent(ev Event) string {
 	}
 	if ev.RRule != nil {
 		s += ", repeating " + *ev.RRule
+	}
+	if ev.Instance != nil {
+		s += ", instance " + *ev.Instance
 	}
 	return s
 }

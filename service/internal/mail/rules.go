@@ -296,11 +296,17 @@ func (s *Service) applyRules(ctx context.Context, a *account) (int, error) {
 		if r.Folder != nil {
 			folder = *r.Folder
 		}
-		out, err := s.perform(ctx, r.Action, folder, ids, unruledInbox)
+		// Checked again under the account's lock, right before acting: the owner
+		// may have deleted the rule, or filed the mail, while this waited.
+		live := func(m row) bool { return unruledInbox(m) && s.ruleExists(ctx, rid) }
+		out, err := s.perform(ctx, r.Action, folder, ids, live)
 		if err != nil {
 			// Left unsettled: tried again next sweep, once the cause is fixed.
 			s.log.Warn("mail rule failed", "account", a.cfg.Name, "rule", r.ID, "error", err)
 			continue
+		}
+		if !s.ruleExists(ctx, rid) {
+			continue // deleted meanwhile: the other rules get another look next sweep
 		}
 		if err := s.settle(ctx, ids); err != nil {
 			return applied, err
@@ -314,6 +320,17 @@ func (s *Service) applyRules(ctx context.Context, a *account) (int, error) {
 		applied += n
 	}
 	return applied, nil
+}
+
+// ruleExists reports whether a rule is still in force. A failed lookup counts
+// as no: a rule never acts on a guess.
+func (s *Service) ruleExists(ctx context.Context, id int64) bool {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM mail_rules WHERE id = ?`, id).Scan(&n); err != nil {
+		s.log.Warn("cannot check a mail rule", "rule", id, "error", err)
+		return false
+	}
+	return n > 0
 }
 
 // settle marks messages as handled by the rules.

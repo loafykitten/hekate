@@ -255,3 +255,30 @@ func TestIncrementalSyncCatchesUpOnAFlood(t *testing.T) {
 		t.Errorf("after the next sweep cached %d, want every message", n)
 	}
 }
+
+func TestOldMailStaysOutAfterTheFirstSync(t *testing.T) {
+	f := newFixture(t)
+	now := f.clock.Now()
+	f.deliver("INBOX", mailSpec{subject: "Recent"})
+	f.deliver("INBOX", mailSpec{subject: "Old but filed later", date: now.AddDate(0, 0, -60)}) // higher UID than "Recent"
+	f.sweep()
+	f.sweep() // the next, incremental sweep must not import what the window left out
+	if got := f.inbox(); len(got) != 1 || got[0].Subject != "Recent" {
+		t.Fatalf("inbox = %+v, want only the recent message", got)
+	}
+	f.deliver("INBOX", mailSpec{subject: "New"})
+	f.sweep()
+	if got := f.inbox(); len(got) != 2 {
+		t.Errorf("inbox after new mail = %+v", got)
+	}
+}
+
+func TestOnlyOldMailIsNotImportedLater(t *testing.T) {
+	f := newFixture(t)
+	f.deliver("INBOX", mailSpec{subject: "Old", date: f.clock.Now().AddDate(0, 0, -90)})
+	f.sweep()
+	f.sweep()
+	if got := f.inbox(); len(got) != 0 {
+		t.Errorf("inbox = %+v, want none", got)
+	}
+}

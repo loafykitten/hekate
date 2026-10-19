@@ -212,6 +212,11 @@ func (s *Service) syncInbox(ctx context.Context, a *account) (bool, error) {
 		for u := range seen {
 			maxUID = max(maxUID, u)
 		}
+		if full && sel.UIDNext > 0 {
+			// Everything already in the mailbox was considered, even what the
+			// 30-day window left out: later sweeps start after it.
+			maxUID = max(maxUID, uint32(sel.UIDNext)-1)
+		}
 		if behind {
 			maxUID = uint32(fetchUIDs[len(fetchUIDs)-1])
 		}

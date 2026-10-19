@@ -233,7 +233,9 @@ Full message shapes live in `docs/PROTOCOL.md` alongside the code that implement
 Every milestone ships through the PR gate in `DEVELOPMENT.md` and deploys automatically on
 merge.
 
-Status (2026-10-19): M0–M3 are merged and running on the homelab. Next: M4 (proactive).
+Status (2026-10-19): M0–M3 are merged and running on the homelab, plus tap-to-talk, a desktop
+mic that opens with the app, and 24 character clips with idle variations. Next, in order: the
+change-request pipeline and Telegram channel (below), a voice-off toggle, then M4 (proactive).
 
 | Milestone | Contents | Done when |
 |---|---|---|
@@ -243,6 +245,38 @@ Status (2026-10-19): M0–M3 are merged and running on the homelab. Next: M4 (pr
 | **M3 Mail** ✅ | Two Zoho accounts over IMAP, sweep + classification, rules, approvals, noise report | She tells you what matters and cleans what you've agreed to |
 | **M4 Proactive** | Briefing, heartbeat, follow-ups, reflection + diary, self-inspection, ideas | She greets you with your day and reflects nightly |
 | **M5 Polish** | Viseme lip sync from TTS timings, expression map, offline shell, UX passes | — |
+
+### Next: change requests, Telegram, voice off
+
+**Change requests.** Renamon gets a `propose_change` tool (title, what, why, kind). It's told to
+keep proposals to what's relevant: no personal context, nothing remotely NSFW, nothing that
+identifies the owner beyond their name and pronouns. Proposals are stored in Hekate (not sent
+to GitHub) and capped at about five a day.
+
+1. The owner approves or denies each proposal on an approval card. A denial can carry feedback;
+   Renamon reads it and either lets the idea go or proposes a revised version.
+2. A watcher on the development machine (launchd, every one to two minutes) picks up approved
+   proposals over Tailscale and starts a headless Claude Code session.
+3. That session re-checks the proposal for personal details, files a sanitized issue on the
+   public repo, builds the change in its own git worktree, runs the usual gates, gets a GPT-6
+   Astra review and resolves it (with a round cap), and opens a PR.
+4. A separate fresh agent does the final merge check: CI green, review gate passed, the diff
+   matches the issue's scope, no secrets, personal data or private hostnames. It merges (which
+   deploys; the deployer's health check and rollback still apply) or rejects with reasons.
+
+Progress and outcomes reach the owner through Hekate (push, in-app notice, Renamon mentioning
+it).
+
+**Telegram.** Notifications and actions only, not a second chat. Hekate stays the first channel;
+Telegram is used when Hekate can't deliver: the homelab or the service is down (the watcher's
+health check notices), or a deploy failed and rolled back (the deployer reports it). Messages
+can carry buttons (approve or deny a proposal or a mail approval); a reply supplies deny
+feedback. The service long-polls the Bot API, so nothing is exposed to the internet, and only
+the owner's chat is accepted.
+
+**Voice off.** A speaker toggle in the dock and in Settings, remembered per device. Off means
+replies arrive as text at reading speed with gestures and expressions but no audio, and the
+service skips speech synthesis for those turns.
 
 ## What we took from OpenClaw, Muse and Grok Bot
 

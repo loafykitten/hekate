@@ -1,0 +1,17 @@
+.picker {
+  position: fixed;
+  left: calc(var(--space-4) + var(--safe-left));
+  bottom: calc(var(--space-4) + var(--safe-bottom));
+  z-index: var(--z-overlay);
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.picker option {
+  color: #000;
+}

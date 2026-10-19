@@ -17,13 +17,18 @@ done
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 
-pr_json="$(gh pr view --json number,headRefOid,baseRefName,url)"
+# GitHub can take a few seconds to see a fresh push; wait for the PR head to match HEAD.
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  pr_json="$(gh pr view --json number,headRefOid,baseRefName,url)"
+  [[ "$(jq -r .headRefOid <<<"$pr_json")" == "$(git rev-parse HEAD)" ]] && break
+  sleep 3
+done
 pr="$(jq -r .number <<<"$pr_json")"
 head="$(jq -r .headRefOid <<<"$pr_json")"
 base="$(jq -r .baseRefName <<<"$pr_json")"
 repo="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
 
-if [[ -n "$(git status --porcelain)" ]]; then
+if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
   echo "Working tree is dirty; commit and push before reviewing." >&2
   exit 1
 fi
@@ -48,8 +53,10 @@ git fetch -q origin "$base"
 set_status pending "Reviewing with $model"
 
 out="$(mktemp)"
-trap 'rm -f "$out"' EXIT
-prompt="Review this pull request (diff of HEAD against origin/$base) for the Hekate repo.
+prompt="You are reviewing pull request #$pr in the Hekate repo. The change is exactly
+\`git diff origin/$base...HEAD -- . ':(exclude)**/package-lock.json' ':(exclude)**/go.sum'\`
+(lockfiles are excluded on purpose; also run \`git log origin/$base..HEAD\`). Read surrounding code as needed,
+but keep the review focused on the diff.
 Read docs/PLAN.md and docs/DEVELOPMENT.md for intent and conventions. Report real problems:
 correctness bugs, security issues (this repo is public: flag any secret, private hostname/IP or
 personal data), data loss, broken gates, races, missing tests for risky logic, and clear
@@ -57,8 +64,12 @@ violations of the documented conventions. Severity: blocker = must not merge; ma
 fix before merge; minor/nit = optional. Verdict is approve when there are no blocker or major
 findings. Do not report style preferences as major."
 
-if ! codex exec review --base "origin/$base" -m "$model" -c model_reasoning_effort="high" \
-  --ephemeral --output-schema scripts/ai-review.schema.json -o "$out" "$prompt" >/dev/null; then
+# Progress goes to .git/ai-review.log so a slow review can be watched (tail -f).
+log="$(git rev-parse --absolute-git-dir)/ai-review.log"
+trap 'rm -f "$out"' EXIT
+if ! codex exec -m "$model" -c model_reasoning_effort="high" -s read-only --ephemeral \
+  --output-schema scripts/ai-review.schema.json -o "$out" "$prompt" </dev/null >"$log" 2>&1; then
+  tail -20 "$log" >&2
   set_status error "Codex review failed to run"
   echo "codex review failed" >&2
   exit 1

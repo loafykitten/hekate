@@ -33,3 +33,4 @@ __pycache__/
 /service/data/
 /service/bin/
 /.claude/settings.local.json
+/.claude/scheduled_tasks.lock

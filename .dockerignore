@@ -1,0 +1,12 @@
+.git
+**/node_modules
+**/.DS_Store
+Renamon-Nukorio
+mixamo
+assets
+asset-pipeline
+app/dist
+app/verify-out
+service/data
+service/bin
+docs

@@ -1,0 +1,44 @@
+# Homelab stack for Hekate. Copy this directory's examples to the server (e.g. /srv/hekate),
+# rename to compose.yaml / hekate.env / radicale/config, fill in real values, then:
+#   docker compose up -d
+# The services share an existing Tailscale container's network namespace, where a reverse proxy
+# terminates HTTPS (see Caddyfile.example). Everything listens on loopback inside it.
+name: hekate
+
+services:
+  hekate:
+    # The deployer sets HEKATE_IMAGE when rolling back; normally this tracks main.
+    image: ${HEKATE_IMAGE:-ghcr.io/loafykitten/hekate:main}
+    container_name: hekate
+    restart: unless-stopped
+    user: "1000:1000"               # owner of ./data on the host
+    network_mode: container:tailscale-sidecar
+    env_file: hekate.env
+    environment:
+      HEKATE_ADDR: 127.0.0.1:3200
+      HEKATE_DEPLOY_LOG: /deploy-state/deploy.log
+    volumes:
+      - ./data:/data
+      - ./character:/character:ro   # your character's manifest.json + GLBs
+      - ./state:/deploy-state:ro
+
+  radicale:
+    image: tomsquest/docker-radicale:3.8.3.0
+    container_name: radicale
+    restart: unless-stopped
+    network_mode: container:tailscale-sidecar
+    volumes:
+      - ./radicale/config:/config/config:ro
+      - ./radicale/users:/config/users:ro
+      - ./radicale/data:/data
+
+  deployer:
+    build: ./deployer
+    container_name: hekate-deployer
+    restart: unless-stopped
+    network_mode: container:tailscale-sidecar   # to reach hekate's loopback /healthz
+    environment:
+      STACK_DIR: /srv/hekate                    # must equal the host path mounted below
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /srv/hekate:/srv/hekate

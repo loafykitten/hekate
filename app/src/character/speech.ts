@@ -18,7 +18,7 @@ function loudnessEnvelope(buffer: AudioBuffer): Float32Array {
   return env;
 }
 
-// Plays synthesized speech and exposes its loudness so the mouth can follow it.
+// Plays speech audio and exposes its loudness so the mouth can follow it.
 export class Speech {
   private ctx = new AudioContext();
   private current?: AudioBufferSourceNode;
@@ -37,16 +37,6 @@ export class Speech {
       }
     }
     return this.ctx.state === "running";
-  }
-
-  async synthesize(text: string): Promise<AudioBuffer> {
-    const res = await fetch("/api/tts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-    });
-    if (!res.ok) throw new Error(`TTS failed: ${res.status} ${await res.text()}`);
-    return this.ctx.decodeAudioData(await res.arrayBuffer());
   }
 
   // Resolves when the source finishes (or is interrupted by the next utterance).
@@ -73,6 +63,12 @@ export class Speech {
     this.current?.stop();
     this.current = undefined;
     this.active = false;
+  }
+
+  // Releases the audio context (browsers cap how many can be open).
+  dispose() {
+    this.stop();
+    void this.ctx.close().catch(() => {});
   }
 
   // Seconds into the utterance that the listener is hearing now. The source node finishes

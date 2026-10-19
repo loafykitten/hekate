@@ -2,7 +2,7 @@ import type { CharacterRig, OutlineStyle } from "./character";
 
 // Subset of the asset pipeline's manifest.json (schema_version 2) the app uses: morph-target
 // face, shader outlines, desktop/phone variants, animation clips.
-interface Manifest {
+export interface Manifest {
   schema_version: 2;
   files: Record<string, { name: string }>;
   skeleton: {
@@ -50,7 +50,7 @@ function clipsOf(animations: NonNullable<Manifest["animations"]>): CharacterRig[
   };
 }
 
-function rigFrom(m: Manifest): CharacterRig {
+export function rigFrom(m: Manifest): CharacterRig {
   const runtime = m.skeleton.threejs_runtime_names ?? {};
   const bone = (name: string) => runtime[name] ?? name;
 

@@ -17,4 +17,15 @@ if [[ -n "$bad" ]]; then
   echo "$bad" >&2
   exit 1
 fi
+# Private words (names, hostnames) can't be listed in a public repo, so they live in a local,
+# untracked file: one per line in .git/info/private-words. CI skips this; the AI review covers it.
+private="$(git rev-parse --git-common-dir)/info/private-words"
+if [[ -s "$private" ]]; then
+  leaks="$(git grep -n -i -w -F -f "$private" -- . ':!**/package-lock.json' || true)"
+  if [[ -n "$leaks" ]]; then
+    echo "Private words found in tracked files:" >&2
+    echo "$leaks" >&2
+    exit 1
+  fi
+fi
 echo "hygiene: ok"

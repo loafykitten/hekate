@@ -48,7 +48,16 @@ healthy() { # expected commit (may be empty)
   return 1
 }
 
+# The whole deploy runs under $STATE_DIR/deploy.lock, which hekatectl also takes for rollback
+# and pause, so a manual rollback can never interleave with an automatic deploy.
 deploy_once() {
+  exec 9>"$STATE_DIR/deploy.lock"
+  flock 9
+  deploy_locked
+  flock -u 9
+}
+
+deploy_locked() {
   [[ -f "$STATE_DIR/paused" ]] && return 0
   docker pull -q "$IMAGE:$TAG" >/dev/null 2>&1 || { log pull_failed image="$IMAGE:$TAG"; return 0; }
   local target current commit

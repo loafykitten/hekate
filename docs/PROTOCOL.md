@@ -32,7 +32,7 @@ client whose input started a turn (`origin` matches its `client_id`) plays the a
   "type": "segment",
   "turn_id": "t_…",
   "seq": 0,                         // 0, 1, 2… within the turn, in playback order
-  "text": "Morning, Ember.",        // display text: tags removed
+  "text": "Morning, Rika.",         // display text: tags removed
   "duration": 1.42,                 // seconds; estimated from reading speed when there's no audio
   "audio_b64": "…",                 // null without TTS
   "audio_format": "mp3",            // null without TTS

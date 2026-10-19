@@ -4,6 +4,12 @@
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 state=state
+
+# Shares the deployer's lock: waits for a deploy in progress, then holds the lock until exit.
+with_lock() {
+  exec 9>"$state/deploy.lock"
+  flock -n 9 || { echo "A deploy is in progress; waiting for it to finish…"; flock 9; }
+}
 case "${1:-status}" in
   status)
     docker compose ps
@@ -17,11 +23,12 @@ case "${1:-status}" in
   logs) docker compose logs -f --tail 100 hekate ;;
   deploys) tail -n "${2:-20}" "$state/deploy.log" ;;
   rollback)
+    with_lock
     touch "$state/paused"
     HEKATE_IMAGE=hekate-local:previous docker compose up -d --no-deps hekate
     echo "Rolled back to the previous image and paused deploys. 'hekatectl resume' to continue."
     ;;
-  pause) touch "$state/paused"; echo "deploys paused" ;;
-  resume) rm -f "$state/paused" "$state/bad-image"; echo "deploys resumed" ;;
+  pause) with_lock; touch "$state/paused"; echo "deploys paused" ;;
+  resume) with_lock; rm -f "$state/paused" "$state/bad-image"; echo "deploys resumed" ;;
   *) echo "usage: $0 status|logs|deploys [n]|rollback|pause|resume" >&2; exit 2 ;;
 esac

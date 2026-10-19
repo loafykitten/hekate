@@ -39,7 +39,8 @@ export default defineConfig({
       workbox: {
         cleanupOutdatedCaches: true,
         clientsClaim: true,
-        globPatterns: ["**/*.{js,css,html,svg,png,ico,webmanifest}"],
+        // The plugin adds manifest.webmanifest itself; globbing it too creates a conflicting entry.
+        globPatterns: ["**/*.{js,css,html,svg,png,ico}"],
         // Deep links fall back to the app shell, but never the service or the character files.
         navigateFallback: "index.html",
         navigateFallbackDenylist: [/^\/api\//, /^\/healthz/, /^\/character\//],

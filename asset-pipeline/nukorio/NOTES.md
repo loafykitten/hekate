@@ -71,3 +71,40 @@ FBX import logs warn about unsupported `Short` user properties. Those are custom
 
 
 A clean Round 2 rebuild exposed existing Blender Decimate nondeterminism: six phone-fur UVs changed by at most 0.00001252 (16 binary bytes), while all other JSON/binary data matched. `round2-uv-calibration.json` preserves that reviewed UV accessor. The exporter restores it only when deviations are <=0.00002 and then requires the *entire* original phone GLB SHA-256, rejecting any other change. This makes fresh source builds reproduce the exact Round 2 delivery without relaxing the asset-preservation gate. The desktop regenerated exactly without correction.
+
+
+## Round 4: gesture pack
+
+Both variants now contain 24 clips. The thirteen additions below are all one-shots (`loop: false`), including `weight_shift`. Every animation has a boolean `idle_variation`; only the three marked true below opt into occasional idle playback. All eleven round-3 metadata entries are preserved except for adding `idle_variation: false`.
+
+| Clip | Seconds | Category | idle_variation | head_motion |
+| --- | ---: | --- | --- | --- |
+| nod_yes | 2.400 | gesture | false | strong |
+| hard_nod | 1.633 | gesture | false | strong |
+| long_nod | 1.700 | gesture | false | strong |
+| sarcastic_nod | 2.167 | gesture | false | strong |
+| head_shake_no | 1.700 | gesture | false | strong |
+| annoyed_head_shake | 2.433 | gesture | false | strong |
+| thoughtful_head_shake | 3.067 | gesture | false | strong |
+| look_away | 1.800 | gesture | true | strong |
+| angry | 2.167 | gesture | false | strong |
+| cocky | 2.867 | gesture | false | strong |
+| happy_hands | 2.733 | gesture | false | strong |
+| relieved_sigh | 3.000 | gesture | true | strong |
+| weight_shift | 9.433 | idle | true | moderate |
+
+Desktop is 12,183,136 bytes, an increase of 795,204 bytes (0.758 MiB) over round 3. Phone is 5,778,020 bytes, an increase of 794,084 bytes (0.757 MiB). Both are below the 2 MB round-4 growth target and retain identical animation samples.
+
+`mixamo-inputs.json` pins the gesture ZIP plus all thirteen used animation members and `X Bot.fbx`. The archive hash is `5627c03289a24e707362a538b8e0715f93ea6131324de2f1d5bcdd2b35f07f97`. Member hashes are checked independently, duplicate/missing members are rejected, and extraction writes only explicitly named files under `tmp/gesture-pack`. Cached extracted files are regenerated from verified archive bytes before import. The duplicate acknowledging/dismissing members are unused. `Idle.fbx` remains the bind reference.
+
+Sparse source curves are sampled at every frame at 30 fps. The round-3 own-rest rotation mapping, A-to-T arm calibration, leg-length hip scaling, thumb/index/pinky mapping, torso/head wrist clearance and two-pass digitigrade FABRIK are unchanged. The existing clearance corrections suffice for the inspected new clips; no new per-clip arm offsets were needed. Quiet head gestures retain quiet arms. All thirteen use the existing 0.4-second transition bookends to `idle` frame zero, including the 9.433-second `weight_shift`; head/neck remain available to the motion while tail, ear and face tracks remain absent. Thinning retains the round-3 0.05-degree / 0.05-mm tolerance.
+
+No clips were dropped. `weight_shift` retains slow torso rotation and vertical motion, but horizontal root stripping and planted feet make its lateral weight transfer subtler than X Bot's. `angry` is a restrained shoulder/arm gesture in the source, not a large dramatic action. These are fidelity/readability limitations rather than corrupted motion. All new head gestures are marked strong; `weight_shift` is moderate. `happy_hands` also gets strong because its head excursion is about 37.5 degrees.
+
+The build first reproduces the exact round-2 GLBs, then the exact eleven-clip round-3 GLBs before appending the new clips. Round-3 SHA values were checked against the delivery present before this work and remain pinned in `animation-visual-baseline.json`; verified reference copies stay in `tmp/round3`. Fresh-process verification compares all original JSON structure, the entire original binary payload, and every old animation sampler exactly. Both variants freshly reimport with 110 bones, 15 meshes, the unchanged morphs/rest transforms, and 24 clips. A track allowlist derived from the preserved idle rejects any additional bone/face channels.
+
+The installed three.js loader/mixer plays all 24 clips through their full durations at 60 Hz with no binding warnings. New clip endpoints match the `idle` stance, horizontal root translation is constant, loops retain their endpoint checks, and nonstatic clips move. Across the thirteen additions and both variants, maximum sampled CPU-skinned sole displacement is below 1.313 mm and downward displacement from each sample's rest position is below 0.590 mm. The authored rest soles are below world zero, so absolute world Y is not used as the penetration metric. Head excursion and maximum per-step head rotation are recorded in the manifest verification data.
+
+All thirteen target contact sheets were inspected against X Bot source sheets: five evenly spaced times, front above three-quarter, full body. `angry`, `cocky` and `happy_hands` show clear hands/wrists without visible torso or face penetration; no reversed knees or broken fingers were seen. Source comparisons are reproducible under `tmp/source-gestures`; delivered target sheets are `renders/animation_<clip>_contact.png`. `gesture-visual-baseline.json` pins the reviewed GLBs while retaining the old round-3 calibration separately.
+
+High confidence in preservation, binding, measured contacts and endpoints; medium confidence in subjective gesture readability and clearance between inspected poses. App/WebGL playback with procedural layers and arbitrary gesture interruption remains untested.

@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/emersion/go-imap/v2"
@@ -48,8 +49,8 @@ func dialTLS(ctx context.Context, a config.MailAccount) (net.Conn, error) {
 }
 
 // run calls fn with a connected, authenticated client while holding the
-// account. Every network operation inside fn is bounded: the connection gets
-// a deadline for the whole call, and cancelling ctx aborts it. A failure that
+// account. Every network operation inside fn is bounded: a watchdog closes
+// the connection when the call runs past opTimeout or ctx ends. A failure that
 // is not a clean server refusal drops the connection, so the next call
 // reconnects.
 func (s *Service) run(ctx context.Context, a *account, fn func(c *imapclient.Client) error) error {
@@ -61,36 +62,55 @@ func (s *Service) run(ctx context.Context, a *account, fn func(c *imapclient.Cli
 	if err := s.ensure(ctx, a); err != nil {
 		return err
 	}
-	nc := a.nc
-	_ = nc.SetDeadline(time.Now().Add(opTimeout))
-	// Cancelling aborts the call by expiring the deadline. If the callback has
-	// already started, wait for it, so it can't touch the connection after
-	// this call dropped or reused it.
-	fired := make(chan struct{})
-	stop := context.AfterFunc(ctx, func() {
-		defer close(fired)
-		_ = nc.SetDeadline(time.Now())
-	})
+	// The client sets and clears its own read deadlines, so a server that
+	// stalls between responses can't be bounded by a deadline: the watchdog
+	// closes the connection instead.
+	release := watchdog(ctx, a.nc, s.opTimeout)
 	err := fn(a.conn)
-	if !stop() {
-		<-fired
+	if release() {
+		s.drop(a)
+		if ctx.Err() != nil {
+			return ctx.Err() //nolint:wrapcheck // context errors are matched by callers
+		}
+		return errTimeout
 	}
 	if err != nil {
 		// A refusal from the server, or a problem with what was asked for,
 		// leaves the connection fine; anything else may have broken it.
 		var imapErr *imap.Error
 		var asked *httpx.Error
-		if (!errors.As(err, &imapErr) && !errors.As(err, &asked)) || ctx.Err() != nil {
+		if !errors.As(err, &imapErr) && !errors.As(err, &asked) {
 			s.drop(a)
-		}
-		if ctx.Err() != nil {
-			return ctx.Err() //nolint:wrapcheck // context errors are matched by callers
 		}
 		return err
 	}
-	_ = a.nc.SetDeadline(time.Time{})
 	a.lastUsed = s.now()
 	return nil
+}
+
+// watchdog closes nc when ctx ends or d passes, whichever is first, until the
+// returned release is called. release reports whether it closed the
+// connection, and waits for a close already under way, so nothing touches the
+// connection after release returns.
+func watchdog(ctx context.Context, nc net.Conn, d time.Duration) (release func() (fired bool)) {
+	var (
+		once sync.Once
+		shut atomic.Bool
+	)
+	kill := func() {
+		once.Do(func() {
+			shut.Store(true)
+			_ = nc.Close()
+		})
+	}
+	timer := time.AfterFunc(d, kill)
+	stop := context.AfterFunc(ctx, kill)
+	return func() bool {
+		timer.Stop()
+		stop()
+		once.Do(func() {}) // blocks until a kill in progress has finished, and disarms later ones
+		return shut.Load()
+	}
 }
 
 // ensure connects and signs in when there is no usable connection. A
@@ -101,10 +121,9 @@ func (s *Service) ensure(ctx context.Context, a *account) error {
 		if s.now().Sub(a.lastUsed) < idleCheck {
 			return nil
 		}
-		_ = a.nc.SetDeadline(time.Now().Add(10 * time.Second))
+		release := watchdog(ctx, a.nc, probeTimeout)
 		err := a.conn.Noop().Wait()
-		if err == nil {
-			_ = a.nc.SetDeadline(time.Time{})
+		if !release() && err == nil {
 			return nil
 		}
 		s.drop(a)
@@ -113,13 +132,20 @@ func (s *Service) ensure(ctx context.Context, a *account) error {
 	if err != nil {
 		return fmt.Errorf("connect to the mail server: %w", err)
 	}
-	_ = nc.SetDeadline(time.Now().Add(30 * time.Second))
+	release := watchdog(ctx, nc, loginTimeout)
 	c := imapclient.New(nc, nil)
-	if err := c.Login(a.cfg.User, a.cfg.Pass.Reveal()).Wait(); err != nil {
+	err = c.Login(a.cfg.User, a.cfg.Pass.Reveal()).Wait()
+	if release() {
+		_ = c.Close()
+		if ctx.Err() != nil {
+			return ctx.Err() //nolint:wrapcheck // context errors are matched by callers
+		}
+		return errTimeout
+	}
+	if err != nil {
 		_ = c.Close()
 		return fmt.Errorf("sign in to the mail server: %w", err)
 	}
-	_ = nc.SetDeadline(time.Time{})
 	a.conn, a.nc, a.lastUsed, a.mailboxes = c, nc, s.now(), nil
 	return nil
 }
@@ -350,19 +376,42 @@ func numsOf(set imap.NumSet) ([]imap.UID, bool) {
 }
 
 // setSeen marks messages read or unread.
-func setSeen(c *imapclient.Client, folder string, validity uint32, uids []imap.UID, seen bool) error {
+//
+// It returns the UIDs the server no longer has: STORE on a missing UID
+// succeeds silently, so they are looked up first.
+func setSeen(c *imapclient.Client, folder string, validity uint32, uids []imap.UID, seen bool) (missing map[imap.UID]bool, err error) {
 	if err := selectFolder(c, folder, validity, false); err != nil {
-		return err
+		return nil, err
+	}
+	found, err := c.UIDSearch(&imap.SearchCriteria{UID: []imap.UIDSet{imap.UIDSetNum(uids...)}}, nil).Wait()
+	if err != nil {
+		return nil, fmt.Errorf("check messages: %w", err)
+	}
+	present := map[imap.UID]bool{}
+	for _, u := range found.AllUIDs() {
+		present[u] = true
+	}
+	missing = map[imap.UID]bool{}
+	var live []imap.UID
+	for _, u := range uids {
+		if present[u] {
+			live = append(live, u)
+		} else {
+			missing[u] = true
+		}
+	}
+	if len(live) == 0 {
+		return missing, nil
 	}
 	op := imap.StoreFlagsDel
 	if seen {
 		op = imap.StoreFlagsAdd
 	}
 	flags := &imap.StoreFlags{Op: op, Silent: true, Flags: []imap.Flag{imap.FlagSeen}}
-	if err := c.Store(imap.UIDSetNum(uids...), flags, nil).Close(); err != nil {
-		return fmt.Errorf("change read state: %w", err)
+	if err := c.Store(imap.UIDSetNum(live...), flags, nil).Close(); err != nil {
+		return nil, fmt.Errorf("change read state: %w", err)
 	}
-	return nil
+	return missing, nil
 }
 
 // header fields wanted for every message, beside the envelope.

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -237,8 +238,9 @@ type fixture struct {
 
 type fixtureOpts struct {
 	noModel  bool
-	noise    bool // leave the weekly noise report due
-	noMove   bool // the server lacks MOVE
+	noise    bool         // leave the weekly noise report due
+	noMove   bool         // the server lacks MOVE
+	stall    *atomic.Bool // while set, the server hangs on SELECT
 	httpc    *http.Client
 	accounts []config.MailAccount
 }
@@ -267,6 +269,9 @@ func newFixture(t *testing.T, opts ...func(*fixtureOpts)) *fixture {
 	}
 	srv := imapserver.New(&imapserver.Options{
 		NewSession: func(*imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
+			if fo.stall != nil {
+				return stallingSession{mem.NewSession(), fo.stall}, nil, nil
+			}
 			return mem.NewSession(), nil, nil
 		},
 		Caps:         caps,
@@ -484,4 +489,18 @@ func str(p *string) string {
 		return "<nil>"
 	}
 	return *p
+}
+
+// stallingSession hangs on SELECT while stall is set, like a server that stops
+// answering mid-session.
+type stallingSession struct {
+	imapserver.Session
+	stall *atomic.Bool
+}
+
+func (s stallingSession) Select(mailbox string, options *imap.SelectOptions) (*imap.SelectData, error) {
+	for s.stall.Load() {
+		time.Sleep(10 * time.Millisecond)
+	}
+	return s.Session.Select(mailbox, options) //nolint:wrapcheck // test double
 }

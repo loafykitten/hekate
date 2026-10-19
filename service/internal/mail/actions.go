@@ -196,7 +196,7 @@ func (s *Service) setRead(ctx context.Context, ids []int64, unread bool) (Outcom
 			out.Missing += missing
 			for _, k := range keys {
 				rs := byKey[k]
-				err := setSeen(c, k.folder, k.validity, uidsOf(rs), !unread)
+				missing, err := setSeen(c, k.folder, k.validity, uidsOf(rs), !unread)
 				if errors.Is(err, ErrGone) {
 					for _, r := range rs {
 						s.markGone(ctx, r.ID)
@@ -208,11 +208,16 @@ func (s *Service) setRead(ctx context.Context, ids []int64, unread bool) (Outcom
 					return err
 				}
 				for _, r := range rs {
+					if missing[imap.UID(r.UID)] {
+						s.markGone(ctx, r.ID)
+						out.Missing++
+						continue
+					}
 					if err := s.setUnread(ctx, r.ID, unread); err != nil {
 						return err
 					}
+					out.Done++
 				}
-				out.Done += len(rs)
 			}
 			return nil
 		})

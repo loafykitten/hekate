@@ -90,7 +90,9 @@ const (
 	excerptRunes     = 300                 // card excerpt
 	retainGone       = 60 * 24 * time.Hour // how long rows for mail that left the inbox are kept
 	opTimeout        = 60 * time.Second    // every IMAP operation
-	idleCheck        = 20 * time.Second    // a connection idle longer than this is probed before use
+	probeTimeout     = 10 * time.Second    // the check on an idle connection
+	loginTimeout     = 30 * time.Second
+	idleCheck        = 20 * time.Second // a connection idle longer than this is probed before use
 	dialTimeout      = 15 * time.Second
 	toolTimeout      = 45 * time.Second
 	unavailable      = "Mail isn't set up yet."
@@ -104,7 +106,8 @@ var (
 	// ErrGone means the message is no longer on the server where Hekate last saw it.
 	ErrGone = &httpx.Error{Status: http.StatusNotFound, Msg: "that message is no longer on the mail server"}
 	// errNoMove means the server can't move mail atomically, so Hekate won't move it.
-	errNoMove = &httpx.Error{Status: http.StatusBadGateway, Msg: "this mail server can't move messages safely (no IMAP MOVE)"}
+	errTimeout = &httpx.Error{Status: http.StatusGatewayTimeout, Msg: "the mail server took too long to answer"}
+	errNoMove  = &httpx.Error{Status: http.StatusBadGateway, Msg: "this mail server can't move messages safely (no IMAP MOVE)"}
 )
 
 func errNoMessage(id int64) *httpx.Error { return httpx.NotFound("no mail with id %d", id) }
@@ -172,6 +175,8 @@ type Service struct {
 	now      func() time.Time
 	http     *http.Client
 	dial     func(ctx context.Context, a config.MailAccount) (net.Conn, error)
+	// opTimeout bounds each IMAP call; tests shorten it.
+	opTimeout time.Duration
 }
 
 // New builds a Service. Call Run to start the sweep. It registers the approval
@@ -187,7 +192,7 @@ func New(o Options) (*Service, error) {
 		db: o.Store.DB(), store: o.Store, llm: o.LLM, model: o.Model, appr: o.Approvals,
 		owner: o.OwnerName, loc: o.Location, interval: o.Interval, log: o.Logger, onChange: o.OnChange,
 		now: o.Now, http: o.HTTPClient, dial: o.Dial,
-		byName: map[string]*account{},
+		byName: map[string]*account{}, opTimeout: opTimeout,
 	}
 	if s.owner == "" {
 		s.owner = "the owner"

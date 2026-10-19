@@ -3,6 +3,7 @@ package mail
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -229,5 +230,28 @@ func waitFor(t *testing.T, cond func() bool) {
 			t.Fatal("timed out waiting")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestIncrementalSyncCatchesUpOnAFlood(t *testing.T) {
+	f := newFixture(t, func(o *fixtureOpts) { o.noModel = true })
+	f.deliver("INBOX", mailSpec{subject: "Before"})
+	f.sweep()
+	for i := range firstSyncCap + 20 {
+		f.deliver("INBOX", mailSpec{subject: fmt.Sprintf("Flood %d", i)})
+	}
+	f.sweep()
+	cached := func() (n int) {
+		if err := f.store.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM mail_messages WHERE folder = 'INBOX'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if n := cached(); n != 1+firstSyncCap {
+		t.Fatalf("after one sweep cached %d, want %d (the oldest new ones first)", n, 1+firstSyncCap)
+	}
+	f.sweep()
+	if n := cached(); n != 1+firstSyncCap+20 {
+		t.Errorf("after the next sweep cached %d, want every message", n)
 	}
 }

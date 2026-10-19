@@ -190,3 +190,20 @@ func TestNoMoveCapabilityLeavesMailAlone(t *testing.T) {
 		t.Errorf("archive UIDs = %v, want none", got)
 	}
 }
+
+func TestMarkReadCountsVanishedMessages(t *testing.T) {
+	f := newFixture(t)
+	f.deliver("INBOX", mailSpec{subject: "Here"})
+	gone := f.deliver("INBOX", mailSpec{subject: "Deleted elsewhere"})
+	f.sweep()
+	here, vanished := f.id("Here"), f.id("Deleted elsewhere")
+	f.expungeFrom("INBOX", gone) // another client deletes it before the next sweep
+
+	out, err := f.svc.MarkRead(t.Context(), []int64{here, vanished})
+	if err != nil || out.Done != 1 || out.Missing != 1 {
+		t.Fatalf("mark read = %+v, %v (the vanished message must not count as done)", out, err)
+	}
+	if m, err := f.svc.Message(t.Context(), vanished); err != nil || m.Folder != "other" {
+		t.Errorf("vanished message = %+v, %v (want it marked as gone elsewhere)", m, err)
+	}
+}

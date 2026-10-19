@@ -179,9 +179,17 @@ func (s *Service) syncInbox(ctx context.Context, a *account) (bool, error) {
 				stale[k.messageID] = k
 			}
 		}
+		// A first sync keeps the newest messages. An incremental one takes the
+		// oldest new ones and resumes after them next sweep, so a flood of mail
+		// is caught up on rather than skipped.
 		slices.Sort(fetchUIDs)
+		behind := false
 		if len(fetchUIDs) > firstSyncCap {
-			fetchUIDs = fetchUIDs[len(fetchUIDs)-firstSyncCap:]
+			if full {
+				fetchUIDs = fetchUIDs[len(fetchUIDs)-firstSyncCap:]
+			} else {
+				fetchUIDs, behind = fetchUIDs[:firstSyncCap], true
+			}
 		}
 		touched := map[int64]bool{}
 		hs, err := fetchHeaders(c, fetchUIDs, s.now())
@@ -203,6 +211,9 @@ func (s *Service) syncInbox(ctx context.Context, a *account) (bool, error) {
 		}
 		for u := range seen {
 			maxUID = max(maxUID, u)
+		}
+		if behind {
+			maxUID = uint32(fetchUIDs[len(fetchUIDs)-1])
 		}
 
 		// Reconcile: cached inbox rows the server no longer lists have left the inbox.

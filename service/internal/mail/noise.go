@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -108,6 +109,9 @@ func isNotFound(err error) bool { return err != nil && errors.Is(err, store.ErrN
 // noiseCandidates groups the last 30 days of inbox mail by sender and returns
 // the senders that qualify, busiest first. A domain is proposed when several of
 // its addresses are noisy together; otherwise single addresses are.
+// plainAddress is the shape of address the noise report proposes rules for.
+var plainAddress = regexp.MustCompile(`^[a-z0-9._%+-]{1,64}@[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63})+$`)
+
 func (s *Service) noiseCandidates(ctx context.Context) ([]*noiseGroup, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT from_addr, unread, COALESCE(category, '') FROM mail_messages
 		WHERE folder = 'INBOX' AND gone = 0 AND from_addr <> '' AND date >= ?`, stamp(s.now().Add(-noiseWindow)))
@@ -130,6 +134,9 @@ func (s *Service) noiseCandidates(ctx context.Context) ([]*noiseGroup, error) {
 		var unread bool
 		if err := rows.Scan(&addr, &unread, &cat); err != nil {
 			return nil, fmt.Errorf("find noisy senders: %w", err)
+		}
+		if !plainAddress.MatchString(addr) {
+			continue // a quoted or odd address could smuggle words into the proposal's title
 		}
 		group(byAddr, addr).add(unread, cat, addr)
 		if d := domainOf(addr); d != "" && !slices.Contains(freeMail, d) {

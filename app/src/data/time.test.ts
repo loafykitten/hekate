@@ -26,6 +26,7 @@ import {
   weekdayOf,
   resolveZone,
   setZone,
+  timestampFromInputs,
 } from "./time";
 
 const NY = { tz: "America/New_York", locale: "en-US" };
@@ -239,6 +240,26 @@ describe("groupEventsByDay: multi-day timed events", () => {
 
   it("doesn't spill into the next day when it ends at midnight", () => {
     const groups = groupEventsByDay([ev("2026-10-19T22:00:00-05:00", "2026-10-20T00:00:00-05:00")], z);
+    expect(groups.map((g) => g.key)).toEqual(["2026-10-19"]);
+  });
+});
+
+describe("timestampFromInputs", () => {
+  const z = { tz: "America/Chicago" };
+  it("keeps the exact original when the inputs weren't touched", () => {
+    expect(timestampFromInputs("2026-10-20", "09:00", "2026-10-20T09:00:30-05:00", z)).toBe("2026-10-20T09:00:30-05:00");
+    // The second 01:30 on the night clocks fall back (CST) survives an untouched save.
+    expect(timestampFromInputs("2026-11-01", "01:30", "2026-11-01T01:30:00-06:00", z)).toBe("2026-11-01T01:30:00-06:00");
+  });
+  it("builds a new time once an input changes", () => {
+    expect(toMs(timestampFromInputs("2026-10-20", "10:00", "2026-10-20T09:00:30-05:00", z))).toBe(Date.parse("2026-10-20T10:00:00-05:00"));
+  });
+});
+
+describe("groupEventsByDay: long events", () => {
+  it("shows a weeks-long event on a day inside a requested range", () => {
+    const e = { uid: "u", instance: null, title: "Residency", start: "2026-09-01", end: "2026-11-02", all_day: true, location: "", notes: "", rrule: null, created_by_hekate: false } as CalendarEvent;
+    const groups = groupEventsByDay([e], { tz: "America/Chicago" }, { from: "2026-10-19", to: "2026-10-19" });
     expect(groups.map((g) => g.key)).toEqual(["2026-10-19"]);
   });
 });

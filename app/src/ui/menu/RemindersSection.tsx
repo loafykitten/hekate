@@ -9,7 +9,7 @@ import {
   useSnoozeReminder,
 } from "../../data/hooks";
 import type { Reminder } from "../../data/model";
-import { fromDateTimeInputs, minutesUntilTomorrowMorning, toDateInput, toMs, toRfc3339, toTimeInput } from "../../data/time";
+import { minutesUntilTomorrowMorning, timestampFromInputs, toDateInput, toMs, toRfc3339, toTimeInput } from "../../data/time";
 import { PlusIcon, SnoozeIcon, TrashIcon, CheckIcon } from "../icons";
 import { Button, Chip, ConfirmButton, Segmented, StateMessage, TextField } from "../kit/kit";
 import { useAutoFocus } from "../kit/useAutoFocus";
@@ -93,10 +93,9 @@ function ReminderForm({ initial, now, submitLabel, busy, onSubmit, onCancel, chi
   const [time, setTime] = useState(toTimeInput(startAt));
   const [rrule, setRrule] = useState<string | null>(initial?.rrule ?? null);
   const first = useAutoFocus<HTMLInputElement>();
-  // Untouched inputs keep the exact original time: the inputs drop seconds, and a rebuilt time
-  // would look like an edit (re-anchoring a repeating reminder, or failing once it has passed).
-  const untouched = base !== undefined && date === toDateInput(base.at) && time === toTimeInput(base.at);
-  const at = untouched ? base.at : fromDateTimeInputs(date, time);
+  // Untouched inputs keep the exact original time (a rebuilt one would look like an edit,
+  // re-anchoring a repeating reminder or failing once it has passed).
+  const at = timestampFromInputs(date, time, base?.at);
   const valid = text.trim() !== "" && at !== "";
   return (
     <form

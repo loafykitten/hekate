@@ -721,3 +721,15 @@ func TestMoveAgainstRule(t *testing.T) {
 		}
 	}
 }
+
+// Last-day-of-month series can change their time of day.
+func TestMoveAgainstRuleNegativeMonthDay(t *testing.T) {
+	loc, _ := time.LoadLocation("America/Chicago")
+	at := func(s string) time.Time { v, _ := time.ParseInLocation("2006-01-02T15:04", s, loc); return v }
+	if err := checkMoveAgainstRule(at("2026-10-31T09:00"), at("2026-10-31T10:00"), "FREQ=MONTHLY;BYMONTHDAY=-1", loc); err != nil {
+		t.Errorf("time-only move refused: %v", err)
+	}
+	if err := checkMoveAgainstRule(at("2026-10-31T09:00"), at("2026-10-30T09:00"), "FREQ=MONTHLY;BYMONTHDAY=-1", loc); err == nil {
+		t.Error("move off the last day accepted")
+	}
+}

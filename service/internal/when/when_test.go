@@ -1,6 +1,8 @@
 package when
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -165,5 +167,36 @@ func TestParseRuleRefusesHourlyTimeFilters(t *testing.T) {
 		if _, ok := r.First(start); !ok {
 			t.Errorf("%s has no first occurrence", rule)
 		}
+	}
+}
+
+// Any accepted rule stays cheap: dense or ancient rules are refused, and COUNT
+// accounting walks a bounded number of occurrences.
+func TestRuleLimits(t *testing.T) {
+	loc := time.UTC
+	start := time.Date(2026, 10, 19, 0, 0, 0, 0, loc)
+	all := func(n int) string {
+		parts := make([]string, n)
+		for i := range parts {
+			parts[i] = strconv.Itoa(i)
+		}
+		return strings.Join(parts, ",")
+	}
+	if _, err := ParseRule("FREQ=DAILY;BYHOUR="+all(24)+";BYMINUTE="+all(60)+";COUNT=100000000", start, loc); err == nil {
+		t.Error("1440 times a day accepted")
+	}
+	if _, err := ParseRule("FREQ=DAILY", time.Date(1900, 1, 1, 0, 0, 0, 0, loc), loc); err == nil {
+		t.Error("a series starting in 1900 accepted")
+	}
+
+	r, err := ParseRule("FREQ=DAILY;COUNT=10", start, loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Rebase(start.AddDate(0, 0, 3)); got != "FREQ=DAILY;COUNT=7" {
+		t.Errorf("rebase = %q, want COUNT=7 (3 spent)", got)
+	}
+	if next, ok := r.Next(start.AddDate(0, 0, 20)); ok {
+		t.Errorf("next after COUNT ran out = %v", next)
 	}
 }

@@ -307,15 +307,20 @@ const MAX_SPAN_DAYS = 31;
 // Days an event shows on: every day it overlaps, so an ongoing multi-day event appears on the
 // days in between. Ends are exclusive (an all-day event on the 20th ends on the 21st; a timed
 // event ending at midnight doesn't reach the next day).
-function eventDays(e: CalendarEvent, z: Zone): string[] {
-  const start = dayKey(e.start, z);
+function eventDays(e: CalendarEvent, z: Zone, range: { from?: string; to?: string } = {}): string[] {
+  let start = dayKey(e.start, z);
   let last = start;
   if (e.all_day || isDateOnly(e.start)) {
     if (e.end) last = addDays(dayKey(e.end, z), -1);
+    if (last < start) last = start; // an end equal to the start still means one day
   } else if (e.end && toMs(e.end, z) > toMs(e.start, z)) {
     last = dayKeyOfMs(toMs(e.end, z) - 1, z);
   }
-  const span = Math.min(MAX_SPAN_DAYS, Math.max(1, daysBetween(start, last) + 1));
+  // Clip to the requested days first, so the span cap can't hide a long event's later days.
+  if (range.from && start < range.from) start = range.from;
+  if (range.to && last > range.to) last = range.to;
+  if (last < start) return [];
+  const span = Math.min(MAX_SPAN_DAYS, daysBetween(start, last) + 1);
   return Array.from({ length: span }, (_, i) => addDays(start, i));
 }
 
@@ -331,7 +336,7 @@ export function compareEvents(a: CalendarEvent, b: CalendarEvent, z: Zone = {}):
 export function groupEventsByDay(events: CalendarEvent[], z: Zone = {}, range: { from?: string; to?: string } = {}): DayGroup[] {
   const groups = new Map<string, CalendarEvent[]>();
   for (const e of events) {
-    for (const k of eventDays(e, z)) {
+    for (const k of eventDays(e, z, range)) {
       if ((range.from && k < range.from) || (range.to && k > range.to)) continue;
       const bucket = groups.get(k);
       if (bucket) bucket.push(e);
@@ -341,4 +346,12 @@ export function groupEventsByDay(events: CalendarEvent[], z: Zone = {}, range: {
   return [...groups.keys()]
     .sort()
     .map((k) => ({ key: k, events: groups.get(k)!.sort((a, b) => compareEvents(a, b, z)) }));
+}
+
+// The timestamp the date/time inputs stand for. When they still show `original`, its exact value
+// is kept: the inputs drop seconds and can't tell the two 01:30s apart on the night clocks fall
+// back, so rebuilding would turn an untouched time into an edit.
+export function timestampFromInputs(date: string, time: string, original?: string, z: Zone = {}): string {
+  if (original && date === toDateInput(original, z) && time === toTimeInput(original, z)) return original;
+  return fromDateTimeInputs(date, time, z);
 }

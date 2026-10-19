@@ -21,6 +21,7 @@ import {
   toRfc3339,
   toTimeInput,
   weekdayOf,
+  timestampFromInputs,
 } from "../../data/time";
 import { ChevronIcon, PlusIcon, TrashIcon } from "../icons";
 import { Button, ConfirmButton, IconButton, SectionTitle, StateMessage, Switch, TextArea, TextField } from "../kit/kit";
@@ -81,8 +82,11 @@ function EventForm({ event, startMs, busy, submitLabel, onSubmit, onCancel, chil
   const first = useAutoFocus<HTMLInputElement>();
   const set = (patch: Partial<EventDraft>) => setD((prev) => ({ ...prev, ...patch }));
 
-  const start = d.allDay ? d.startDate : fromDateTimeInputs(d.startDate, d.startTime);
-  const end = d.allDay ? "" : fromDateTimeInputs(d.endDate, d.endTime);
+  // Untouched time inputs keep the exact original timestamps (a rebuilt one would look like a
+  // reschedule, which clears a recurring series' exceptions).
+  const timed = base !== undefined && !(base.all_day || isDateOnly(base.start));
+  const start = d.allDay ? d.startDate : timestampFromInputs(d.startDate, d.startTime, timed ? base.start : undefined);
+  const end = d.allDay ? "" : timestampFromInputs(d.endDate, d.endTime, timed ? base.end : undefined);
   const endsBefore = !d.allDay && start !== "" && end !== "" && toMs(end) < toMs(start);
   const valid = d.title.trim() !== "" && start !== "" && (d.allDay || end !== "") && !endsBefore;
 

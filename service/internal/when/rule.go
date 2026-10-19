@@ -13,6 +13,15 @@ import (
 // maxRuleLen bounds what we accept and store.
 const maxRuleLen = 300
 
+// Limits that keep any accepted rule cheap to evaluate: occurrences per day,
+// steps walked per query, and how far back a series may start.
+const (
+	maxPerDay = 24
+	maxSteps  = 500_000
+)
+
+var earliestStart = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+
 // Rule is an RFC 5545 RRULE anchored at a start time and expanded in a zone,
 // so "every Monday at 09:00" stays at 09:00 across daylight-saving changes.
 type Rule struct {
@@ -46,6 +55,12 @@ func ParseRule(rule string, start time.Time, loc *time.Location) (*Rule, error) 
 	if opt.Freq == rrule.HOURLY && (len(opt.Byhour) > 0 || len(opt.Byminute) > 0 || len(opt.Bysecond) > 0) {
 		return nil, fmt.Errorf("repeat rule %q can't combine hourly repeats with BYHOUR, BYMINUTE or BYSECOND; use FREQ=DAILY with BYHOUR for times of day", rule)
 	}
+	if perDay := max(1, len(opt.Byhour)) * max(1, len(opt.Byminute)) * max(1, len(opt.Bysecond)); perDay > maxPerDay {
+		return nil, fmt.Errorf("repeat rule %q fires %d times a day; at most %d are supported", rule, perDay, maxPerDay)
+	}
+	if start.Before(earliestStart) {
+		return nil, fmt.Errorf("repeat rule %q starts too far in the past", rule)
+	}
 	opt.Dtstart = start.In(loc)
 	r, err := rrule.NewRRule(*opt)
 	if err != nil {
@@ -60,14 +75,29 @@ func (r *Rule) String() string { return r.text }
 // Next returns the first occurrence strictly after t, and false when the rule
 // has ended (COUNT or UNTIL reached).
 func (r *Rule) Next(t time.Time) (time.Time, bool) {
-	n := r.r.After(t, false)
-	return n, !n.IsZero()
+	return r.walk(func(o time.Time) bool { return o.After(t) })
 }
 
 // First returns the first occurrence at or after t.
 func (r *Rule) First(t time.Time) (time.Time, bool) {
-	n := r.r.After(t, true)
-	return n, !n.IsZero()
+	return r.walk(func(o time.Time) bool { return !o.Before(t) })
+}
+
+// walk returns the first occurrence for which done is true, stepping at most
+// maxSteps occurrences so no rule can keep the caller (which may hold a lock)
+// busy indefinitely. Running out of steps counts as the series having ended.
+func (r *Rule) walk(done func(time.Time) bool) (time.Time, bool) {
+	next := r.r.Iterator()
+	for range maxSteps {
+		o, ok := next()
+		if !ok {
+			return time.Time{}, false
+		}
+		if done(o) {
+			return o, true
+		}
+	}
+	return time.Time{}, false
 }
 
 // Rebase returns the rule text to store once the series has moved on to the
@@ -84,8 +114,21 @@ func (r *Rule) Rebase(next time.Time) string {
 		if err != nil {
 			break
 		}
-		spent := len(r.r.Between(r.r.GetDTStart(), next, true)) - 1 // occurrences before next
-		parts[i] = "COUNT=" + strconv.Itoa(max(n-spent, 1))
+		parts[i] = "COUNT=" + strconv.Itoa(max(n-r.countBefore(next), 1))
 	}
 	return strings.Join(parts, ";")
+}
+
+// countBefore counts occurrences strictly before t, walking at most maxSteps.
+func (r *Rule) countBefore(t time.Time) int {
+	next := r.r.Iterator()
+	n := 0
+	for range maxSteps {
+		o, ok := next()
+		if !ok || !o.Before(t) {
+			break
+		}
+		n++
+	}
+	return n
 }

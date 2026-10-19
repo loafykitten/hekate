@@ -21,10 +21,10 @@ func TestSystemPrompt(t *testing.T) {
 	}
 	// 23:30 UTC on Sunday is already Monday morning in Berlin (UTC+2 in October).
 	now := time.Date(2026, 10, 18, 23, 30, 0, 0, time.UTC)
-	got := SystemPrompt(PromptInput{Tamer: "Ember", Gestures: []string{"waving", "no"}, Now: now, Location: berlin})
+	got := SystemPrompt(PromptInput{Tamer: "Rika", Gestures: []string{"waving", "no"}, Now: now, Location: berlin})
 
 	for _, want := range []string{
-		"Ember is your Tamer",
+		"Rika is your Tamer",
 		"Available: {waving}, {no}.",
 		"## Now\n\nIt is Monday, 19 October 2026, 01:30 (Europe/Berlin).",
 		"think_deeper",

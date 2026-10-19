@@ -525,7 +525,7 @@ func fakeModel(t *testing.T) *httptest.Server {
 		_, _ = io.Copy(io.Discard, r.Body)
 		w.Header().Set("Content-Type", "text/event-stream")
 		for _, ev := range []string{
-			`{"id":"c","model":"m","choices":[{"index":0,"delta":{"content":"{waving} Morning, Ember. "},"finish_reason":null}]}`,
+			`{"id":"c","model":"m","choices":[{"index":0,"delta":{"content":"{waving} Morning, Rika. "},"finish_reason":null}]}`,
 			`{"id":"c","model":"m","choices":[{"index":0,"delta":{"content":"[softly] Did you sleep?"},"finish_reason":null}]}`,
 			`{"id":"c","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
 			`{"id":"c","choices":[],"usage":{"prompt_tokens":12,"completion_tokens":7}}`,
@@ -554,7 +554,7 @@ func TestConversationOverWebSocket(t *testing.T) {
 	hub := NewHub(nil)
 	ag, err := agent.New(agent.Options{
 		LLM:   llm.New(llm.Config{BaseURL: model.URL, APIKey: "k", MaxRetries: -1}),
-		Store: db, Hub: hub, Tamer: "Ember", AssetsDir: assets,
+		Store: db, Hub: hub, Tamer: "Rika", AssetsDir: assets,
 		Chat: config.Model{Name: "chat", Effort: "low"}, Deep: config.Model{Name: "deep", Effort: "high"},
 	})
 	if err != nil {
@@ -597,7 +597,7 @@ func TestConversationOverWebSocket(t *testing.T) {
 		if start["user_text"] != "hey, I just woke up" || start["input_id"] != "u1" || start["origin"] != ready["client_id"] {
 			t.Errorf("%s turn_start = %v", name, start)
 		}
-		if seg0["turn_id"] != start["turn_id"] || seg0["seq"] != 0.0 || seg0["text"] != "Morning, Ember." ||
+		if seg0["turn_id"] != start["turn_id"] || seg0["seq"] != 0.0 || seg0["text"] != "Morning, Rika." ||
 			seg0["audio_b64"] != nil || seg0["words"] != nil {
 			t.Errorf("%s segment 0 = %v", name, seg0)
 		}
@@ -608,7 +608,7 @@ func TestConversationOverWebSocket(t *testing.T) {
 			t.Errorf("%s segment 1 = %v", name, seg1)
 		}
 		usage := end["usage"].(map[string]any)
-		if end["status"] != "done" || end["text"] != "Morning, Ember. Did you sleep?" || end["model"] != "chat" ||
+		if end["status"] != "done" || end["text"] != "Morning, Rika. Did you sleep?" || end["model"] != "chat" ||
 			usage["input_tokens"] != 12.0 || usage["output_tokens"] != 7.0 || usage["cost_usd"] != nil {
 			t.Errorf("%s turn_end = %v", name, end)
 		}
@@ -626,7 +626,7 @@ func TestConversationOverWebSocket(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
-	if len(body.Messages) != 2 || body.Messages[0].Role != "user" || body.Messages[1].Text != "Morning, Ember. Did you sleep?" {
+	if len(body.Messages) != 2 || body.Messages[0].Role != "user" || body.Messages[1].Text != "Morning, Rika. Did you sleep?" {
 		t.Errorf("history = %+v", body.Messages)
 	}
 }

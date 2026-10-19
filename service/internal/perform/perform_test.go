@@ -37,7 +37,7 @@ func TestSplitter(t *testing.T) {
 		in   string
 		want []string
 	}{
-		{"two sentences", "Good morning, Ember. Did you sleep well?", []string{"Good morning, Ember.", "Did you sleep well?"}},
+		{"two sentences", "Good morning, Rika. Did you sleep well?", []string{"Good morning, Rika.", "Did you sleep well?"}},
 		{"keeps trailing fragment", "There you are. And then some", []string{"There you are.", "And then some"}},
 		{"decimal", "The total comes to 3.5 hours of work today. Fine.", []string{"The total comes to 3.5 hours of work today.", "Fine."}},
 		{"time", "Your meeting is at 5 p.m. tomorrow, so rest now. Okay?", []string{"Your meeting is at 5 p.m. tomorrow, so rest now.", "Okay?"}},
@@ -45,7 +45,7 @@ func TestSplitter(t *testing.T) {
 		{"mr mrs st", "Mr. and Mrs. Jones live on St. James street. Nice.", []string{"Mr. and Mrs. Jones live on St. James street.", "Nice."}},
 		{"initials", "I asked J. K. Rowling about the book. Yes.", []string{"I asked J. K. Rowling about the book.", "Yes."}},
 		{"sentence ending in I", "That is what we all do, and so do I. Next one comes.", []string{"That is what we all do, and so do I.", "Next one comes."}},
-		{"short fragment merges forward", "Hi! Welcome back to the den, Ember.", []string{"Hi! Welcome back to the den, Ember."}},
+		{"short fragment merges forward", "Hi! Welcome back to the den, Rika.", []string{"Hi! Welcome back to the den, Rika."}},
 		{"short fragments chain", "Ok. So. Then we can finally go and see.", []string{"Ok. So. Then we can finally go and see."}},
 		{"flush keeps short last", "That was a long and lovely day. Yes.", []string{"That was a long and lovely day.", "Yes."}},
 		{"flush joins carry and rest", "Yes. And the rest", []string{"Yes. And the rest"}},
@@ -100,7 +100,7 @@ func TestSplitterLongSentence(t *testing.T) {
 
 func TestSplitterStreamsEarly(t *testing.T) {
 	var s Splitter
-	if got := s.Push("Good morning, Ember. Did you"); !reflect.DeepEqual(got, []string{"Good morning, Ember."}) {
+	if got := s.Push("Good morning, Rika. Did you"); !reflect.DeepEqual(got, []string{"Good morning, Rika."}) {
 		t.Fatalf("got %q", got)
 	}
 	if got := s.Push(" sleep?"); got != nil {
@@ -127,11 +127,11 @@ func TestParse(t *testing.T) {
 		expressions []Mark
 		dropped     []string
 	}{
-		{"plain", "Morning, Ember.", "Morning, Ember.", "Morning, Ember.", nil, nil, nil},
+		{"plain", "Morning, Rika.", "Morning, Rika.", "Morning, Rika.", nil, nil, nil},
 		{"leading gesture", "{waving} There you are.", "There you are.", "There you are.", []Mark{{"waving", 0}}, nil, nil},
 		{"mid gesture", "Hi {thankful} friend.", "Hi friend.", "Hi friend.", []Mark{{"thankful", 3}}, nil, nil},
 		{"gesture case and spaces", "{ Waving } Hi.", "Hi.", "Hi.", []Mark{{"waving", 0}}, nil, nil},
-		{"expression stays in tts", "[chuckles] Fair enough. Morning, Ember.", "Fair enough. Morning, Ember.", "[chuckles] Fair enough. Morning, Ember.", nil, []Mark{{"chuckles", 0}}, nil},
+		{"expression stays in tts", "[chuckles] Fair enough. Morning, Rika.", "Fair enough. Morning, Rika.", "[chuckles] Fair enough. Morning, Rika.", nil, []Mark{{"chuckles", 0}}, nil},
 		{"expression mid", "Well [sighs] okay.", "Well okay.", "Well [sighs] okay.", nil, []Mark{{"sighs", 5}}, nil},
 		{"both", "{no} [softly] I would not.", "I would not.", "[softly] I would not.", []Mark{{"no", 0}}, []Mark{{"softly", 0}}, nil},
 		{"unknown curly dropped", "Hi {dance} there.", "Hi there.", "Hi there.", nil, nil, []string{"{dance}"}},
@@ -206,20 +206,20 @@ func approx(a, b float64) bool { return math.Abs(a-b) < 0.0015 }
 func TestBuildRealAlignmentShape(t *testing.T) {
 	// ElevenLabs eleven_v3: the [chuckles] tag is reported as characters that
 	// span 0 to 0.84 s, and the spoken words follow it.
-	tagged := Parse("{waving} [chuckles] Fair enough. Morning, Ember.", vocab)
-	if tagged.TTSText != "[chuckles] Fair enough. Morning, Ember." {
+	tagged := Parse("{waving} [chuckles] Fair enough. Morning, Rika.", vocab)
+	if tagged.TTSText != "[chuckles] Fair enough. Morning, Rika." {
 		t.Fatalf("tts = %q", tagged.TTSText)
 	}
 	sp := speechFor(tagged.TTSText, len("[chuckles]"), 0.84, 0.05)
 	seg := Build(3, tagged, sp)
 
-	if seg.Seq != 3 || seg.Text != "Fair enough. Morning, Ember." {
+	if seg.Seq != 3 || seg.Text != "Fair enough. Morning, Rika." {
 		t.Fatalf("seg = %+v", seg)
 	}
 	if seg.AudioB64 == nil || *seg.AudioB64 != "bXAzZGF0YQ==" || seg.AudioFormat == nil || *seg.AudioFormat != "mp3" {
 		t.Errorf("audio = %v %v", seg.AudioB64, seg.AudioFormat)
 	}
-	wantWords := []string{"Fair", "enough.", "Morning,", "Ember."}
+	wantWords := []string{"Fair", "enough.", "Morning,", "Rika."}
 	if len(seg.Words) != len(wantWords) {
 		t.Fatalf("words = %+v", seg.Words)
 	}
@@ -357,11 +357,11 @@ func TestSegmentJSONShape(t *testing.T) {
 // The first sentence is cut early at a soft break so speech starts sooner;
 // later sentences may run to the normal limit.
 func TestSplitterCutsFirstSentenceEarly(t *testing.T) {
-	long := "I'd like to, Ember, but I don't have a way to set reminders or keep a grocery list yet — nothing to write it in, so I won't pretend it's saved."
+	long := "I'd like to, Rika, but I don't have a way to set reminders or keep a grocery list yet — nothing to write it in, so I won't pretend it's saved."
 	var s Splitter
 	got := append(s.Push(long+" "+long+" "), s.Flush()...)
 	want := []string{
-		"I'd like to, Ember,",
+		"I'd like to, Rika,",
 		"but I don't have a way to set reminders or keep a grocery list yet — nothing to write it in, so I won't pretend it's saved.",
 		long,
 	}

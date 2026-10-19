@@ -307,7 +307,7 @@ func newEnv(t *testing.T, script func(n int, req llmReq) (int, []string), o envO
 	}
 	h := newRecHub()
 	a, err := New(Options{
-		LLM: client, Store: db, Hub: h, Synth: o.synth, Tools: reg, Tamer: "Ember",
+		LLM: client, Store: db, Hub: h, Synth: o.synth, Tools: reg, Tamer: "Rika",
 		Location: time.UTC, Chat: testChat, Deep: testDeep, AssetsDir: writeManifest(t, "waving", "thankful"),
 		Limits: o.limits,
 		Now:    func() time.Time { return time.Date(2026, 10, 19, 14, 5, 0, 0, time.UTC) },

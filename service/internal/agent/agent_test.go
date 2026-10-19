@@ -24,7 +24,7 @@ func segTexts(ev []any) []string {
 
 func TestTextOnlyTurn(t *testing.T) {
 	e := newEnv(t, func(int, llmReq) (int, []string) {
-		return 200, say("{waving} Morning, ", "Ember. Did you sl", "eep well? [chuck", "les] Good.")
+		return 200, say("{waving} Morning, ", "Rika. Did you sl", "eep well? [chuck", "les] Good.")
 	}, envOpts{})
 
 	e.agent.Say("client-1", "in-1", "hey, I just woke up")
@@ -34,7 +34,7 @@ func TestTextOnlyTurn(t *testing.T) {
 	if len(start) != 1 || start[0].UserText != "hey, I just woke up" || start[0].Origin != "client-1" || start[0].InputID != "in-1" {
 		t.Fatalf("turn_start = %+v", start)
 	}
-	if got := segTexts(ev); !slices.Equal(got, []string{"Morning, Ember.", "Did you sleep well?", "Good."}) {
+	if got := segTexts(ev); !slices.Equal(got, []string{"Morning, Rika.", "Did you sleep well?", "Good."}) {
 		t.Fatalf("segments = %q", got)
 	}
 	segs := ofType[proto.Segment](ev)
@@ -51,7 +51,7 @@ func TestTextOnlyTurn(t *testing.T) {
 		t.Errorf("expressions = %+v", segs[2])
 	}
 	end := ofType[proto.TurnEnd](ev)[0]
-	if end.Status != proto.StatusDone || end.Text != "Morning, Ember. Did you sleep well? Good." || end.Model != "chat-model" {
+	if end.Status != proto.StatusDone || end.Text != "Morning, Rika. Did you sleep well? Good." || end.Model != "chat-model" {
 		t.Errorf("turn_end = %+v", end)
 	}
 	if end.Usage.InputTokens != 10 || end.Usage.OutputTokens != 5 || end.Usage.CostUSD != nil {
@@ -67,7 +67,7 @@ func TestTextOnlyTurn(t *testing.T) {
 		t.Errorf("tools = %v", reqs[0].toolNames())
 	}
 	sys, _ := reqs[0].Messages[0]["content"].(string)
-	for _, want := range []string{"Ember", "{waving}, {thankful}", "Monday, 19 October 2026", "14:05"} {
+	for _, want := range []string{"Rika", "{waving}, {thankful}", "Monday, 19 October 2026", "14:05"} {
 		if !strings.Contains(sys, want) {
 			t.Errorf("system prompt lacks %q", want)
 		}
@@ -85,7 +85,7 @@ func TestTextOnlyTurn(t *testing.T) {
 	if len(msgs) != 2 || msgs[0].Role != "user" || msgs[1].Role != "assistant" {
 		t.Fatalf("messages = %+v", msgs)
 	}
-	if msgs[1].Text != end.Text || !strings.HasPrefix(msgs[1].Content, "{waving} Morning, Ember.") || msgs[1].Model != "chat-model" {
+	if msgs[1].Text != end.Text || !strings.HasPrefix(msgs[1].Content, "{waving} Morning, Rika.") || msgs[1].Model != "chat-model" {
 		t.Errorf("assistant = %+v", msgs[1])
 	}
 	if n := e.count(`SELECT count(*) FROM usage WHERE model='chat-model' AND tier='standard' AND input_tokens=10 AND output_tokens=5 AND cached_tokens=1 AND request_id='req-0' AND cost_usd IS NULL`); n != 1 {

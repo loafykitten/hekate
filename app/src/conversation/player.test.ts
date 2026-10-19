@@ -34,7 +34,7 @@ function segment(over: Partial<Segment> = {}): Segment {
     type: "segment",
     turn_id: "t1",
     seq: 0,
-    text: "Morning, Ember.",
+    text: "Morning, Rika.",
     duration: 1,
     audio_b64: null,
     audio_format: null,
@@ -87,7 +87,7 @@ describe("SegmentPlayer", () => {
     advance(0.5);
     expect(gestures).toEqual(["waving"]);
     advance(0.7); // elapsed ~1.4
-    expect(texts.at(-1)!.shown).toBe("Morning, Ember.");
+    expect(texts.at(-1)!.shown).toBe("Morning, Rika.");
     expect(expressions.at(-1)!.weights.mouthSmile).toBeGreaterThan(0);
     advance(3);
     expect(player.busy).toBe(false);

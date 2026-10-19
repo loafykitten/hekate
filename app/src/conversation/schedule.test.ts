@@ -13,7 +13,7 @@ import {
 
 const words = [
   { text: "Morning,", start: 0.0, end: 0.41 },
-  { text: "Ember.", start: 0.45, end: 0.9 },
+  { text: "Rika.", start: 0.45, end: 0.9 },
   { text: "Slept", start: 1.2, end: 1.5 },
   { text: "well?", start: 1.5, end: 1.9 },
 ];
@@ -33,9 +33,9 @@ describe("revealedWordCount", () => {
 
 describe("splitRevealed", () => {
   it("returns the shown text and the pending rest, with the separating space on the pending side", () => {
-    expect(splitRevealed(words, 0.5)).toEqual({ shown: "Morning, Ember.", pending: " Slept well?" });
-    expect(splitRevealed(words, 0)).toEqual({ shown: "Morning,", pending: " Ember. Slept well?" });
-    expect(splitRevealed(words, 5)).toEqual({ shown: "Morning, Ember. Slept well?", pending: "" });
+    expect(splitRevealed(words, 0.5)).toEqual({ shown: "Morning, Rika.", pending: " Slept well?" });
+    expect(splitRevealed(words, 0)).toEqual({ shown: "Morning,", pending: " Rika. Slept well?" });
+    expect(splitRevealed(words, 5)).toEqual({ shown: "Morning, Rika. Slept well?", pending: "" });
   });
 });
 

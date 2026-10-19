@@ -2,7 +2,8 @@
 # Runs one claimed change request end to end: a headless Claude Code session files the issue,
 # builds the change in its own worktree and opens a reviewed PR; a second, fresh session does
 # the final check and merges or rejects it. Every outcome is reported to Hekate.
-#   run.sh ID
+#   run.sh ID   (watch.sh runs it under its lock; a change left working without the lock
+#                held is treated as interrupted)
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
@@ -21,7 +22,20 @@ on_exit() {
   local code=$?
   if [[ "$finished" == 0 ]]; then
     log "change $id: stopped during $step (exit $code)"
-    "$report" finish "$id" failed "The worker stopped while $step. The log is on the development machine." || true
+    # Ask GitHub what really happened before reporting: the PR may have merged already.
+    local prs
+    if ! prs="$(cd "$repo" && gh pr list --head "$branch" --state all --json number,state,url)"; then
+      # Leave it working: watch.sh settles it against GitHub on a later tick.
+      log "change $id: cannot reach GitHub; leaving it for watch.sh to settle"
+    elif merged="$(jq -r '[.[] | select(.state == "MERGED")][0].url // empty' <<<"$prs")" && [[ -n "$merged" ]]; then
+      "$report" finish "$id" merged "Merged; the worker stopped before it could confirm the deploy." --pr "$merged" || true
+    else
+      "$report" finish "$id" failed "The worker stopped while $step. The log is on the development machine." || true
+      # Don't leave a half-done PR open.
+      for n in $(jq -r '.[] | select(.state == "OPEN") | .number' <<<"$prs"); do
+        (cd "$repo" && gh pr close "$n" --delete-branch --comment "The change worker stopped before finishing this change.") || true
+      done
+    fi
   fi
   if [[ -d "$wt" ]]; then
     git -C "$repo" worktree remove --force "$wt" || true

@@ -45,6 +45,7 @@ func (p *fakePush) Send(_ context.Context, pl push.Payload, _ push.Urgency) (pus
 }
 
 type fixture struct {
+	store  *store.Store
 	svc    *Service
 	appr   *approvals.Service
 	events *recEvents
@@ -59,7 +60,7 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	f := &fixture{events: &recEvents{}, push: &fakePush{}, now: time.Date(2026, 10, 19, 14, 0, 0, 0, time.UTC)}
+	f := &fixture{store: db, events: &recEvents{}, push: &fakePush{}, now: time.Date(2026, 10, 19, 14, 0, 0, 0, time.UTC)}
 	clock := func() time.Time { return f.now }
 	f.appr, err = approvals.New(approvals.Options{Store: db, Location: time.UTC, Now: clock})
 	if err != nil {
@@ -123,6 +124,56 @@ func TestProposeAsksTheOwner(t *testing.T) {
 	}
 	if want := f.now.Add(proposalTTL).Format(time.RFC3339); a.ExpiresAt != want {
 		t.Errorf("expires_at = %s, want %s", a.ExpiresAt, want)
+	}
+}
+
+// cancelOnPublish cancels the turn the moment the approval is published, as
+// an owner interrupting her right then would.
+type cancelOnPublish struct{ cancel context.CancelFunc }
+
+func (c cancelOnPublish) Invalidate(...string) { c.cancel() }
+func (c cancelOnPublish) Notify(proto.Notify)  {}
+
+func TestProposeOutlivesACancelledTurn(t *testing.T) {
+	f := newFixture(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	appr, err := approvals.New(approvals.Options{Store: f.store, Location: time.UTC, Events: cancelOnPublish{cancel}, Now: func() time.Time { return f.now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, err := New(Options{Store: f.store, Approvals: appr, Location: time.UTC, Now: func() time.Time { return f.now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, a, err := svc.Propose(ctx, subjectRules)
+	if err != nil {
+		t.Fatalf("Propose cancelled midway: %v", err)
+	}
+	if ctx.Err() == nil {
+		t.Fatal("the turn was never cancelled")
+	}
+	if c.ApprovalID == nil || *c.ApprovalID != a.ID {
+		t.Fatalf("change %+v is not linked to approval %s", c, a.ID)
+	}
+	if _, err := appr.Decide(t.Context(), mustID(t, a.ID), approvals.DecisionDeny, "Not now."); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := svc.Get(t.Context(), mustID(t, c.ID)); got.Status != StatusDenied {
+		t.Errorf("status after deny = %s, want denied", got.Status)
+	}
+
+	// A turn cancelled before it starts writes nothing at all.
+	done, stop := context.WithCancel(t.Context())
+	stop()
+	if _, _, err := svc.Propose(done, subjectRules); err == nil {
+		t.Error("proposed on a cancelled turn")
+	}
+	var changes, pending int
+	db := f.store.DB()
+	_ = db.QueryRow(`SELECT count(*) FROM change_requests`).Scan(&changes)
+	_ = db.QueryRow(`SELECT count(*) FROM approvals`).Scan(&pending)
+	if changes != 1 || pending != 1 {
+		t.Errorf("rows after a cancelled proposal: %d changes, %d approvals; want 1 and 1", changes, pending)
 	}
 }
 

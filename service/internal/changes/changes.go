@@ -313,6 +313,10 @@ func (s *Service) Propose(ctx context.Context, p Proposal) (ChangeRequest, appro
 		detail = fmt.Sprintf("Revises #%d.\n\n%s", p.Revises, detail)
 	}
 
+	// From here the row, its approval and the link between them are written as
+	// one: an interrupted turn must not leave an approval with no change behind
+	// it, or a change whose approval it can't see.
+	ctx = context.WithoutCancel(ctx)
 	now := stamp(s.now())
 	res, err := s.db.ExecContext(ctx, `INSERT INTO change_requests (title, what, why, kind, revises, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`, p.Title, p.What, p.Why, p.Kind, revises, now, now)
@@ -332,7 +336,7 @@ func (s *Service) Propose(ctx context.Context, p Proposal) (ChangeRequest, appro
 		TTL:     proposalTTL,
 	})
 	if err != nil {
-		if _, derr := s.db.ExecContext(context.WithoutCancel(ctx), `DELETE FROM change_requests WHERE id = ?`, id); derr != nil {
+		if _, derr := s.db.ExecContext(ctx, `DELETE FROM change_requests WHERE id = ?`, id); derr != nil {
 			s.log.Error("cannot remove a change request whose approval failed", "id", id, "error", derr)
 		}
 		return ChangeRequest{}, approvals.Approval{}, fmt.Errorf("ask to approve change request: %w", err)

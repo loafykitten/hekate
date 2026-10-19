@@ -686,3 +686,42 @@ func TestCapabilitiesAnnouncedWhenSTTBecomesReady(t *testing.T) {
 		t.Errorf("capabilities = %v", caps)
 	}
 }
+
+// blockingSTT holds each transcription until released.
+type blockingSTT struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingSTT) Ready() bool { return true }
+func (b *blockingSTT) Transcribe(context.Context, []int16, int) (string, error) {
+	b.started <- struct{}{}
+	<-b.release
+	return "the older spoken request", nil
+}
+
+// Typing while an earlier push-to-talk is still being transcribed wins: the
+// late transcript must not start a turn that interrupts the newer reply.
+func TestStaleTranscriptionIsDropped(t *testing.T) {
+	stt := &blockingSTT{started: make(chan struct{}, 1), release: make(chan struct{})}
+	conv := newFakeConv()
+	env := newWSServer(t, conv, stt, false)
+	c := env.dial(t)
+	readMsg(t, c)
+
+	send(t, c, map[string]any{"type": "ptt_start", "id": "p", "sample_rate": 16000})
+	writeBin(t, c, pcmBytes(make([]int16, 8000)...))
+	send(t, c, map[string]any{"type": "ptt_end", "id": "p"})
+	<-stt.started
+	send(t, c, map[string]any{"type": "say", "id": "s", "text": "newer typed request"})
+	if got := <-conv.sayCh; got.text != "newer typed request" {
+		t.Fatalf("said = %+v", got)
+	}
+	close(stt.release)
+
+	select {
+	case got := <-conv.sayCh:
+		t.Fatalf("stale transcription started a turn: %+v", got)
+	case <-time.After(200 * time.Millisecond):
+	}
+}

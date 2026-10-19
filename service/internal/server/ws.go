@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -98,6 +99,10 @@ type session struct {
 	hasCarry bool
 
 	wg sync.WaitGroup // transcriptions in flight
+
+	// inputs counts new inputs (typed or push-to-talk). A transcription that
+	// finishes after a newer input was sent is stale and must not start a turn.
+	inputs atomic.Uint64
 }
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
@@ -256,6 +261,7 @@ func (ss *session) onSay(m proto.ClientMessage) {
 		ss.sendTo(proto.NewError(proto.CodeTooLong, "That's too long for me to take in at once.", m.ID))
 		return
 	}
+	ss.inputs.Add(1)
 	ss.s.conv.Say(ss.id, m.ID, text)
 }
 
@@ -265,6 +271,7 @@ func (ss *session) onPTTStart(m proto.ClientMessage) {
 		return
 	}
 	ss.resetPTT()
+	ss.inputs.Add(1)
 	if !ss.sttReady() {
 		ss.sendTo(proto.NewError(proto.CodeSTTUnavailable, "I can't hear you yet: speech recognition isn't ready.", m.ID))
 		return
@@ -302,14 +309,17 @@ func (ss *session) onPTTEnd(m proto.ClientMessage) {
 	}
 	id, pcm := ss.pttID, ss.pcm
 	ss.resetPTT()
+	gen := ss.inputs.Load()
 	ss.wg.Add(1)
 	go func() {
 		defer ss.wg.Done()
-		ss.transcribe(id, pcm)
+		ss.transcribe(id, pcm, gen)
 	}()
 }
 
-func (ss *session) transcribe(id string, pcm []int16) {
+// transcribe runs speech-to-text and starts a turn, unless a newer input
+// (gen changed) arrived while it ran.
+func (ss *session) transcribe(id string, pcm []int16, gen uint64) {
 	if len(pcm) < minPTTSamples {
 		ss.sendTo(proto.NewTranscript(id, ""))
 		return
@@ -334,6 +344,10 @@ func (ss *session) transcribe(id string, pcm []int16) {
 		return
 	}
 	text = strings.TrimSpace(text)
+	if ss.inputs.Load() != gen {
+		ss.s.log.Info("dropping a transcription superseded by newer input", "client_id", ss.id)
+		return
+	}
 	ss.sendTo(proto.NewTranscript(id, text))
 	if text != "" {
 		ss.s.conv.Say(ss.id, id, text)

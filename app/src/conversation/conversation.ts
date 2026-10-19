@@ -357,6 +357,10 @@ export class Conversation {
       this.myTurn = this.lastMyTurn = turnId;
       this.spoke = false;
       this.clearPending();
+    } else if (this.player?.busy || this.myTurn) {
+      // Another device started a turn: whatever this one was still saying is superseded.
+      this.player?.stop();
+      this.myTurn = undefined;
     }
     if (!this.caption || this.caption.text !== userText) this.setCaption(userText);
     this.running.clear();

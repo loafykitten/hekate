@@ -295,9 +295,20 @@ func safeRun(ctx context.Context, t Tool, args json.RawMessage) (res Result, err
 	return t.Run(ctx, args)
 }
 
+// testHookBeforeEnd lets tests interleave an Interrupt right before end runs.
+var testHookBeforeEnd func(*turn)
+
 // end persists what was said and tells the clients how the turn went.
 func (r *turnRun) end(ctx context.Context, loopErr error) {
 	a, t := r.a, r.t
+	if testHookBeforeEnd != nil {
+		testHookBeforeEnd(t)
+	}
+	// endMu is held from deciding the status until fin is set, so a concurrent
+	// Interrupt either cancels the turn before its status is decided (and is
+	// honored here) or sees fin and trims the saved reply afterwards.
+	t.endMu.Lock()
+	defer t.endMu.Unlock()
 	status, errCode, errMsg := proto.StatusDone, "", ""
 	segs := r.pipe.segments()
 
@@ -316,11 +327,7 @@ func (r *turnRun) end(ctx context.Context, loopErr error) {
 		r.log.Warn("turn failed", "error", loopErr)
 	}
 
-	// Keep only what the user heard of an interrupted reply. Holding endMu until
-	// fin is set means a concurrent Interrupt either lands in heard first or
-	// sees fin and trims afterwards.
-	t.endMu.Lock()
-	defer t.endMu.Unlock()
+	// Keep only what the user heard of an interrupted reply.
 	keep := r.pipe.last()
 	if status == proto.StatusInterrupted {
 		if h := t.heard.Load(); h != heardUnset {

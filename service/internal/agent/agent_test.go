@@ -639,3 +639,23 @@ func TestInterruptAfterTurnEndsTrimsSavedReply(t *testing.T) {
 		t.Errorf("turn_end events = %d, want 2", got)
 	}
 }
+
+// An Interrupt that lands after generation finished but before end decides the
+// status must still cut the saved reply to what was heard.
+func TestInterruptJustBeforeEndIsHonored(t *testing.T) {
+	e := newEnv(t, func(int, llmReq) (int, []string) {
+		return 200, say("First sentence is right here. Second sentence is also here. Third sentence ends it.")
+	}, envOpts{})
+	testHookBeforeEnd = func(*turn) { e.agent.Interrupt(0) }
+	t.Cleanup(func() { testHookBeforeEnd = nil })
+
+	e.agent.Say("c", "i", "tell me a story")
+	ev := e.hub.waitTurnEnd(t, 1)
+	end := ofType[proto.TurnEnd](ev)[0]
+	if end.Status != proto.StatusInterrupted || end.Text != "First sentence is right here." {
+		t.Fatalf("turn_end = %+v", end)
+	}
+	if msgs := e.messages(); len(msgs) != 2 || msgs[1].Text != "First sentence is right here." {
+		t.Errorf("stored = %+v", msgs)
+	}
+}

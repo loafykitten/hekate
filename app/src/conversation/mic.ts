@@ -84,24 +84,23 @@ export class MicCapture {
       throw new MicError(kind, MESSAGES[kind]);
     }
     const generation = ++this.generation;
+    let stream: MediaStream | undefined;
     try {
       // Created and resumed synchronously inside the gesture; reused for later presses.
       const ctx = (this.ctx ??= new AudioContext({ latencyHint: "interactive" }));
       const resumed = ctx.resume();
       setAudioSession("play-and-record");
-      const stream = await devices.getUserMedia({
+      stream = await devices.getUserMedia({
         audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
-      if (generation !== this.generation) {
-        stream.getTracks().forEach((t) => t.stop()); // released before the stream arrived
-        return false;
-      }
+      if (generation !== this.generation) return this.dropStale(stream); // released before the stream arrived
       this.stream = stream;
       await resumed.catch(() => {});
       await ctx.resume(); // iOS can leave the context "interrupted" after the permission prompt
       this.loaded ??= ctx.audioWorklet.addModule(workletUrl);
       await this.loaded;
-      if (generation !== this.generation) return this.abort();
+      // Cancelled while the worklet loaded; a newer capture may already own this.stream.
+      if (generation !== this.generation) return this.dropStale(stream);
 
       const node = new AudioWorkletNode(ctx, "hekate-pcm-capture", {
         numberOfInputs: 1,
@@ -126,6 +125,10 @@ export class MicCapture {
       this._active = true;
       return true;
     } catch (e) {
+      if (generation !== this.generation) {
+        this.dropStale(stream);
+        return false;
+      }
       this.release();
       setAudioSession("playback");
       throw classifyMicError(e);
@@ -156,9 +159,10 @@ export class MicCapture {
     void this.ctx?.suspend().catch(() => {});
   }
 
-  private abort(): false {
-    this.release();
-    setAudioSession("playback");
+  // Cleans up a superseded start: only its own stream, never the current capture's resources.
+  private dropStale(stream: MediaStream | undefined): false {
+    stream?.getTracks().forEach((t) => t.stop());
+    if (stream && this.stream === stream) this.stream = undefined;
     return false;
   }
 

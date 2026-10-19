@@ -259,7 +259,7 @@ describe("Conversation: connection", () => {
 describe("Conversation: capabilities", () => {
   it("enables voice input when the service reports speech-to-text became ready", () => {
     const t = setup({ ready: { ...READY, capabilities: { stt: false, tts: true } } });
-    expect(t.state().capabilities.stt).toBe(false);
+    expect(t.state().capabilities?.stt).toBe(false);
     t.socket.receive({ type: "capabilities", capabilities: { stt: true, tts: true } });
     expect(t.state().capabilities).toEqual({ stt: true, tts: true });
   });

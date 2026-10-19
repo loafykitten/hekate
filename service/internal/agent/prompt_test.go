@@ -251,11 +251,11 @@ func TestCollectMessages(t *testing.T) {
 }
 
 func TestRulesCoverMemoryAndLocalTimes(t *testing.T) {
-	got := SystemPrompt(PromptInput{Tamer: "Ember", Gestures: []string{"waving"}, Now: time.Now()})
+	got := SystemPrompt(PromptInput{Tamer: "Rika", Gestures: []string{"waving"}, Now: time.Now()})
 	for _, want := range []string{
 		"local time unless a tool says otherwise",
 		"## Memory",
-		`"What you know about Ember"`,
+		`"What you know about Rika"`,
 		"Only say \"I'll remember that\" after the save succeeded.",
 		"follow_up_at",
 		"memory_forget",

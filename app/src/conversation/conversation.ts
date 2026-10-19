@@ -466,7 +466,7 @@ export class Conversation {
     const endEpoch = this.historyEpoch;
     this.live = this.live.map((e) => {
       if (e.turnId !== turnId) return e;
-      return e.role === "assistant" ? { ...e, text: text || e.text, done: true, endEpoch } : { ...e, done: true, endEpoch };
+      return e.role === "assistant" ? { ...e, text, done: true, endEpoch } : { ...e, done: true, endEpoch };
     });
     if (turnId === this.myTurn) {
       this.myTurn = undefined;

@@ -167,8 +167,8 @@ func TestToolEffects(t *testing.T) {
 
 func TestToolsSaveSearchUpdateForget(t *testing.T) {
 	f := newFixture(t)
-	res, err := run(t, f, "memory_save", `{"content":"Ember is vegetarian","kind":"preference","importance":4}`)
-	if err != nil || !strings.HasPrefix(res.Content, "Saved: [1] (preference) Ember is vegetarian") {
+	res, err := run(t, f, "memory_save", `{"content":"Rika is vegetarian","kind":"preference","importance":4}`)
+	if err != nil || !strings.HasPrefix(res.Content, "Saved: [1] (preference) Rika is vegetarian") {
 		t.Fatalf("save: %v %q", err, res.Content)
 	}
 	var card struct{ Items []Memory }
@@ -177,11 +177,11 @@ func TestToolsSaveSearchUpdateForget(t *testing.T) {
 	}
 
 	// A near-duplicate is flagged, an exact one is not stored twice.
-	res, err = run(t, f, "memory_save", `{"content":"Ember eats vegetarian food","kind":"preference"}`)
+	res, err = run(t, f, "memory_save", `{"content":"Rika eats vegetarian food","kind":"preference"}`)
 	if err != nil || !strings.Contains(res.Content, "Similar memories") || !strings.Contains(res.Content, "[1]") {
 		t.Errorf("similar hint: %v %q", err, res.Content)
 	}
-	res, _ = run(t, f, "memory_save", `{"content":"ember is vegetarian","kind":"preference"}`)
+	res, _ = run(t, f, "memory_save", `{"content":"rika is vegetarian","kind":"preference"}`)
 	if !strings.HasPrefix(res.Content, "Already remembered") {
 		t.Errorf("duplicate: %q", res.Content)
 	}

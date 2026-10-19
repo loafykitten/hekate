@@ -51,7 +51,7 @@ func TestContextSourcesFillTheNowBlock(t *testing.T) {
 	p := systemPrompt(t, e)
 	now := strings.Index(p, "## Now")
 	cal := strings.Index(p, "### Calendar\n\nNext event at 14:05")
-	mem := strings.Index(p, "### What you know about Ember\n\nrecalled for: what is up")
+	mem := strings.Index(p, "### What you know about Rika\n\nrecalled for: what is up")
 	if now < 0 || cal < now || mem < cal {
 		t.Errorf("blocks out of place (now=%d cal=%d mem=%d):\n%s", now, cal, mem, p)
 	}

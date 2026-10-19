@@ -312,6 +312,9 @@ describe("Conversation: superseded input and back-to-back turns", () => {
 
     t.socket.receive({ type: "turn_start", turn_id: "t2", input_id: "y", origin: "c1", user_text: "two" });
     expect(speech.stopped).toBe(1);
+  });
+});
+
 const memoryCard = (id = "m1") => ({ kind: "memory", id, title: "Saved", data: { items: [] } });
 const remindersCard = { kind: "reminders", id: "r1", title: "Reminder", data: { items: [], highlight: ["7"] } };
 
@@ -399,5 +402,15 @@ describe("Conversation: cards, notices and invalidation", () => {
     FakeSocket.last.open();
     FakeSocket.last.receive(READY);
     expect(seen.at(-1)).toEqual(["tasks", "reminders", "calendar", "memory", "weather"]);
+  });
+});
+
+describe("Conversation: authoritative turn text", () => {
+  it("an interrupted reply nobody heard is empty in the live log", () => {
+    const t = setup();
+    t.socket.receive({ type: "turn_start", turn_id: "t1", input_id: "x", origin: "c1", user_text: "hi" });
+    t.socket.receive(seg("t1", 0, "Never heard."));
+    t.socket.receive({ ...turnEnd("t1", ""), status: "interrupted" });
+    expect(t.state().live.find((e) => e.role === "assistant")?.text).toBe("");
   });
 });

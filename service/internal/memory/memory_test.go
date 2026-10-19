@@ -98,7 +98,7 @@ func TestMatchQuery(t *testing.T) {
 	tests := []struct {
 		name, in, want string
 	}{
-		{"plain words", "Ember is vegetarian", `"ember" OR "vegetarian"`},
+		{"plain words", "Rika is vegetarian", `"rika" OR "vegetarian"`},
 		{"stopwords go", "what should I cook tonight?", `"cook"`},
 		{"nothing left", "what is it?", ``},
 		{"empty", "", ``},

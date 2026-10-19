@@ -113,7 +113,7 @@ export class Conversation {
     this.unsubscribers = [
       c.onStatus((s) => this.onStatus(s)),
       c.on("ready", (m) => this.onReady(m.capabilities)),
-      c.on("transcript", (m) => this.onTranscript(m.id, m.text)),
+      c.on("transcript", (m) => this.onTranscript(m.id, m.text, m.superseded)),
       c.on("turn_start", (m) => this.onTurnStart(m.turn_id, m.origin, m.user_text)),
       c.on("activity", (m) => this.onActivity(m.tool, m.label, m.state)),
       c.on("segment", (m) => this.onSegment(m)),
@@ -340,8 +340,12 @@ export class Conversation {
     this.emit();
   }
 
-  private onTranscript(id: string, text: string) {
+  private onTranscript(id: string, text: string, superseded = false) {
     const mine = this.pending?.id === id;
+    if (superseded) {
+      if (mine) this.clearPending(); // something newer was sent; nothing to say about this one
+      return this.emit();
+    }
     if (!text.trim()) {
       if (mine) {
         this.clearPending();
@@ -357,6 +361,9 @@ export class Conversation {
   private onTurnStart(turnId: string, origin: string, userText: string) {
     const mine = origin === this.client.clientId;
     if (mine) {
+      // A newer reply of ours replaces whatever is still playing (its turn may have finished on
+      // the server before this input arrived, so nothing else stops it).
+      if (this.player?.busy) this.player.stop();
       this.myTurn = this.lastMyTurn = turnId;
       this.spoke = false;
       this.clearPending();

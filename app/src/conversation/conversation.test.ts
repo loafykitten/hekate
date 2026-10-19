@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConversationClient } from "./client";
 import { Conversation, TAP_MS, type MicLike } from "./conversation";
-import { FakeSocket, READY } from "./fakes";
+import { FakeSocket, FakeSpeech, READY } from "./fakes";
 import { MicError } from "./mic";
 
 function setup(opts: { startImpl?: () => Promise<boolean>; ready?: object } = {}) {
@@ -280,5 +280,37 @@ describe("Conversation: two devices", () => {
     t.socket.receive({ type: "turn_start", turn_id: "t1", input_id: "x", origin: "c1", user_text: "first" });
     t.conversation.sendText("second");
     expect(t.types()).toEqual(["say", "interrupt", "say"]);
+  });
+});
+
+describe("Conversation: superseded input and back-to-back turns", () => {
+  it("a transcript superseded by another device's input just clears the wait", async () => {
+    const t = setup();
+    t.conversation.pressTalk();
+    await vi.advanceTimersByTimeAsync(0);
+    t.tick(TAP_MS + 100);
+    t.conversation.releaseTalk();
+    await vi.advanceTimersByTimeAsync(0);
+    const id = t.socket.json[0].id as string;
+    expect(t.state().phase).toBe("transcribing");
+    t.socket.receive({ type: "transcript", id, text: "", superseded: true });
+    expect(t.state().phase).toBe("idle");
+    expect(t.state().toasts).toEqual([]);
+  });
+
+  it("a newer local turn stops the previous reply still playing here", async () => {
+    const t = setup();
+    const speech = new FakeSpeech();
+    t.conversation.attachStage({ speech, bubble: undefined, character: undefined } as never);
+    t.conversation.sendText("one");
+    t.conversation.sendText("two"); // before turn_start of "one" arrived: nothing to interrupt yet
+    t.socket.receive({ type: "turn_start", turn_id: "t1", input_id: "x", origin: "c1", user_text: "one" });
+    t.socket.receive({ ...seg("t1", 0, "First reply."), audio_b64: btoa("a".repeat(300)), audio_format: "mp3" });
+    t.socket.receive(turnEnd("t1", "First reply.")); // finished on the server before "two" arrived
+    await vi.runOnlyPendingTimersAsync();
+    expect(speech.queued.length).toBe(1);
+
+    t.socket.receive({ type: "turn_start", turn_id: "t2", input_id: "y", origin: "c1", user_text: "two" });
+    expect(speech.stopped).toBe(1);
   });
 });

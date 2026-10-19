@@ -733,6 +733,9 @@ func TestStaleTranscriptionIsDropped(t *testing.T) {
 		t.Fatalf("stale transcription started a turn: %+v", got)
 	case <-time.After(200 * time.Millisecond):
 	}
+	if m := readMsg(t, c); m["type"] != "transcript" || m["id"] != "p" || m["superseded"] != true {
+		t.Errorf("the speaking client must hear its transcript was superseded, got %v", m)
+	}
 }
 
 // Inputs are ordered across devices: a phone's late transcript must not start a
@@ -759,6 +762,9 @@ func TestStaleTranscriptionFromAnotherDeviceIsDropped(t *testing.T) {
 	case got := <-conv.sayCh:
 		t.Fatalf("stale transcription started a turn: %+v", got)
 	case <-time.After(200 * time.Millisecond):
+	}
+	if m := readMsg(t, phone); m["type"] != "transcript" || m["id"] != "p" || m["superseded"] != true {
+		t.Errorf("the speaking client must hear its transcript was superseded, got %v", m)
 	}
 }
 

@@ -19,7 +19,7 @@ client whose input started a turn (`origin` matches its `client_id`) plays the a
 |---|---|---|
 | `ready` | `client_id`, `conversation_id`, `capabilities: { stt, tts }`, `gestures: string[]` | Sent once on connect. `stt`/`tts` are false when unconfigured. |
 | `capabilities` | `capabilities: { stt, tts }` | What the service can do changed after connecting (e.g. speech-to-text finished loading). |
-| `transcript` | `id`, `text` | Push-to-talk result for input `id`. An empty `text` means nothing was heard, and no turn follows. |
+| `transcript` | `id`, `text`, `superseded?` | Push-to-talk result for input `id`. An empty `text` means nothing was heard, and no turn follows. `superseded: true` means newer input (from any device) arrived while it was transcribed, so it was dropped. |
 | `turn_start` | `turn_id`, `input_id`, `origin`, `user_text` | She's answering `user_text`. |
 | `activity` | `turn_id`, `tool`, `label`, `state: "start" \| "done" \| "error"` | A tool is running, e.g. label "Checking your calendar". |
 | `segment` | see below | One sentence of her reply, ready to perform. |

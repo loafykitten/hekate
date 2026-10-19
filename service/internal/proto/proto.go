@@ -81,10 +81,15 @@ type Transcript struct {
 	Type string `json:"type"`
 	ID   string `json:"id"`
 	Text string `json:"text"`
+	// Superseded: newer input arrived while this was transcribed, so no turn
+	// follows. The client just clears its waiting state.
+	Superseded bool `json:"superseded,omitempty"`
 }
 
 // NewTranscript builds a transcript message.
-func NewTranscript(id, text string) Transcript { return Transcript{TypeTranscript, id, text} }
+func NewTranscript(id, text string) Transcript {
+	return Transcript{Type: TypeTranscript, ID: id, Text: text}
+}
 
 // TurnStart announces that she is answering UserText.
 type TurnStart struct {

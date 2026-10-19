@@ -347,6 +347,9 @@ func (ss *session) transcribe(id string, pcm []int16, gen uint64) {
 	text = strings.TrimSpace(text)
 	if !ss.s.sayIfCurrent(gen, func() { ss.sendTo(proto.NewTranscript(id, text)) }, ss.id, id, text) {
 		ss.s.log.Info("dropping a transcription superseded by newer input", "client_id", ss.id)
+		superseded := proto.NewTranscript(id, "")
+		superseded.Superseded = true
+		ss.sendTo(superseded)
 	}
 }
 

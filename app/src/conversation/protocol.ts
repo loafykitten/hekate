@@ -18,6 +18,7 @@ export interface Transcript {
   type: "transcript";
   id: string;
   text: string;
+  superseded?: boolean; // newer input arrived meanwhile; no turn follows
 }
 
 export interface TurnStart {

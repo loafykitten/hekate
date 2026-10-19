@@ -2,7 +2,7 @@ import type { Stage } from "../character/stage";
 import type { Bubble } from "../character/bubble";
 import { ConversationClient, type ConnectionStatus } from "./client";
 import type { LiveEntry } from "./log";
-import { MicCapture, MicError, classifyMicError, setAudioSession } from "./mic";
+import { MicCapture, MicError, classifyMicError, defaultMicOptions, setAudioSession } from "./mic";
 import { SegmentPlayer } from "./player";
 import { asApproval, parseCard, type Approval } from "../data/model";
 import { setZone } from "../data/time";
@@ -127,7 +127,7 @@ export class Conversation {
   constructor(deps: ConversationDeps = {}) {
     this.client = deps.client ?? new ConversationClient();
     this.now = deps.now ?? (() => performance.now());
-    this.mic = (deps.createMic ?? ((onChunk) => new MicCapture(onChunk)))((chunk) => this.onMicChunk(chunk));
+    this.mic = (deps.createMic ?? ((onChunk) => new MicCapture(onChunk, defaultMicOptions())))((chunk) => this.onMicChunk(chunk));
     this.client.getHeardSeq = () => this.player?.heardSeq(this.lastMyTurn) ?? -1;
     this.client.getHeardTurn = () => this.lastMyTurn;
   }

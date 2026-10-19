@@ -457,6 +457,7 @@ export class Conversation {
 
   private onCapabilities(capabilities: Capabilities) {
     this.capabilities = capabilities;
+    if (capabilities.stt) this.mic.prepare?.(); // speech-to-text finished loading: get the mic ready
     this.emit();
   }
 

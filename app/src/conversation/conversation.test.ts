@@ -11,6 +11,7 @@ function setup(opts: { startImpl?: () => Promise<boolean>; ready?: object } = {}
     level: 0,
     start: vi.fn(opts.startImpl ?? (async () => true)),
     stop: vi.fn(async () => {}),
+    prepare: vi.fn(),
   } satisfies MicLike;
   let onChunk: (chunk: ArrayBuffer) => void = () => {};
   const client = new ConversationClient({ url: "ws://test/api/ws", socketFactory: (url) => new FakeSocket(url), setTimer: () => 0, clearTimer: () => {} });
@@ -226,6 +227,16 @@ describe("Conversation: push-to-talk", () => {
     expect(t.state().phase).toBe("idle");
     finish(false);
     await vi.advanceTimersByTimeAsync(0);
+  });
+
+  it("gets the mic ready once speech-to-text is available, even if it loads after connecting", () => {
+    const later = setup({ ready: { ...READY, capabilities: { stt: false, tts: false } } });
+    expect(later.mic.prepare).not.toHaveBeenCalled();
+    later.socket.receive({ type: "capabilities", capabilities: { stt: true, tts: false } });
+    expect(later.mic.prepare).toHaveBeenCalledOnce();
+
+    const now = setup();
+    expect(now.mic.prepare).toHaveBeenCalledOnce();
   });
 
   it("explains instead of recording when speech-to-text is unavailable or the socket is down", () => {

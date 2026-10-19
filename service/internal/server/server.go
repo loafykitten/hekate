@@ -3,15 +3,19 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/loafykitten/hekate/service/internal/buildinfo"
+	"github.com/loafykitten/hekate/service/internal/proto"
+	"github.com/loafykitten/hekate/service/internal/voice"
 )
 
 // Pinger is the slice of the store the server needs.
@@ -26,6 +30,17 @@ type Options struct {
 	DB        Pinger
 	WebDir    string // optional: built PWA
 	AssetsDir string // optional: character assets
+
+	// Conversation and Hub enable /api/ws and the history endpoint.
+	Conversation Conversation
+	Hub          *Hub
+	// STT may be nil (not configured); TTS says whether replies carry audio.
+	STT voice.Transcriber
+	TTS bool
+
+	// PingInterval and PingTimeout default to 20 s and 10 s; tests shorten them.
+	PingInterval time.Duration
+	PingTimeout  time.Duration
 }
 
 // Server owns routing and its dependencies.
@@ -35,6 +50,60 @@ type Server struct {
 	webDir    string
 	assetsDir string
 	startedAt time.Time
+	conv      Conversation
+	hub       *Hub
+	stt       voice.Transcriber
+	tts       bool
+	pingEvery time.Duration
+	pingWait  time.Duration
+
+	// inputs counts new inputs (typed or push-to-talk) across every connection,
+	// since all of them talk to the same conversation. A transcription that
+	// finishes after newer input from any device is stale. inputMu also makes
+	// "is it still current?" and starting the turn one step.
+	inputMu sync.Mutex
+	inputs  uint64
+}
+
+// startPTT records a push-to-talk as the newest input and hushes her, as one
+// step: no other input can be ordered between them (or an older recording
+// could cut a newer typed turn). Returns the input's number.
+func (s *Server) startPTT() uint64 {
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	s.inputs++
+	if testHookInPTTStart != nil {
+		testHookInPTTStart()
+	}
+	s.conv.Hush()
+	return s.inputs
+}
+
+// testHookInPTTStart lets tests try to slip an input into startPTT.
+var testHookInPTTStart func()
+
+// sayIfCurrent starts a turn only if no newer input arrived since gen, and
+// reports whether it did. before runs first under the same lock (to send the
+// transcript ahead of the turn).
+func (s *Server) sayIfCurrent(gen uint64, before func(), origin, id, text string) bool {
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	if s.inputs != gen {
+		return false
+	}
+	before()
+	if text != "" {
+		s.conv.Say(origin, id, text)
+	}
+	return true
+}
+
+// say records a typed input and starts its turn.
+func (s *Server) say(origin, id, text string) {
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	s.inputs++
+	s.conv.Say(origin, id, text)
 }
 
 // New creates a Server. Directories are opened lazily per request through
@@ -44,13 +113,28 @@ func New(o Options) *Server {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Server{
+	s := &Server{
 		log:       log,
 		db:        o.DB,
 		webDir:    o.WebDir,
 		assetsDir: o.AssetsDir,
 		startedAt: time.Now().UTC(),
+		conv:      o.Conversation,
+		hub:       o.Hub,
+		stt:       o.STT,
+		tts:       o.TTS,
+		pingEvery: cmp.Or(o.PingInterval, pingInterval),
+		pingWait:  cmp.Or(o.PingTimeout, pingTimeout),
 	}
+	// Speech-to-text may still be loading when clients connect (they get
+	// stt:false in ready); tell them when it's done.
+	if loading, ok := o.STT.(interface{ Done() <-chan struct{} }); ok && s.hub != nil {
+		go func() {
+			<-loading.Done()
+			s.hub.Broadcast(proto.NewCapabilities(s.capabilities()))
+		}()
+	}
+	return s
 }
 
 // Routes returns the fully wrapped handler.
@@ -80,9 +164,10 @@ func (s *Server) Routes() http.Handler {
 	)
 }
 
-// apiRoutes is where feature milestones register /api/... endpoints
-// (M1 adds the WebSocket at /api/ws).
-func (s *Server) apiRoutes(_ *http.ServeMux) {}
+// apiRoutes is where feature milestones register /api/... endpoints.
+func (s *Server) apiRoutes(mux *http.ServeMux) {
+	s.conversationRoutes(mux)
+}
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)

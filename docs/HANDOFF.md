@@ -195,7 +195,9 @@ commands are in `NOTES.md`. Note: rebuilding changes nothing unless sources or s
   `with-timestamps` alignment, character by character, and on `eleven_v3` they span the time
   the sound takes (`[chuckles]` covered 0–0.84 s). So: drop tag characters from word timings,
   and use a tag's first character time as the expression's `at`. Latency for a short sentence:
-  `eleven_v3` ~1.7 s (supports tags), `eleven_flash_v2_5` ~0.26 s (no tags).
+  `eleven_v3` ~1.7 s (supports tags), `eleven_flash_v2_5` ~0.26 s (no tags). **Default is now
+  `eleven_v4`** (same timestamps and tag behavior, ~1.25 s vs v3's ~2.65 s for a typical sentence;
+  `eleven_v4_turbo` ~0.9 s), measured 2026-10-19.
 - **Homelab OS/hardware**: unknown. `say` (macOS) is only a dev placeholder.
 - Which LLM and whether the user wants local inference on the homelab or an API.
 - How the user wants to talk to it (push-to-talk, wake word, typing).

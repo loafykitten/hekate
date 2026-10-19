@@ -1,19 +1,33 @@
 const MARGIN = 16;
 
-// Speech bubble pinned above the character's head, revealing text as she speaks.
+// Speech bubble pinned above the character's head. The caller decides what is revealed; the
+// not-yet-revealed words stay in the layout (invisible), so the bubble doesn't resize or jump
+// as words appear.
 export class Bubble {
-  private text = "";
-  private shown = -1;
-  private body: HTMLElement;
+  private shown = "";
+  private pending = "";
+  private visible: HTMLElement;
+  private hidden: HTMLElement;
 
   constructor(private el: HTMLElement) {
-    this.body = el.querySelector(".bubble-text")!;
+    const body = el.querySelector(".bubble-text")!;
+    this.visible = document.createElement("span");
+    this.hidden = document.createElement("span");
+    this.hidden.style.visibility = "hidden";
+    this.hidden.setAttribute("aria-hidden", "true");
+    body.replaceChildren(this.visible, this.hidden); // replace: a remounted Stage reuses the element
   }
 
-  show(text: string) {
-    this.text = text;
-    this.shown = -1;
-    this.body.textContent = "";
+  // Shows `shown`, with `pending` reserving the space for the rest of the text.
+  setText(shown: string, pending = "") {
+    if (shown !== this.shown) {
+      this.shown = shown;
+      this.visible.textContent = shown;
+    }
+    if (pending !== this.pending) {
+      this.pending = pending;
+      this.hidden.textContent = pending;
+    }
     this.el.hidden = false;
   }
 
@@ -21,16 +35,9 @@ export class Bubble {
     this.el.hidden = true;
   }
 
-  // progress: 0..1 through the utterance. anchor: head position in normalized device coords.
-  update(progress: number, anchor: { x: number; y: number }) {
+  // anchor: head position in normalized device coords.
+  update(anchor: { x: number; y: number }) {
     if (this.el.hidden) return;
-    const count = Math.ceil(this.text.length * Math.min(1, progress * 1.15));
-    if (count !== this.shown) {
-      this.body.textContent = this.text.slice(0, count);
-      this.body.scrollTop = this.body.scrollHeight; // long text: keep the newest words in view
-      this.shown = count;
-    }
-
     const w = window.innerWidth;
     const h = window.innerHeight;
     const ax = ((anchor.x + 1) / 2) * w;

@@ -5,13 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
 
 // Secret is a string that never renders its value in logs or fmt output.
-// Later milestones add API keys as Secret fields on Config.
 type Secret string
 
 const redacted = "[redacted]"
@@ -40,7 +42,33 @@ type Config struct {
 	LogLevel  slog.Level
 	TamerName string
 	Location  *time.Location
+
+	// Neuralwatt (LLM). An empty key means the agent answers with llm_unavailable.
+	NeuralwattAPIKey  Secret
+	NeuralwattBaseURL string
+	ModelChat         Model // everyday conversation
+	ModelDeep         Model // conversation that needs depth (think_deeper)
+	ModelBackground   Model // reflection, briefings; not latency sensitive
+	ModelBulk         Model // many small calls, e.g. mail classification
+
+	// Voice. Empty ElevenLabs key means text-only replies.
+	ElevenLabsAPIKey  Secret
+	ElevenLabsVoiceID string
+	ElevenLabsModel   string
+	STT               bool   // speech-to-text on/off
+	ModelsDir         string // downloaded speech models
 }
+
+// Model is a model name plus the reasoning effort every request to it sets.
+type Model struct {
+	Name   string
+	Effort string
+}
+
+func (m Model) String() string { return m.Name + "/" + m.Effort }
+
+// efforts are the reasoning levels Neuralwatt accepts.
+var efforts = []string{"minimal", "low", "medium", "high", "xhigh", "max"}
 
 // Load reads configuration from the process environment.
 func Load() (Config, error) { return LoadFrom(os.Getenv) }
@@ -62,7 +90,38 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 		TamerName: str("HEKATE_TAMER_NAME", "Tamer"),
 	}
 
+	cfg.NeuralwattAPIKey = Secret(str("NEURALWATT_API_KEY", ""))
+	cfg.NeuralwattBaseURL = strings.TrimRight(str("NEURALWATT_BASE_URL", "https://api.neuralwatt.com/v1"), "/")
+	cfg.ElevenLabsAPIKey = Secret(str("ELEVENLABS_API_KEY", ""))
+	cfg.ElevenLabsVoiceID = str("ELEVENLABS_VOICE_ID", "EXAVITQu4vr4xnSDxMaL")
+	cfg.ElevenLabsModel = str("ELEVENLABS_MODEL", "eleven_v4")
+	cfg.ModelsDir = str("HEKATE_MODELS_DIR", filepath.Join(cfg.DataDir, "models"))
+
 	var errs []error
+
+	model := func(prefix, defName, defEffort string) Model {
+		m := Model{Name: str(prefix, defName), Effort: strings.ToLower(str(prefix+"_EFFORT", defEffort))}
+		if !slices.Contains(efforts, m.Effort) {
+			errs = append(errs, fmt.Errorf("%s_EFFORT: %q is not one of %s", prefix, m.Effort, strings.Join(efforts, ", ")))
+		}
+		return m
+	}
+	cfg.ModelChat = model("HEKATE_MODEL_CHAT", "glm-5.3-flash", "low")
+	cfg.ModelDeep = model("HEKATE_MODEL_DEEP", "glm-5.3", "high")
+	cfg.ModelBackground = model("HEKATE_MODEL_BACKGROUND", "glm-5.3-flex", "high")
+	cfg.ModelBulk = model("HEKATE_MODEL_BULK", "glm-5.3-flash-flex", "low")
+
+	switch v := strings.ToLower(str("HEKATE_STT", "on")); v {
+	case "on":
+		cfg.STT = true
+	case "off":
+	default:
+		errs = append(errs, fmt.Errorf("HEKATE_STT: %q is not on or off", v))
+	}
+
+	if u, err := url.Parse(cfg.NeuralwattBaseURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		errs = append(errs, fmt.Errorf("NEURALWATT_BASE_URL: %q must be an http(s) URL", cfg.NeuralwattBaseURL))
+	}
 
 	if err := cfg.LogLevel.UnmarshalText([]byte(str("HEKATE_LOG_LEVEL", "info"))); err != nil {
 		errs = append(errs, fmt.Errorf("HEKATE_LOG_LEVEL: %w", err))
@@ -108,5 +167,16 @@ func (c Config) LogValue() slog.Value {
 		slog.String("log_level", c.LogLevel.String()),
 		slog.String("tamer_name", c.TamerName),
 		slog.String("timezone", c.Location.String()),
+		slog.Bool("llm_configured", c.NeuralwattAPIKey != ""),
+		slog.String("neuralwatt_base_url", c.NeuralwattBaseURL),
+		slog.String("model_chat", c.ModelChat.String()),
+		slog.String("model_deep", c.ModelDeep.String()),
+		slog.String("model_background", c.ModelBackground.String()),
+		slog.String("model_bulk", c.ModelBulk.String()),
+		slog.Bool("tts_configured", c.ElevenLabsAPIKey != ""),
+		slog.String("elevenlabs_voice_id", c.ElevenLabsVoiceID),
+		slog.String("elevenlabs_model", c.ElevenLabsModel),
+		slog.Bool("stt", c.STT),
+		slog.String("models_dir", c.ModelsDir),
 	)
 }

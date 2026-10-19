@@ -1,7 +1,8 @@
 .picker {
   position: fixed;
-  left: calc(var(--space-4) + var(--safe-left));
-  bottom: calc(var(--space-4) + var(--safe-bottom));
+  /* Below the log button, out of the dock's way. */
+  left: calc(var(--space-3) + var(--safe-left));
+  top: calc(var(--space-2) + 52px + var(--safe-top));
   z-index: var(--z-overlay);
   padding: 8px 10px;
   border: 1px solid var(--border);

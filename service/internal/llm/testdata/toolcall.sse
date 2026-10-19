@@ -1,0 +1,20 @@
+data: {"id": "chatcmpl-00000000-0000-4000-8000-000000000002", "model": "glm-5.3-flash", "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": null}], "service_tier": "standard"}
+
+data: {"id": "chatcmpl-00000000-0000-4000-8000-000000000002", "model": "glm-5.3-flash", "choices": [{"index": 0, "delta": {"reasoning": "hmm, this needs more thought"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-00000000-0000-4000-8000-000000000002", "model": "glm-5.3-flash", "choices": [{"index": 0, "delta": {"content": "Let me think."}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-00000000-0000-4000-8000-000000000002", "model": "glm-5.3-flash", "choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0, "id": "call_a", "type": "function", "function": {"name": "think_deeper", "arguments": ""}}]}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-00000000-0000-4000-8000-000000000002", "model": "glm-5.3-flash", "choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "{\"reason\": "}}]}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-00000000-0000-4000-8000-000000000002", "model": "glm-5.3-flash", "choices": [{"index": 0, "delta": {"tool_calls": [{"index": 1, "id": "call_b", "type": "function", "function": {"name": "other", "arguments": "{}"}}]}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-00000000-0000-4000-8000-000000000002", "model": "glm-5.3-flash", "choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "\"big decision\"}"}}]}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-00000000-0000-4000-8000-000000000002", "model": "glm-5.3-flash", "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}
+
+data: {"id": "chatcmpl-00000000-0000-4000-8000-000000000002", "model": "glm-5.3-flash", "choices": [], "usage": {"prompt_tokens": 200, "completion_tokens": 40, "prompt_tokens_details": {"cached_tokens": 128}}}
+
+data: [DONE]
+

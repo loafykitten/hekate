@@ -1,0 +1,87 @@
+.area {
+  position: fixed;
+  left: calc(var(--space-4) + var(--safe-left));
+  right: calc(var(--space-4) + var(--safe-right));
+  /* Clears the dock: handle + talk button + hint + safe area. */
+  bottom: calc(var(--keyboard-inset, 0px) + 160px + var(--safe-bottom));
+  z-index: var(--z-overlay);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  pointer-events: none;
+}
+
+.caption {
+  max-width: min(520px, 100%);
+  max-height: 5.6em;
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  background: rgba(18, 15, 28, 0.62);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  color: var(--fg);
+  font-size: var(--text-md);
+  line-height: 1.35;
+  text-align: center;
+  overflow-wrap: anywhere;
+  animation: rise 240ms var(--ease);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+  animation: rise 240ms var(--ease);
+}
+
+.dots {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  animation: dot 1.2s ease-in-out infinite;
+}
+
+.dots i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.dots i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}

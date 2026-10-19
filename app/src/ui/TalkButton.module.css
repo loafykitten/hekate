@@ -1,0 +1,123 @@
+.wrap {
+  --size: 76px;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: calc(var(--size) + 20px);
+  height: calc(var(--size) + 20px);
+}
+
+.button {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: var(--size);
+  height: var(--size);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: radial-gradient(circle at 35% 28%, #ffd27a, var(--accent) 55%, #d98a1c);
+  color: var(--accent-fg);
+  box-shadow:
+    0 10px 28px rgba(240, 168, 60, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    transform var(--duration) var(--ease),
+    background var(--duration) var(--ease),
+    box-shadow var(--duration) var(--ease);
+}
+
+.button:active {
+  transform: scale(0.95);
+}
+
+.ring,
+.halo {
+  position: absolute;
+  inset: 4px;
+  border-radius: var(--radius-pill);
+  pointer-events: none;
+  opacity: 0;
+}
+
+/* Listening: the ring swells with the voice. */
+.ring {
+  --level: 0;
+  border: 2px solid var(--accent);
+  box-shadow: 0 0 22px rgba(240, 168, 60, 0.45);
+  transform: scale(calc(1 + var(--level) * 0.28));
+  transition:
+    opacity var(--duration) var(--ease),
+    transform 90ms linear;
+}
+
+.wrap[data-phase="listening"] .ring {
+  opacity: calc(0.45 + var(--level) * 0.55);
+}
+
+.wrap[data-phase="listening"] .button {
+  background: radial-gradient(circle at 35% 28%, #fff0cf, #ffc14d 55%, var(--accent));
+  box-shadow:
+    0 10px 34px rgba(240, 168, 60, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+/* Transcribing and thinking: a slow arc circles the button. */
+.halo {
+  inset: 0;
+  border: 2px solid transparent;
+  border-top-color: var(--accent);
+  border-right-color: rgba(240, 168, 60, 0.35);
+}
+
+.wrap[data-phase="transcribing"] .halo,
+.wrap[data-phase="thinking"] .halo {
+  opacity: 1;
+  animation: spin 1.3s linear infinite;
+}
+
+.wrap[data-phase="transcribing"] .button,
+.wrap[data-phase="thinking"] .button {
+  background: radial-gradient(circle at 35% 28%, #e9c07a, #c98d2f 60%, #a97020);
+  box-shadow: 0 6px 20px rgba(240, 168, 60, 0.2);
+}
+
+/* Speaking: a calm breathing glow. */
+.wrap[data-phase="speaking"] .halo {
+  inset: 2px;
+  border: 2px solid rgba(240, 168, 60, 0.6);
+  opacity: 1;
+  animation: breathe 2.4s var(--ease) infinite;
+}
+
+.button[aria-disabled="true"] {
+  background: rgba(32, 26, 50, 0.88);
+  color: var(--fg-muted);
+  box-shadow: inset 0 0 0 1px var(--border);
+  cursor: not-allowed;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.35;
+  }
+  50% {
+    transform: scale(1.12);
+    opacity: 0.9;
+  }
+}

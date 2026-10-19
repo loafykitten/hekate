@@ -119,6 +119,10 @@ export class Character {
   speaking = false;
   private engaged = 0; // eases toward 1 while speaking, so the chin lift isn't a snap
   blinkEnabled = true;
+  // Face overlay from the conversation (laughs, sighs...): morph weights, plus how far to
+  // close the eyes. Blended on top of speech and blinks with max(), so it never fights them.
+  private expression: { weights: Record<string, number>; eyesClosed: number } = { weights: {}, eyesClosed: 0 };
+  private overlaid = new Set<string>();
   private loopAction?: THREE.AnimationAction; // idle or talk, whichever is the base right now
   // fadeOut: return fade length; the return starts that long before the clip ends.
   private gesture?: { action: THREE.AnimationAction; headDriven: boolean; fadeOut: number };
@@ -322,6 +326,30 @@ export class Character {
     for (const [mesh, i] of this.morphs.get(name) ?? []) mesh.morphTargetInfluences![i] = weight;
   }
 
+  setExpression(weights: Record<string, number>, eyesClosed = 0) {
+    this.expression = { weights, eyesClosed };
+  }
+
+  private morphWeight(name: string): number {
+    const target = this.morphs.get(name)?.[0];
+    return target ? (target[0].morphTargetInfluences?.[target[1]] ?? 0) : 0;
+  }
+
+  // Applies the expression overlay after the mouth and blink morphs were written this frame.
+  private applyExpression() {
+    const { weights, eyesClosed } = this.expression;
+    const overlay = new Map(Object.entries(weights));
+    if (eyesClosed > 0) for (const n of this.rig.blink) overlay.set(n, Math.max(overlay.get(n) ?? 0, eyesClosed));
+    // Morphs the mouth and blink code rewrites every frame keep that value as the floor; the
+    // others start from zero, so releasing an expression eases back to neutral.
+    const driven = new Set([...this.rig.mouth.map((w) => w.name), ...(this.blinkEnabled ? this.rig.blink : [])]);
+    for (const name of new Set([...overlay.keys(), ...this.overlaid])) {
+      const floor = driven.has(name) ? this.morphWeight(name) : 0;
+      this.setMorph(name, Math.max(floor, overlay.get(name) ?? 0));
+    }
+    this.overlaid = new Set(overlay.keys());
+  }
+
   private layer(name: string | undefined, rotations: [string, number][]) {
     const d = name ? this.driven.get(name) : undefined;
     if (!d) return;
@@ -381,6 +409,7 @@ export class Character {
       }
       for (const n of this.rig.blink) this.setMorph(n, t < this.blinkUntil ? 1 : 0);
     }
+    this.applyExpression();
   }
 
   headScreenAnchor(camera: THREE.Camera, out: THREE.Vector3): THREE.Vector3 {

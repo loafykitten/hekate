@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/loafykitten/hekate/service/internal/buildinfo"
+	"github.com/loafykitten/hekate/service/internal/proto"
 	"github.com/loafykitten/hekate/service/internal/voice"
 )
 
@@ -63,7 +64,7 @@ func New(o Options) *Server {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Server{
+	s := &Server{
 		log:       log,
 		db:        o.DB,
 		webDir:    o.WebDir,
@@ -76,6 +77,15 @@ func New(o Options) *Server {
 		pingEvery: cmp.Or(o.PingInterval, pingInterval),
 		pingWait:  cmp.Or(o.PingTimeout, pingTimeout),
 	}
+	// Speech-to-text may still be loading when clients connect (they get
+	// stt:false in ready); tell them when it's done.
+	if loading, ok := o.STT.(interface{ Done() <-chan struct{} }); ok && s.hub != nil {
+		go func() {
+			<-loading.Done()
+			s.hub.Broadcast(proto.NewCapabilities(s.capabilities()))
+		}()
+	}
+	return s
 }
 
 // Routes returns the fully wrapped handler.

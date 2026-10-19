@@ -607,3 +607,35 @@ func TestShutdownInterruptsTurn(t *testing.T) {
 		t.Errorf("second shutdown: %v", err)
 	}
 }
+
+// Clients often interrupt after generation has finished, while queued audio is
+// still playing. The saved reply must still be cut to what was heard.
+func TestInterruptAfterTurnEndsTrimsSavedReply(t *testing.T) {
+	e := newEnv(t, func(int, llmReq) (int, []string) {
+		return 200, say("First sentence is right here. Second sentence is also here. Third sentence ends it.")
+	}, envOpts{})
+	e.agent.Say("c", "i", "tell me a story")
+	e.hub.waitTurnEnd(t, 1)
+
+	e.agent.Interrupt(0)
+	ev := e.hub.waitTurnEnd(t, 2)
+	ends := ofType[proto.TurnEnd](ev)
+	if ends[0].Status != proto.StatusDone || ends[1].Status != proto.StatusInterrupted ||
+		ends[1].Text != "First sentence is right here." || ends[1].TurnID != ends[0].TurnID {
+		t.Fatalf("ends = %+v", ends)
+	}
+	msgs := e.messages()
+	if len(msgs) != 2 || msgs[1].Text != "First sentence is right here." {
+		t.Errorf("stored = %+v", msgs)
+	}
+	if n := e.count(`SELECT count(*) FROM turns WHERE status='interrupted'`); n != 1 {
+		t.Errorf("interrupted turns = %d", n)
+	}
+
+	// Hearing more than was kept, or interrupting again, changes nothing.
+	e.agent.Interrupt(2)
+	e.agent.Interrupt(0)
+	if got := len(ofType[proto.TurnEnd](e.hub.snapshot())); got != 2 {
+		t.Errorf("turn_end events = %d, want 2", got)
+	}
+}

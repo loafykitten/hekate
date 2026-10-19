@@ -316,7 +316,11 @@ func (r *turnRun) end(ctx context.Context, loopErr error) {
 		r.log.Warn("turn failed", "error", loopErr)
 	}
 
-	// Keep only what the user heard of an interrupted reply.
+	// Keep only what the user heard of an interrupted reply. Holding endMu until
+	// fin is set means a concurrent Interrupt either lands in heard first or
+	// sees fin and trims afterwards.
+	t.endMu.Lock()
+	defer t.endMu.Unlock()
 	keep := r.pipe.last()
 	if status == proto.StatusInterrupted {
 		if h := t.heard.Load(); h != heardUnset {
@@ -338,6 +342,7 @@ func (r *turnRun) end(ctx context.Context, loopErr error) {
 		a.hub.Broadcast(proto.NewError(errCode, errMsg, t.inputID))
 	}
 	a.hub.Broadcast(proto.NewTurnEnd(t.id, status, text, r.lastUsed, r.usage))
+	t.fin = &finished{rounds: r.rounds, segs: segs, kept: keep, model: r.lastUsed, usage: r.usage, at: time.Now()}
 	r.log.Info("turn end", "status", status, "segments", len(segs), "kept", keep+1,
 		"ms", time.Since(r.start).Milliseconds(), "first_segment_ms", r.firstSeg.Milliseconds(),
 		"in", r.usage.InputTokens, "out", r.usage.OutputTokens)

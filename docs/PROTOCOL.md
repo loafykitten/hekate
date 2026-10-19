@@ -18,6 +18,7 @@ client whose input started a turn (`origin` matches its `client_id`) plays the a
 | type | fields | meaning |
 |---|---|---|
 | `ready` | `client_id`, `conversation_id`, `capabilities: { stt, tts }`, `gestures: string[]` | Sent once on connect. `stt`/`tts` are false when unconfigured. |
+| `capabilities` | `capabilities: { stt, tts }` | What the service can do changed after connecting (e.g. speech-to-text finished loading). |
 | `transcript` | `id`, `text` | Push-to-talk result for input `id`. An empty `text` means nothing was heard, and no turn follows. |
 | `turn_start` | `turn_id`, `input_id`, `origin`, `user_text` | She's answering `user_text`. |
 | `activity` | `turn_id`, `tool`, `label`, `state: "start" \| "done" \| "error"` | A tool is running, e.g. label "Checking your calendar". |
@@ -57,7 +58,7 @@ from the audio's loudness.
 | `ptt_cancel` | `id` | Discard the audio. |
 | `interrupt` | `heard_seq` (last segment seq the user heard at least partly, or -1) | Stop the current turn. The server keeps segments up to `heard_seq` in history. |
 
-An `interrupt` with no turn running is ignored. New input while a turn is running interrupts that turn first (as if `interrupt` was sent with
+An `interrupt` that arrives after the turn already ended (the client was still playing queued audio) trims the saved reply to `heard_seq` and broadcasts a second `turn_end` with status `interrupted`, so every client stops playing that turn. With no recent turn it is ignored. New input while a turn is running interrupts that turn first (as if `interrupt` was sent with
 the last segment delivered to the origin client).
 
 ### Limits

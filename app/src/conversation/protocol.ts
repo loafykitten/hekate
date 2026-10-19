@@ -87,7 +87,22 @@ export interface ServerError {
   input_id?: string;
 }
 
-export type ServerMessage = Ready | Transcript | TurnStart | Activity | Segment | Card | TurnEnd | ServerError;
+// What the service can do changed after connecting (e.g. speech-to-text finished loading).
+export interface CapabilitiesChanged {
+  type: "capabilities";
+  capabilities: Capabilities;
+}
+
+export type ServerMessage =
+  | Ready
+  | CapabilitiesChanged
+  | Transcript
+  | TurnStart
+  | Activity
+  | Segment
+  | Card
+  | TurnEnd
+  | ServerError;
 export type ServerMessageType = ServerMessage["type"];
 
 export type ClientMessage =
@@ -109,6 +124,7 @@ export interface HistoryMessage {
 
 const SERVER_TYPES: ReadonlySet<string> = new Set<ServerMessageType>([
   "ready",
+  "capabilities",
   "transcript",
   "turn_start",
   "activity",

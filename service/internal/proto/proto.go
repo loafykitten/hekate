@@ -11,14 +11,15 @@ import (
 
 // Message types.
 const (
-	TypeReady      = "ready"
-	TypeTranscript = "transcript"
-	TypeTurnStart  = "turn_start"
-	TypeActivity   = "activity"
-	TypeSegment    = "segment"
-	TypeCard       = "card"
-	TypeTurnEnd    = "turn_end"
-	TypeError      = "error"
+	TypeReady        = "ready"
+	TypeCapabilities = "capabilities"
+	TypeTranscript   = "transcript"
+	TypeTurnStart    = "turn_start"
+	TypeActivity     = "activity"
+	TypeSegment      = "segment"
+	TypeCard         = "card"
+	TypeTurnEnd      = "turn_end"
+	TypeError        = "error"
 )
 
 // Error codes the service sends.
@@ -53,6 +54,18 @@ type Ready struct {
 	ConversationID string       `json:"conversation_id"`
 	Capabilities   Capabilities `json:"capabilities"`
 	Gestures       []string     `json:"gestures"`
+}
+
+// CapabilitiesChanged tells clients that what the service can do changed after
+// they connected, e.g. speech-to-text finished loading.
+type CapabilitiesChanged struct {
+	Type         string       `json:"type"`
+	Capabilities Capabilities `json:"capabilities"`
+}
+
+// NewCapabilities builds a capabilities message.
+func NewCapabilities(c Capabilities) CapabilitiesChanged {
+	return CapabilitiesChanged{TypeCapabilities, c}
 }
 
 // NewReady builds a ready message; a nil gesture list is sent as [].

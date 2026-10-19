@@ -179,3 +179,22 @@ describe("SegmentPlayer", () => {
     expect(gestures).toEqual([]);
   });
 });
+
+describe("SegmentPlayer.stopTurn", () => {
+  it("stops a turn that's still playing after it ended, and ignores other turns", async () => {
+    const t = setup();
+    t.player.enqueue(segment({ seq: 0, audio_b64: audio(2), audio_format: "mp3" }));
+    t.player.enqueue(segment({ seq: 1, audio_b64: audio(2), audio_format: "mp3" }));
+    await vi.runOnlyPendingTimersAsync();
+    t.player.finishTurn("t1"); // generation is over, audio is still queued
+    t.advance(0.5);
+    expect(t.player.busy).toBe(true);
+
+    t.player.stopTurn("t2");
+    expect(t.speech.stopped).toBe(0);
+
+    t.player.stopTurn("t1");
+    expect(t.speech.stopped).toBe(1);
+    expect(t.player.busy).toBe(false);
+  });
+});

@@ -114,6 +114,11 @@ export class SegmentPlayer {
     if (!this.busy) this.startLinger();
   }
 
+  // Another device interrupted this turn: stop if it's what she's still saying.
+  stopTurn(turnId: string) {
+    if (turnId === this.turnId && (this.busy || !this.turnOver)) this.stop();
+  }
+
   // Silence her now (the user interrupted, or the connection dropped).
   stop() {
     this.epoch++;

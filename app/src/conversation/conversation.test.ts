@@ -255,3 +255,12 @@ describe("Conversation: connection", () => {
     expect(t.state().historyEpoch).toBeGreaterThan(epoch);
   });
 });
+
+describe("Conversation: capabilities", () => {
+  it("enables voice input when the service reports speech-to-text became ready", () => {
+    const t = setup({ ready: { ...READY, capabilities: { stt: false, tts: true } } });
+    expect(t.state().capabilities.stt).toBe(false);
+    t.socket.receive({ type: "capabilities", capabilities: { stt: true, tts: true } });
+    expect(t.state().capabilities).toEqual({ stt: true, tts: true });
+  });
+});

@@ -130,6 +130,37 @@ func (s *Store) AddMessages(ctx context.Context, msgs []Message) error {
 		return fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := insertMessages(ctx, tx, msgs); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+// ReplaceTurnReply swaps a turn's stored assistant and tool messages for msgs,
+// in one transaction. The user's message is kept.
+func (s *Store) ReplaceTurnReply(ctx context.Context, turnID string, msgs []Message) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM messages WHERE turn_id = ? AND role IN (?, ?)`, turnID, RoleAssistant, RoleTool); err != nil {
+		return fmt.Errorf("delete reply: %w", err)
+	}
+	if err := insertMessages(ctx, tx, msgs); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+func insertMessages(ctx context.Context, tx *sql.Tx, msgs []Message) error {
 	for _, m := range msgs {
 		created := m.CreatedAt
 		if created.IsZero() {
@@ -141,9 +172,6 @@ func (s *Store) AddMessages(ctx context.Context, msgs []Message) error {
 			m.ConversationID, m.TurnID, m.Role, m.Text, m.Content, m.ToolCalls, m.ToolCallID, m.Model, ts(created)); err != nil {
 			return fmt.Errorf("insert message: %w", err)
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit: %w", err)
 	}
 	return nil
 }

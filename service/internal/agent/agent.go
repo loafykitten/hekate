@@ -99,7 +99,28 @@ type turn struct {
 	lastSeq atomic.Int64 // newest segment delivered; -1 before the first
 	heard   atomic.Int64 // set by interrupt; heardUnset until then
 	pipe    atomic.Pointer[pipeline]
+
+	// endMu orders an interrupt against the end of the turn: either the turn
+	// sees the heard seq when it saves, or the interrupt sees fin and trims
+	// the saved reply itself. Clients often interrupt after generation has
+	// finished, while queued audio is still playing.
+	endMu sync.Mutex
+	fin   *finished
 }
+
+// finished is what a completed turn saved, kept so a late interrupt can trim it.
+type finished struct {
+	rounds []*roundRec
+	segs   []segRecord
+	kept   int // last seq stored
+	model  string
+	usage  proto.TurnUsage
+	at     time.Time
+}
+
+// lateInterruptWindow bounds how long after a turn ends an interrupt can still
+// trim it; past that, playback has long finished.
+const lateInterruptWindow = 10 * time.Minute
 
 const heardUnset = -2
 
@@ -226,14 +247,45 @@ func (a *Agent) Say(origin, inputID, text string) {
 	go a.runTurn(t, prev)
 }
 
-// Interrupt stops the running turn. heardSeq is the last segment the user
-// heard at least partly, or -1.
+// Interrupt stops the current turn. heardSeq is the last segment the user
+// heard at least partly, or -1. If generation already finished and the client
+// was still playing queued audio, the saved reply is trimmed to what was heard.
 func (a *Agent) Interrupt(heardSeq int) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.cur != nil {
-		a.cur.interrupt(heardSeq)
+	t := a.cur
+	a.mu.Unlock()
+	if t == nil {
+		return
 	}
+	t.endMu.Lock()
+	defer t.endMu.Unlock()
+	if t.fin == nil {
+		t.interrupt(heardSeq)
+		return
+	}
+	if heardSeq >= t.fin.kept || time.Since(t.fin.at) > lateInterruptWindow {
+		return
+	}
+	a.trimFinished(t, heardSeq)
+}
+
+// trimFinished rewrites a completed turn's saved reply to end at seq heard and
+// tells clients it was interrupted. Called with t.endMu held.
+func (a *Agent) trimFinished(t *turn, heard int) {
+	f := t.fin
+	msgs, text := collectMessages(t.id, f.rounds, f.segs, heard)
+	ctx, cancel := a.dbCtx()
+	defer cancel()
+	if err := a.store.ReplaceTurnReply(ctx, t.id, msgs); err != nil {
+		a.log.Error("cannot trim interrupted reply", "turn_id", t.id, "error", err)
+		return
+	}
+	if err := a.store.EndTurn(ctx, t.id, proto.StatusInterrupted, f.model, ""); err != nil {
+		a.log.Error("cannot mark turn interrupted", "turn_id", t.id, "error", err)
+	}
+	f.kept = heard
+	a.hub.Broadcast(proto.NewTurnEnd(t.id, proto.StatusInterrupted, text, f.model, f.usage))
+	a.log.Info("trimmed finished turn", "turn_id", t.id, "kept", heard+1)
 }
 
 // Messages returns visible history, newest last. before is a message id (0 for

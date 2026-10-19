@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -650,5 +651,38 @@ func TestPingsKeepLiveClientsAndDropDeadOnes(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	if hub.Clients() != 1 {
 		t.Errorf("clients = %d, the live one must survive", hub.Clients())
+	}
+}
+
+// loadingSTT becomes ready later, like the real model downloading in the background.
+type loadingSTT struct {
+	fakeSTT
+	ready atomic.Bool
+	done  chan struct{}
+}
+
+func (l *loadingSTT) Ready() bool           { return l.ready.Load() }
+func (l *loadingSTT) Done() <-chan struct{} { return l.done }
+func (l *loadingSTT) finish()               { l.ready.Store(true); close(l.done) }
+func (l *loadingSTT) Transcribe(ctx context.Context, pcm []int16, rate int) (string, error) {
+	return l.fakeSTT.Transcribe(ctx, pcm, rate)
+}
+
+// A client that connected while speech-to-text was loading learns when it's ready.
+func TestCapabilitiesAnnouncedWhenSTTBecomesReady(t *testing.T) {
+	stt := &loadingSTT{done: make(chan struct{})}
+	env := newWSServer(t, newFakeConv(), stt, true)
+	c := env.dial(t)
+	ready := readMsg(t, c)
+	if caps := ready["capabilities"].(map[string]any); caps["stt"] != false || caps["tts"] != true {
+		t.Fatalf("ready capabilities = %v", caps)
+	}
+	stt.finish()
+	m := readMsg(t, c)
+	if m["type"] != "capabilities" {
+		t.Fatalf("got %v, want capabilities", m)
+	}
+	if caps := m["capabilities"].(map[string]any); caps["stt"] != true || caps["tts"] != true {
+		t.Errorf("capabilities = %v", caps)
 	}
 }

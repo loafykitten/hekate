@@ -4,7 +4,7 @@ import { ConversationClient, type ConnectionStatus } from "./client";
 import type { LiveEntry } from "./log";
 import { MicCapture, MicError, classifyMicError, setAudioSession } from "./mic";
 import { SegmentPlayer } from "./player";
-import { MAX_TEXT_LENGTH, type Capabilities, type Segment } from "./protocol";
+import { MAX_TEXT_LENGTH, type Capabilities, type Segment, type TurnEnd } from "./protocol";
 
 // The conversation as the UI sees it: owns the socket, the segment player and the microphone,
 // and turns their events into one immutable state snapshot (for useSyncExternalStore). Framework
@@ -116,7 +116,8 @@ export class Conversation {
       c.on("turn_start", (m) => this.onTurnStart(m.turn_id, m.origin, m.user_text)),
       c.on("activity", (m) => this.onActivity(m.tool, m.label, m.state)),
       c.on("segment", (m) => this.onSegment(m)),
-      c.on("turn_end", (m) => this.onTurnEnd(m.turn_id, m.text)),
+      c.on("capabilities", (m) => this.onCapabilities(m.capabilities)),
+      c.on("turn_end", (m) => this.onTurnEnd(m.turn_id, m.text, m.status)),
       c.on("error", (m) => this.onError(m.code, m.message, m.input_id)),
     ];
     c.connect();
@@ -384,7 +385,15 @@ export class Conversation {
     this.emit();
   }
 
-  private onTurnEnd(turnId: string, text: string) {
+  private onCapabilities(capabilities: Capabilities) {
+    this.capabilities = capabilities;
+    this.emit();
+  }
+
+  private onTurnEnd(turnId: string, text: string, status: TurnEnd["status"]) {
+    // Interrupted from any device (possibly after generation finished, while audio was queued
+    // here): stop saying it.
+    if (status === "interrupted") this.player?.stopTurn(turnId);
     this.running.clear();
     this.historyEpoch++;
     const endEpoch = this.historyEpoch;

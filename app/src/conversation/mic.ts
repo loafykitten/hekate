@@ -68,6 +68,20 @@ export function setAudioSession(type: "playback" | "play-and-record") {
 
 const FLUSH_TIMEOUT_MS = 150;
 
+export interface MicOptions {
+  // How long the microphone stays open after a recording, so the next press starts at once.
+  // 0 closes it after every recording. Either way only audio between a press and its end is
+  // ever recorded: the worklet drops everything else.
+  keepOpenMs?: number;
+}
+
+// Desktop browsers keep the mic open between recordings. Phones close it each time: with the
+// mic open they route audio as a call, which makes her voice quieter.
+export function defaultMicOptions(): MicOptions {
+  const desktop = typeof window !== "undefined" && window.matchMedia?.("(hover: hover) and (pointer: fine)").matches;
+  return { keepOpenMs: desktop ? 5 * 60_000 : 0 };
+}
+
 export class MicCapture {
   private ctx?: AudioContext;
   private loaded?: Promise<void>;
@@ -76,11 +90,29 @@ export class MicCapture {
   private mute?: GainNode;
   private source?: MediaStreamAudioSourceNode;
   private generation = 0;
-  private flushed?: () => void;
+  // The recording whose audio is forwarded: set when one starts, kept while its last chunks
+  // drain after stop(), cleared once they have. Chunks from any other recording are dropped.
+  private recordingId = 0;
+  private forwarding?: number;
+  private flushed?: (id: number) => void;
   private smoothed = 0;
   private _active = false;
+  private idleTimer?: ReturnType<typeof setTimeout>;
+  private readonly keepOpenMs: number;
 
-  constructor(private readonly onChunk: (chunk: ArrayBuffer) => void) {}
+  constructor(
+    private readonly onChunk: (chunk: ArrayBuffer) => void,
+    options: MicOptions = {},
+  ) {
+    this.keepOpenMs = options.keepOpenMs ?? 0;
+    if (this.keepOpenMs > 0 && typeof document !== "undefined") {
+      // Close an idle open mic as soon as the app goes to the background.
+      document.addEventListener("visibilitychange", () => {
+        // A recording still draining its last chunks closes once it's done (see stop()).
+        if (document.visibilityState === "hidden" && !this._active && this.forwarding === undefined) this.close();
+      });
+    }
+  }
 
   get active(): boolean {
     return this._active;
@@ -109,7 +141,10 @@ export class MicCapture {
 
   // Resolves true once chunks are flowing, false if stop() was called first. Throws MicError.
   async start(): Promise<boolean> {
-    if (this._active || this.stream) throw new MicError("busy", "Already capturing.");
+    if (this._active) throw new MicError("busy", "Already capturing.");
+    clearTimeout(this.idleTimer);
+    if (this.isOpen()) return this.record(++this.generation);
+    if (this.stream) throw new MicError("busy", "Already capturing.");
     const devices = navigator.mediaDevices;
     if (!devices?.getUserMedia) {
       const kind = window.isSecureContext ? "unsupported" : "insecure";
@@ -122,9 +157,13 @@ export class MicCapture {
       const ctx = (this.ctx ??= new AudioContext({ latencyHint: "interactive" }));
       const resumed = ctx.resume();
       setAudioSession("play-and-record");
+      const began = performance.now();
       stream = await openMic(devices);
+      console.info(`microphone: opened in ${Math.round(performance.now() - began)} ms`);
       if (generation !== this.generation) return this.dropStale(stream); // released before the stream arrived
       this.stream = stream;
+      // A device that goes away (unplugged headset) closes the mic; the next press reopens it.
+      stream.getTracks().forEach((t) => t.addEventListener("ended", () => !this._active && this.close()));
       await resumed.catch(() => {});
       await ctx.resume(); // iOS can leave the context "interrupted" after the permission prompt
       this.loaded ??= ctx.audioWorklet.addModule(workletUrl);
@@ -137,11 +176,13 @@ export class MicCapture {
         numberOfOutputs: 1,
         outputChannelCount: [1],
       });
-      node.port.onmessage = (e: MessageEvent) => {
-        if (e.data === "flushed") return this.flushed?.();
-        const chunk = e.data as ArrayBuffer;
-        this.smoothed = Math.max(pcmLevel(new Int16Array(chunk)), this.smoothed * 0.7);
-        this.onChunk(chunk);
+      node.port.onmessage = (e: MessageEvent<{ id?: number; pcm?: ArrayBuffer; flushed?: number }>) => {
+        const { id, pcm, flushed } = e.data;
+        if (flushed !== undefined) return this.flushed?.(flushed);
+        // Only the current recording's audio, never a cancelled one's or anything in between.
+        if (!pcm || id === undefined || id !== this.forwarding) return;
+        this.smoothed = Math.max(pcmLevel(new Int16Array(pcm)), this.smoothed * 0.7);
+        this.onChunk(pcm);
       };
       // Some browsers only run worklets that are connected to the destination; keep it silent.
       const mute = ctx.createGain();
@@ -151,9 +192,7 @@ export class MicCapture {
       this.node = node;
       this.mute = mute;
       this.source = source;
-      this.smoothed = 0;
-      this._active = true;
-      return true;
+      return this.record(generation);
     } catch (e) {
       if (generation !== this.generation) {
         this.dropStale(stream);
@@ -166,28 +205,73 @@ export class MicCapture {
     }
   }
 
-  // Stops the tracks right away (the browser's mic indicator goes off), then waits for the
-  // last partial chunk so the end of the sentence isn't clipped.
+  // Ends the recording and waits for the last partial chunk so the end of the sentence isn't
+  // clipped. The mic then closes, or stays open (not recording) for keepOpenMs.
   async stop(): Promise<void> {
     this.generation++;
     const node = this.node;
     const wasActive = this._active;
+    const ending = this.forwarding;
     this._active = false;
-    this.stream?.getTracks().forEach((t) => t.stop());
-    if (node && wasActive) {
+    const keepOpen = this.keepOpenMs > 0 && wasActive && this.isOpen();
+    if (!keepOpen) this.stream?.getTracks().forEach((t) => t.stop()); // the mic indicator goes off now
+    if (node && wasActive && ending !== undefined) {
+      // The ending recording keeps forwarding until the worklet says its last chunk is out.
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, FLUSH_TIMEOUT_MS);
-        this.flushed = () => {
+        this.flushed = (id) => {
+          if (id !== ending) return;
           clearTimeout(timer);
           resolve();
         };
-        node.port.postMessage("flush");
+        node.port.postMessage({ flush: ending });
       });
     }
+    if (this.forwarding === ending) this.forwarding = undefined;
     this.flushed = undefined;
+    const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
+    if (keepOpen && this.isOpen() && !hidden) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = setTimeout(() => this.close(), this.keepOpenMs);
+      return;
+    }
+    this.close();
+  }
+
+  // Closes the microphone (and the indicator) unless a recording is running.
+  close() {
+    if (this._active) return;
+    clearTimeout(this.idleTimer);
+    this.generation++;
+    this.forwarding = undefined;
     this.release();
     setAudioSession("playback");
     void this.ctx?.suspend().catch(() => {});
+  }
+
+  private isOpen(): boolean {
+    return !!this.node && !!this.stream?.getTracks().some((t) => t.readyState === "live");
+  }
+
+  // Starts recording on an open mic.
+  private async record(generation: number): Promise<boolean> {
+    const ctx = this.ctx;
+    const node = this.node;
+    if (!ctx || !node) return false;
+    // Switch recordings before anything awaits: from here on a previous (perhaps cancelled)
+    // recording's late chunks are dropped.
+    const id = ++this.recordingId;
+    this.forwarding = id;
+    setAudioSession("play-and-record");
+    await ctx.resume().catch(() => {});
+    if (generation !== this.generation) {
+      if (this.forwarding === id) this.forwarding = undefined;
+      return false; // stopped while resuming
+    }
+    this.smoothed = 0;
+    this._active = true;
+    node.port.postMessage({ start: id });
+    return true;
   }
 
   // Cleans up a superseded start: only its own stream, never the current capture's resources.

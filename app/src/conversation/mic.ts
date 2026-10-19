@@ -110,7 +110,14 @@ export class MicCapture {
   private smoothed = 0;
   private _active = false;
   // An open in progress (from a press or from warming up), which a press waits for.
-  private opening?: Promise<void>;
+  private openingTask?: { generation: number; done: Promise<void> };
+  // The open still in progress, if it hasn't been cancelled (stop and close move the generation
+  // on, so a cancelled one is never waited for).
+  private get opening(): Promise<void> | undefined {
+    const task = this.openingTask;
+    return task && task.generation === this.generation ? task.done : undefined;
+  }
+
   // Set when the user turned down the prompt that warming up raised: no more prompts until a
   // press opens the mic.
   private warmRefused = false;
@@ -178,9 +185,10 @@ export class MicCapture {
         if (generation === this.generation) this.release();
       },
     );
-    this.opening = opening;
+    const task = { generation, done: opening };
+    this.openingTask = task;
     await opening;
-    if (this.opening === opening) this.opening = undefined;
+    if (this.openingTask === task) this.openingTask = undefined;
   }
 
   // Resolves true once chunks are flowing, false if stop() was called first. Throws MicError.
@@ -188,9 +196,10 @@ export class MicCapture {
     if (this._active) throw new MicError("busy", "Already capturing.");
     // Resume inside the gesture, before anything awaits (iOS needs it there).
     void this.ctx?.resume().catch(() => {});
-    if (this.opening) {
+    const pending = this.opening;
+    if (pending) {
       const generation = this.generation;
-      await this.opening; // warming up already: wait for it rather than open twice
+      await pending; // warming up already: wait for it rather than open twice
       if (generation !== this.generation && !this.isOpen()) return false;
     }
     if (this.isOpen()) return this.record(++this.generation);
@@ -208,7 +217,8 @@ export class MicCapture {
       () => {},
       () => {},
     );
-    this.opening = opening;
+    const task = { generation, done: opening };
+    this.openingTask = task;
     try {
       if (!(await opened)) return false;
       return await this.record(generation);
@@ -219,7 +229,7 @@ export class MicCapture {
       console.warn("microphone: capture failed", e);
       throw classifyMicError(e);
     } finally {
-      if (this.opening === opening) this.opening = undefined;
+      if (this.openingTask === task) this.openingTask = undefined;
     }
   }
 

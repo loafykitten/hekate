@@ -169,6 +169,9 @@ export class Stage {
   }
 
   private async start(): Promise<Character> {
+    // load() can be called after dispose() (React StrictMode cleans up the first effect before a
+    // deferred load runs); never start a frame loop on a disposed stage.
+    this.assertAlive();
     this.raf = requestAnimationFrame(this.loop);
     const source = await loadCharacterSource(this.search);
     this.assertAlive();
@@ -212,6 +215,7 @@ export class Stage {
   };
 
   private loop = (time: number) => {
+    if (this.disposed) return;
     this.timer.update(time);
     const dt = Math.min(this.timer.getDelta(), 0.1);
     const character = this._character;

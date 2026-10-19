@@ -7,7 +7,7 @@ state=state
 
 # Shares the deployer's lock: waits for a deploy in progress, then holds the lock until exit.
 with_lock() {
-  exec 9>"$state/deploy.lock"
+  exec 9>>"$state/deploy.lock"
   flock -n 9 || { echo "A deploy is in progress; waiting for it to finish…"; flock 9; }
 }
 case "${1:-status}" in

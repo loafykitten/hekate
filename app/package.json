@@ -12,7 +12,8 @@
     "verify:screens": "node scripts/verify/screenshots.mjs",
     "verify:clips": "node scripts/verify/clip-flow.mjs",
     "verify:blend": "node scripts/verify/blend-stress.mjs",
-    "verify:strip": "node scripts/verify/transition-strip.mjs"
+    "verify:strip": "node scripts/verify/transition-strip.mjs",
+    "verify:loop": "node scripts/verify/frame-loop.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.104.4",

@@ -51,7 +51,9 @@ healthy() { # expected commit (may be empty)
 # The whole deploy runs under $STATE_DIR/deploy.lock, which hekatectl also takes for rollback
 # and pause, so a manual rollback can never interleave with an automatic deploy.
 deploy_once() {
-  exec 9>"$STATE_DIR/deploy.lock"
+  exec 9>>"$STATE_DIR/deploy.lock"
+  # This container runs as root; keep the lock writable for the operator running hekatectl.
+  chmod 0666 "$STATE_DIR/deploy.lock" 2>/dev/null || true
   flock 9
   deploy_locked
   flock -u 9

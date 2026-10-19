@@ -62,6 +62,7 @@ WebGL via `playwright-core`; no browser download):
 | `npm run verify:clips` | idle → gesture → idle → talk → idle; all animation tracks bind |
 | `npm run verify:blend` | crossfade edge cases: weights sum to 1, no outgoing weight rebounds, no pops |
 | `npm run verify:strip -- <out.png> <gesture\|talk>` | contact sheet of frames through a transition |
+| `npm run verify:loop` | exactly one render loop after load (StrictMode remount regression) |
 
 Write screenshot output outside the repo or into `app/verify-out/` (git-ignored). They contain
 the character.

@@ -298,7 +298,7 @@ func (a *Agent) Messages(ctx context.Context, before int64, limit int) ([]proto.
 	out := make([]proto.HistoryMessage, len(msgs))
 	for i, m := range msgs {
 		out[i] = proto.HistoryMessage{
-			ID: strconv.FormatInt(m.ID, 10), Role: m.Role, Text: m.Text,
+			ID: strconv.FormatInt(m.ID, 10), Role: m.Role, Text: m.Text, TurnID: m.TurnID,
 			CreatedAt: m.CreatedAt.UTC().Format(time.RFC3339),
 		}
 	}

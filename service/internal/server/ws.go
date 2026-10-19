@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -94,15 +93,12 @@ type session struct {
 
 	// push-to-talk state, touched only by the read loop
 	pttID    string
+	pttGen   uint64 // input number of this push-to-talk, see Server.inputs
 	pcm      []int16
 	carry    byte // odd byte left over from the previous frame
 	hasCarry bool
 
 	wg sync.WaitGroup // transcriptions in flight
-
-	// inputs counts new inputs (typed or push-to-talk). A transcription that
-	// finishes after a newer input was sent is stale and must not start a turn.
-	inputs atomic.Uint64
 }
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
@@ -261,8 +257,7 @@ func (ss *session) onSay(m proto.ClientMessage) {
 		ss.sendTo(proto.NewError(proto.CodeTooLong, "That's too long for me to take in at once.", m.ID))
 		return
 	}
-	ss.inputs.Add(1)
-	ss.s.conv.Say(ss.id, m.ID, text)
+	ss.s.say(ss.id, m.ID, text)
 }
 
 func (ss *session) onPTTStart(m proto.ClientMessage) {
@@ -271,12 +266,12 @@ func (ss *session) onPTTStart(m proto.ClientMessage) {
 		return
 	}
 	ss.resetPTT()
-	ss.inputs.Add(1)
+	gen := ss.s.newInput()
 	if !ss.sttReady() {
 		ss.sendTo(proto.NewError(proto.CodeSTTUnavailable, "I can't hear you yet: speech recognition isn't ready.", m.ID))
 		return
 	}
-	ss.pttID = m.ID
+	ss.pttID, ss.pttGen = m.ID, gen
 }
 
 func (ss *session) sttReady() bool { return ss.s.stt != nil && ss.s.stt.Ready() }
@@ -309,7 +304,7 @@ func (ss *session) onPTTEnd(m proto.ClientMessage) {
 	}
 	id, pcm := ss.pttID, ss.pcm
 	ss.resetPTT()
-	gen := ss.inputs.Load()
+	gen := ss.pttGen
 	ss.wg.Add(1)
 	go func() {
 		defer ss.wg.Done()
@@ -344,13 +339,8 @@ func (ss *session) transcribe(id string, pcm []int16, gen uint64) {
 		return
 	}
 	text = strings.TrimSpace(text)
-	if ss.inputs.Load() != gen {
+	if !ss.s.sayIfCurrent(gen, func() { ss.sendTo(proto.NewTranscript(id, text)) }, ss.id, id, text) {
 		ss.s.log.Info("dropping a transcription superseded by newer input", "client_id", ss.id)
-		return
-	}
-	ss.sendTo(proto.NewTranscript(id, text))
-	if text != "" {
-		ss.s.conv.Say(ss.id, id, text)
 	}
 }
 

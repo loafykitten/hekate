@@ -119,6 +119,7 @@ export interface HistoryMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
+  turn_id?: string;
   created_at: string;
 }
 

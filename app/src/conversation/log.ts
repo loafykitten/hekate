@@ -24,8 +24,12 @@ export interface LogEntry {
 // that history (the server's copy is authoritative), so it is dropped rather than shown twice.
 export function mergeLog(history: readonly HistoryMessage[], live: readonly LiveEntry[], loadedEpoch = -1): LogEntry[] {
   const entries: LogEntry[] = history.map((m) => ({ id: m.id, role: m.role, text: m.text, pending: false }));
+  // The user's message is saved when a turn starts, so history can already hold it while the
+  // reply is still running.
+  const saved = new Set(history.flatMap((m) => (m.turn_id ? [`${m.role}:${m.turn_id}`] : [])));
   for (const e of live) {
     if (e.endEpoch !== undefined && e.endEpoch <= loadedEpoch) continue;
+    if (saved.has(`${e.role}:${e.turnId}`)) continue;
     if (e.done && !e.text.trim()) continue;
     entries.push({ id: e.id, role: e.role, text: e.text, pending: !e.done });
   }

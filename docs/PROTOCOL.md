@@ -74,7 +74,7 @@ All under `/api/`, JSON, errors as `{ "error": "message" }` with a 4xx/5xx statu
 
 | Method & path | Returns |
 |---|---|
-| `GET /api/conversation/messages?before=<message id>&limit=<n ≤ 100>` | `{ messages: [{ id, role: "user" \| "assistant", text, created_at }] }`, newest last |
+| `GET /api/conversation/messages?before=<message id>&limit=<n ≤ 100>` | `{ messages: [{ id, role: "user" \| "assistant", text, turn_id, created_at }] }`, newest last |
 
 Later milestones add tasks, reminders, calendar, mail, memory, approvals, activity, usage and
 settings, and document them here.

@@ -725,3 +725,30 @@ func TestStaleTranscriptionIsDropped(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 }
+
+// Inputs are ordered across devices: a phone's late transcript must not start a
+// turn after the desktop typed something newer.
+func TestStaleTranscriptionFromAnotherDeviceIsDropped(t *testing.T) {
+	stt := &blockingSTT{started: make(chan struct{}, 1), release: make(chan struct{})}
+	conv := newFakeConv()
+	env := newWSServer(t, conv, stt, false)
+	phone, desktop := env.dial(t), env.dial(t)
+	readMsg(t, phone)
+	readMsg(t, desktop)
+
+	send(t, phone, map[string]any{"type": "ptt_start", "id": "p", "sample_rate": 16000})
+	writeBin(t, phone, pcmBytes(make([]int16, 8000)...))
+	send(t, phone, map[string]any{"type": "ptt_end", "id": "p"})
+	<-stt.started
+	send(t, desktop, map[string]any{"type": "say", "id": "s", "text": "typed on the desktop"})
+	if got := <-conv.sayCh; got.text != "typed on the desktop" {
+		t.Fatalf("said = %+v", got)
+	}
+	close(stt.release)
+
+	select {
+	case got := <-conv.sayCh:
+		t.Fatalf("stale transcription started a turn: %+v", got)
+	case <-time.After(200 * time.Millisecond):
+	}
+}

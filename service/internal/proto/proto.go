@@ -194,6 +194,7 @@ type HistoryMessage struct {
 	ID        string `json:"id"`
 	Role      string `json:"role"`
 	Text      string `json:"text"`
+	TurnID    string `json:"turn_id"`
 	CreatedAt string `json:"created_at"`
 }
 

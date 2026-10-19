@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/loafykitten/hekate/service/internal/buildinfo"
@@ -55,6 +56,45 @@ type Server struct {
 	tts       bool
 	pingEvery time.Duration
 	pingWait  time.Duration
+
+	// inputs counts new inputs (typed or push-to-talk) across every connection,
+	// since all of them talk to the same conversation. A transcription that
+	// finishes after newer input from any device is stale. inputMu also makes
+	// "is it still current?" and starting the turn one step.
+	inputMu sync.Mutex
+	inputs  uint64
+}
+
+// newInput records that an input arrived and returns its number.
+func (s *Server) newInput() uint64 {
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	s.inputs++
+	return s.inputs
+}
+
+// sayIfCurrent starts a turn only if no newer input arrived since gen, and
+// reports whether it did. before runs first under the same lock (to send the
+// transcript ahead of the turn).
+func (s *Server) sayIfCurrent(gen uint64, before func(), origin, id, text string) bool {
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	if s.inputs != gen {
+		return false
+	}
+	before()
+	if text != "" {
+		s.conv.Say(origin, id, text)
+	}
+	return true
+}
+
+// say records a typed input and starts its turn.
+func (s *Server) say(origin, id, text string) {
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	s.inputs++
+	s.conv.Say(origin, id, text)
 }
 
 // New creates a Server. Directories are opened lazily per request through

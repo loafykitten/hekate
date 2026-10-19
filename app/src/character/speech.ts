@@ -37,6 +37,7 @@ export interface Enqueued {
 export class Speech {
   private ctx = new AudioContext();
   private queue: Scheduled[] = [];
+  private ran = false; // the context has run at least once; see now()
 
   // Browsers start audio suspended until a user gesture; call this from one, before any await.
   async unlock(): Promise<boolean> {
@@ -100,10 +101,14 @@ export class Speech {
     void this.ctx.close().catch(() => {});
   }
 
-  // The context's clock, for scheduling. Falls back to the wall clock while the context is
-  // suspended (nothing can be heard then, but text and gestures still need to run on time).
+  // The clock everything is scheduled on. Once the context has ever run, this is always its
+  // currentTime: if the context is suspended later (a call, the app backgrounded), the clock
+  // freezes with the audio, so text and gestures pause with what's heard instead of jumping
+  // to a clock with a different origin. Before audio was ever unlocked there is nothing to
+  // hear, and the wall clock drives text-only replies.
   now(): number {
-    return this.running ? this.ctx.currentTime : performance.now() / 1000;
+    if (this.running) this.ran = true;
+    return this.ran ? this.ctx.currentTime : performance.now() / 1000;
   }
 
   // What the listener is hearing now, on the same clock as Enqueued.start/end. The source node

@@ -23,4 +23,13 @@ describe("mergeLog", () => {
   it("omits a finished turn that said nothing", () => {
     expect(mergeLog([], [live("t1", "assistant", "", true)])).toEqual([]);
   });
+
+  it("doesn't repeat the user's message that history already has while the reply is running", () => {
+    const history = [{ id: "1", role: "user" as const, text: "hello", turn_id: "t1", created_at: "x" }];
+    const live = [
+      { id: "u:t1", turnId: "t1", role: "user" as const, text: "hello", done: true },
+      { id: "a:t1", turnId: "t1", role: "assistant" as const, text: "Hi th", done: false },
+    ];
+    expect(mergeLog(history, live).map((e) => `${e.role}:${e.text}`)).toEqual(["user:hello", "assistant:Hi th"]);
+  });
 });

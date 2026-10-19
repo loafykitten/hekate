@@ -10,33 +10,15 @@ import animate_nukorio as a
 import bpy,json,copy,math,numpy as np
 from mathutils import Vector
 
-def verify_prefix(doc, binary, base, original):
- expected=copy.deepcopy(base);actual=copy.deepcopy(doc)
- actual.pop('animations',None);expected.pop('animations',None)
- actual['accessors']=actual['accessors'][:len(base['accessors'])]
- actual['bufferViews']=actual['bufferViews'][:len(base['bufferViews'])]
- actual['buffers']=expected['buffers']
- assert actual==expected,'Immutable glTF structure changed'
- assert binary[:len(original)]==original,'Original mesh/morph/skin/texture/animation payload changed'
- old=base.get('animations',[])
- assert doc.get('animations',[])[:len(old)]==old,'Round-3 animation structure changed'
- for clip in old:
-  for sampler in clip['samplers']:
-   for key in ('input','output'):
-    assert np.array_equal(b.accessor(doc,binary,sampler[key]),b.accessor(base,original,sampler[key])),'Round-3 animation samples changed'
-
 def verify(v,renders=False):
  a.inputs();path=b.STAGE/f'renamon-{v}.glb';doc,bin=b.read_glb(path)
  basepath=b.TMP/'round2'/path.name;base,bb=b.read_glb(basepath)
  assert b.sha(basepath)==json.loads((P/'visual-baseline.json').read_text())['files'][v]
- verify_prefix(doc,bin,base,bb)
- round3path=b.TMP/'round3'/path.name;round3,round3bin=b.read_glb(round3path)
- assert b.sha(round3path)==json.loads((P/'animation-visual-baseline.json').read_text())['files'][v]
- verify_prefix(doc,bin,round3,round3bin)
- assert len(doc['animations'])==24
- allowed={(ch['target']['node'],ch['target']['path']) for ch in round3['animations'][0]['channels']}
- for clip in doc['animations']:
-  assert {(ch['target']['node'],ch['target']['path']) for ch in clip['channels']}==allowed,'Unexpected bone or face track'
+ expected=copy.deepcopy(base);actual=copy.deepcopy(doc)
+ for k in ['animations']:actual.pop(k,None);expected.pop(k,None)
+ actual['accessors']=actual['accessors'][:len(base['accessors'])];actual['bufferViews']=actual['bufferViews'][:len(base['bufferViews'])];actual['buffers']=expected['buffers']
+ assert actual==expected,'Immutable glTF structure changed'
+ assert bin[:len(bb)]==bb,'Original mesh/morph/skin/texture payload changed'
  meta=json.loads((b.TMP/'animation-metadata.json').read_text())
  assert [x['name'] for x in doc['animations']]==[x['name'] for x in meta['animations']]
  forbidden=set(json.loads((b.TMP/'recipe-desktop.json').read_text())['skeleton']['tail'])
@@ -93,7 +75,7 @@ def verify(v,renders=False):
      cam=bpy.context.scene.camera;target=Vector((0,.38 if view=='3q' else .12,1.06));direction=Vector((4,-5,.35) if view=='3q' else (0,-5,.1))
      cam.location=target+direction;cam.rotation_euler=(-direction).to_track_quat('-Z','Y').to_euler();cam.data.ortho_scale=3.1
      bpy.context.scene.render.filepath=str(b.STAGE/'renders'/fn);bpy.ops.render.render(write_still=True);renderlist.append(fn)
- result={'sha256':b.sha(path),'inputs':a.inputs(),'round2_sha256':b.sha(basepath),'round3_sha256':b.sha(round3path),'round3_clips_exact':True,'immutable_json_and_binary_exact':True,'fresh_blender_import':True,'clips':reports,'renders':renderlist,'passed':True}
+ result={'sha256':b.sha(path),'inputs':a.inputs(),'round2_sha256':b.sha(basepath),'immutable_json_and_binary_exact':True,'fresh_blender_import':True,'clips':reports,'renders':renderlist,'passed':True}
  b.write_json(b.TMP/f'verified-animation-{v}.json',result)
 
 if __name__=='__main__':

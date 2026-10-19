@@ -68,7 +68,7 @@ findings. Do not report style preferences as major."
 log="$(git rev-parse --absolute-git-dir)/ai-review.log"
 trap 'rm -f "$out"' EXIT
 if ! codex exec -m "$model" -c model_reasoning_effort="high" -s read-only --ephemeral \
-  --output-schema scripts/ai-review.schema.json -o "$out" "$prompt" >"$log" 2>&1; then
+  --output-schema scripts/ai-review.schema.json -o "$out" "$prompt" </dev/null >"$log" 2>&1; then
   tail -20 "$log" >&2
   set_status error "Codex review failed to run"
   echo "codex review failed" >&2

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Hekate</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <canvas id="stage"></canvas>
+    <div id="bubble" class="bubble" hidden><div class="bubble-text"></div></div>
+    <div id="status" class="status">Loading…</div>
+    <form id="say" class="say" autocomplete="off">
+      <select id="gesture" aria-label="Play a gesture" hidden>
+        <option value="" selected disabled>Gesture…</option>
+      </select>
+      <input id="say-text" type="text" placeholder="Make her say something…" maxlength="1000" />
+      <button type="submit">Say</button>
+    </form>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

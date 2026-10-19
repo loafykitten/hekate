@@ -1,0 +1,125 @@
+:root {
+  --bg-top: #2b2440;
+  --bg-bottom: #120f1c;
+  --bubble-bg: #fffaf0;
+  --bubble-fg: #2a2233;
+  --ui-bg: rgba(255, 255, 255, 0.08);
+  --ui-border: rgba(255, 255, 255, 0.16);
+  --ui-fg: #f3eefc;
+  --accent: #f0a83c;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: linear-gradient(var(--bg-top), var(--bg-bottom));
+  color: var(--ui-fg);
+  font: 16px/1.4 system-ui, -apple-system, sans-serif;
+}
+
+#stage {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+
+.bubble {
+  position: fixed;
+  left: 0;
+  top: 0;
+  max-width: min(320px, calc(100vw - 32px));
+  padding: 10px 14px;
+  border-radius: 16px;
+  background: var(--bubble-bg);
+  color: var(--bubble-fg);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  transform: translate(-50%, -100%);
+  white-space: pre-wrap;
+}
+
+.bubble-text {
+  max-height: 40vh;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.bubble::after {
+  content: "";
+  position: absolute;
+  left: var(--tail-x, 50%);
+  bottom: -8px;
+  border: 8px solid transparent;
+  border-top-color: var(--bubble-bg);
+  border-bottom: 0;
+  transform: translateX(-50%);
+}
+
+.status {
+  position: fixed;
+  top: calc(12px + env(safe-area-inset-top));
+  left: 16px;
+  right: 16px;
+  font-size: 13px;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.say {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  display: flex;
+  gap: 8px;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.say select {
+  max-width: 120px;
+  padding: 0 10px;
+  border-radius: 12px;
+  border: 1px solid var(--ui-border);
+  background: var(--ui-bg);
+  color: var(--ui-fg);
+  font: inherit;
+}
+
+.say select[hidden] {
+  display: none;
+}
+
+.say input {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--ui-border);
+  background: var(--ui-bg);
+  color: var(--ui-fg);
+  font: inherit;
+}
+
+.say button {
+  padding: 12px 18px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--accent);
+  color: #1b1408;
+  font: inherit;
+  font-weight: 600;
+}
+
+.say button:disabled {
+  opacity: 0.5;
+}

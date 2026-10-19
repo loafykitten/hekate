@@ -1,0 +1,35 @@
+# Character models, textures, animations and renders of them are third-party IP: bring your own.
+/Renamon-Nukorio/
+/mixamo/
+/assets/
+/asset-pipeline/nukorio/reference/
+*.glb
+*.gltf
+*.fbx
+*.usdz
+*.tga
+*.blend
+*.blend1
+
+node_modules/
+dist/
+.DS_Store
+
+# Asset pipeline scratch and agent logs
+/asset-pipeline/nukorio/tmp/
+/asset-pipeline/nukorio/astra-log*.txt
+__pycache__/
+/app/verify-out/
+
+# Anything image-like under the asset pipeline is a render of the character.
+/asset-pipeline/**/*.png
+/asset-pipeline/**/*.jpg
+/asset-pipeline/**/*.webp
+
+# Local config and secrets: real values live on the homelab, examples are *.example.
+.env
+*.env
+!*.env.example
+/service/data/
+/service/bin/
+/.claude/settings.local.json

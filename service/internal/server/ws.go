@@ -271,15 +271,13 @@ func (ss *session) onPTTStart(m proto.ClientMessage) {
 		return
 	}
 	ss.resetPTT()
-	gen := ss.s.newInput()
 	if !ss.sttReady() {
 		ss.sendTo(proto.NewError(proto.CodeSTTUnavailable, "I can't hear you yet: speech recognition isn't ready.", m.ID))
 		return
 	}
-	ss.pttID, ss.pttGen = m.ID, gen
 	// Someone started talking: she stops now, on every device, rather than
 	// after the recording is transcribed (and before her voice reaches the mic).
-	ss.s.conv.Hush()
+	ss.pttID, ss.pttGen = m.ID, ss.s.startPTT()
 }
 
 func (ss *session) sttReady() bool { return ss.s.stt != nil && ss.s.stt.Ready() }

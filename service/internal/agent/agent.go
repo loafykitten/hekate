@@ -254,9 +254,11 @@ func (a *Agent) Say(origin, inputID, text string) {
 // finished and the client was still playing queued audio, the saved reply is
 // trimmed to what was heard.
 func (a *Agent) Interrupt(turnID string, heardSeq int) {
+	// a.mu is held throughout so the next turn can't start (and save its user
+	// message) while a finished reply is being rewritten: history stays in order.
 	a.mu.Lock()
+	defer a.mu.Unlock()
 	t := a.cur
-	a.mu.Unlock()
 	if t == nil || (turnID != "" && t.id != turnID) {
 		return
 	}
@@ -279,8 +281,8 @@ func (a *Agent) Interrupt(turnID string, heardSeq int) {
 // nothing more is trimmed.
 func (a *Agent) Hush() {
 	a.mu.Lock()
+	defer a.mu.Unlock()
 	t := a.cur
-	a.mu.Unlock()
 	if t == nil {
 		return
 	}
@@ -297,11 +299,17 @@ func (a *Agent) Hush() {
 	}
 }
 
+// testHookDuringTrim lets tests try to start a turn mid-trim.
+var testHookDuringTrim func()
+
 // trimFinished rewrites a completed turn's saved reply to end at seq heard and
 // tells clients it was interrupted. Called with t.endMu held.
 func (a *Agent) trimFinished(t *turn, heard int) {
 	f := t.fin
 	msgs, text := collectMessages(t.id, f.rounds, f.segs, heard)
+	if testHookDuringTrim != nil {
+		testHookDuringTrim()
+	}
 	ctx, cancel := a.dbCtx()
 	defer cancel()
 	if err := a.store.ReplaceTurnReply(ctx, t.id, msgs); err != nil {

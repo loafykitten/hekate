@@ -720,3 +720,33 @@ func TestHush(t *testing.T) {
 		}
 	})
 }
+
+// A new turn starting while a late interrupt rewrites the finished reply must
+// wait, so its user message is stored after the trimmed reply.
+func TestTrimFinishesBeforeTheNextTurnStarts(t *testing.T) {
+	e := newEnv(t, func(n int, _ llmReq) (int, []string) {
+		if n == 0 {
+			return 200, say("First sentence is right here. Second sentence is also here.")
+		}
+		return 200, say("The next reply.")
+	}, envOpts{})
+	e.agent.Say("c", "i1", "one")
+	e.hub.waitTurnEnd(t, 1)
+
+	testHookDuringTrim = func() {
+		go e.agent.Say("c", "i2", "two") // must block until the trim is done
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Cleanup(func() { testHookDuringTrim = nil })
+	e.agent.Interrupt("", 0)
+	e.hub.waitTurnEnd(t, 3)
+
+	var got []string
+	for _, m := range e.messages() {
+		got = append(got, m.Role+":"+m.Text)
+	}
+	want := []string{"user:one", "assistant:First sentence is right here.", "user:two", "assistant:The next reply."}
+	if !slices.Equal(got, want) {
+		t.Errorf("history = %q\nwant      %q", got, want)
+	}
+}

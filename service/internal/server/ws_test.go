@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -814,5 +815,48 @@ func TestPTTStartHushesAndInterruptCarriesTurn(t *testing.T) {
 	}
 	if len(conv.interruptTurns) != 1 || conv.interruptTurns[0] != "t_7" || conv.interrupt[0] != 1 {
 		t.Errorf("interrupts = %v %v", conv.interruptTurns, conv.interrupt)
+	}
+}
+
+// orderConv records the order of Say and Hush calls.
+type orderConv struct {
+	*fakeConv
+	order []string
+}
+
+func (o *orderConv) Say(origin, id, text string) {
+	o.mu.Lock()
+	o.order = append(o.order, "say:"+text)
+	o.mu.Unlock()
+	o.fakeConv.Say(origin, id, text)
+}
+
+func (o *orderConv) Hush() {
+	o.mu.Lock()
+	o.order = append(o.order, "hush")
+	o.mu.Unlock()
+}
+
+// A typed input from another device can't be ordered between a push-to-talk's
+// input number and its hush, or the older recording would cut the newer turn.
+func TestPTTStartHushIsAtomicWithInputOrdering(t *testing.T) {
+	conv := &orderConv{fakeConv: newFakeConv()}
+	env := newWSServer(t, conv, &fakeSTT{ready: true}, false)
+	phone, desktop := env.dial(t), env.dial(t)
+	readMsg(t, phone)
+	readMsg(t, desktop)
+
+	testHookInPTTStart = func() {
+		send(t, desktop, map[string]any{"type": "say", "id": "s", "text": "typed during ptt_start"})
+		time.Sleep(50 * time.Millisecond) // give it every chance to slip in
+	}
+	t.Cleanup(func() { testHookInPTTStart = nil })
+	send(t, phone, map[string]any{"type": "ptt_start", "id": "p", "sample_rate": 16000})
+	<-conv.sayCh
+
+	conv.mu.Lock()
+	defer conv.mu.Unlock()
+	if want := []string{"hush", "say:typed during ptt_start"}; !slices.Equal(conv.order, want) {
+		t.Errorf("order = %v, want %v", conv.order, want)
 	}
 }

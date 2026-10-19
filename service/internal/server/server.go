@@ -65,13 +65,22 @@ type Server struct {
 	inputs  uint64
 }
 
-// newInput records that an input arrived and returns its number.
-func (s *Server) newInput() uint64 {
+// startPTT records a push-to-talk as the newest input and hushes her, as one
+// step: no other input can be ordered between them (or an older recording
+// could cut a newer typed turn). Returns the input's number.
+func (s *Server) startPTT() uint64 {
 	s.inputMu.Lock()
 	defer s.inputMu.Unlock()
 	s.inputs++
+	if testHookInPTTStart != nil {
+		testHookInPTTStart()
+	}
+	s.conv.Hush()
 	return s.inputs
 }
+
+// testHookInPTTStart lets tests try to slip an input into startPTT.
+var testHookInPTTStart func()
 
 // sayIfCurrent starts a turn only if no newer input arrived since gen, and
 // reports whether it did. before runs first under the same lock (to send the

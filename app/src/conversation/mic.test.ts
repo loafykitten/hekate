@@ -260,4 +260,31 @@ describe("MicCapture recording handoff", () => {
     node.emit({ id: 2, pcm: new Int16Array([222]).buffer });
     expect(chunks).toEqual([222]);
   });
+
+  it("going to the background mid-drain keeps the last chunk, then closes the mic", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    let visibility = "visible";
+    const listeners: (() => void)[] = [];
+    vi.stubGlobal("document", {
+      get visibilityState() {
+        return visibility;
+      },
+      addEventListener: (_: string, fn: () => void) => listeners.push(fn),
+    });
+    const audio = stubAudio();
+    audio.resolveModule();
+    const chunks: number[] = [];
+    const mic = new MicCapture((c) => chunks.push(new Int16Array(c)[0]), { keepOpenMs: 60_000 });
+    expect(await mic.start()).toBe(true);
+    const node = audio.nodes[0];
+    node.manualFlush = true;
+    const stopping = mic.stop();
+    visibility = "hidden";
+    listeners.forEach((fn) => fn());
+    node.emit({ id: 1, pcm: new Int16Array([333]).buffer }); // the last chunk, after hiding
+    node.emit({ flushed: 1 });
+    await stopping;
+    expect(chunks).toEqual([333]);
+    expect(audio.streams[0].stopped).toBe(true);
+  });
 });

@@ -108,7 +108,8 @@ export class MicCapture {
     if (this.keepOpenMs > 0 && typeof document !== "undefined") {
       // Close an idle open mic as soon as the app goes to the background.
       document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "hidden" && !this._active) this.close();
+        // A recording still draining its last chunks closes once it's done (see stop()).
+        if (document.visibilityState === "hidden" && !this._active && this.forwarding === undefined) this.close();
       });
     }
   }
@@ -228,7 +229,8 @@ export class MicCapture {
     }
     if (this.forwarding === ending) this.forwarding = undefined;
     this.flushed = undefined;
-    if (keepOpen && this.isOpen()) {
+    const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
+    if (keepOpen && this.isOpen() && !hidden) {
       clearTimeout(this.idleTimer);
       this.idleTimer = setTimeout(() => this.close(), this.keepOpenMs);
       return;

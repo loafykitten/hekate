@@ -146,7 +146,7 @@ export interface CalendarStatus {
 
 // `instance` names the occurrence an edit was made from, so the service applies a moved start or
 // a new end to a recurring series relative to that occurrence.
-export type EventFields = Partial<Pick<CalendarEvent, "title" | "start" | "end" | "all_day" | "location" | "notes" | "rrule" | "instance">>;
+export type EventFields = Partial<Pick<CalendarEvent, "title" | "start" | "end" | "all_day" | "location" | "notes" | "rrule" | "instance" | "version">>;
 
 export const calendarApi = {
   status: async (signal?: AbortSignal): Promise<CalendarStatus> => {

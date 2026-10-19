@@ -52,6 +52,9 @@ type Event struct {
 	Notes           string  `json:"notes"`
 	RRule           *string `json:"rrule"`
 	CreatedByHekate bool    `json:"created_by_hekate"`
+	// Version identifies the stored event (its CalDAV ETag). Sending it back
+	// with an edit makes the edit apply only to that version.
+	Version string `json:"version,omitempty"`
 }
 
 // occurrence is an Event with its instants, for sorting and filtering.

@@ -804,3 +804,21 @@ func TestAnchorToSeriesRejectsStaleOccurrence(t *testing.T) {
 		t.Errorf("second edit: err = %v, start = %v; want a conflict", err, second.Start)
 	}
 }
+
+// Another client's series written in UTC repeats at 14:00Z through the DST
+// change; its real Nov 2 occurrence (14:00Z) is recognized and editable.
+func TestAnchorToSeriesUsesTheSeriesZone(t *testing.T) {
+	chicago, _ := time.LoadLocation("America/Chicago")
+	start := time.Date(2026, 10, 19, 14, 0, 0, 0, time.UTC)
+	master := &component{start: start, end: start.Add(time.Hour), loc: time.UTC}
+	inst, _ := json.Marshal("2026-11-02T08:00:00-06:00") // 14:00Z shown in Chicago
+	end := "2026-11-02T09:30:00-06:00"                   // 30 minutes longer
+	p := EventPatch{Instance: inst, End: &end}
+	if err := anchorToSeries(&p, master, "FREQ=WEEKLY", chicago); err != nil {
+		t.Fatalf("valid occurrence refused: %v", err)
+	}
+	got, _ := time.Parse(time.RFC3339, *p.End)
+	if !got.Equal(start.Add(90 * time.Minute)) {
+		t.Errorf("end = %s, want the first occurrence +90m (15:30Z)", *p.End)
+	}
+}

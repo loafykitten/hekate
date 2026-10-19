@@ -559,3 +559,31 @@ func TestIntegrationToolEditsLaterOccurrence(t *testing.T) {
 		}
 	}
 }
+
+// An edit made against an older version (another editor saved in between) is
+// refused, whatever it changes.
+func TestIntegrationStaleVersionRefused(t *testing.T) {
+	env := integEnv(t)
+	ctx := context.Background()
+	s := env.service(t, uniqueName(), nil, &changes{}, testNow)
+	ev, err := s.Create(ctx, EventInput{Title: "Daily check-in", Start: "2026-10-19T09:00", RRule: "FREQ=DAILY;COUNT=3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.Version == "" {
+		t.Fatal("created event has no version")
+	}
+	seen := ev.Version
+	inst, _ := json.Marshal("2026-10-20T09:00:00-05:00")
+	start := "2026-10-21T09:00"
+	first, err := s.Update(ctx, ev.UID, EventPatch{Instance: inst, Start: &start, Version: &seen}, false)
+	if err != nil {
+		t.Fatalf("first edit: %v", err)
+	}
+	if first.Version == "" || first.Version == seen {
+		t.Errorf("version after edit = %q (was %q)", first.Version, seen)
+	}
+	if _, err := s.Update(ctx, ev.UID, EventPatch{Instance: inst, Start: &start, Version: &seen}, false); !errors.Is(err, errConflict) {
+		t.Errorf("stale edit: err = %v, want a conflict", err)
+	}
+}

@@ -43,6 +43,7 @@ export interface CalendarEvent {
   notes: string;
   rrule: string | null;
   created_by_hekate: boolean;
+  version?: string; // sent back with edits so a stale edit is refused, not applied on top
 }
 
 export const MEMORY_KINDS = ["fact", "preference", "person", "event", "follow_up"] as const;
@@ -198,6 +199,7 @@ export function asEvent(v: unknown): CalendarEvent | undefined {
     location: strOr(v.location),
     notes: strOr(v.notes),
     rrule: strOrNull(v.rrule),
+    version: isStr(v.version) && v.version !== "" ? v.version : undefined,
     created_by_hekate: v.created_by_hekate === true,
   };
 }

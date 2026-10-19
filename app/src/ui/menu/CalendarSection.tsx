@@ -132,6 +132,8 @@ function EventForm({ event, startMs, busy, submitLabel, onSubmit, onCancel, chil
     if (Object.keys(changed).length === 0) return onCancel();
     // Times edited on one occurrence of a series apply to the series relative to that occurrence.
     if (base.instance && (changed.start || changed.end)) changed.instance = base.instance;
+    // The version this edit was made against: if someone saved in between, the service refuses it.
+    if (base.version) changed.version = base.version;
     onSubmit(changed as EventFields & { title: string; start: string });
   }
 

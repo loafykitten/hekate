@@ -164,6 +164,9 @@ func (s *Service) occurrences(ctx context.Context, from, to time.Time) ([]occurr
 			s.log.Warn("skipping event that cannot be expanded", "uid", ser.uid, "err", err)
 			continue
 		}
+		for i := range occ {
+			occ[i].Version = etagValue(o.etag)
+		}
 		out = append(out, occ...)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -188,7 +191,9 @@ func (s *Service) Get(ctx context.Context, uid string) (Event, error) {
 	if err != nil {
 		return Event{}, err
 	}
-	return s.mainEvent(ser), nil
+	ev := s.mainEvent(ser)
+	ev.Version = etagValue(o.etag)
+	return ev, nil
 }
 
 // mainEvent is the event as one record: for a repeating event, its first
@@ -232,7 +237,8 @@ func (s *Service) Create(ctx context.Context, in EventInput) (Event, error) {
 	}
 	uid := uuid.NewString()
 	cal := newCalendarObject(uid, sp, s.loc, s.now())
-	if _, err := s.dav.put(ctx, objectPath(col, uid), cal, ""); err != nil {
+	etag, err := s.dav.put(ctx, objectPath(col, uid), cal, "")
+	if err != nil {
 		return Event{}, err
 	}
 	s.changed()
@@ -240,7 +246,9 @@ func (s *Service) Create(ctx context.Context, in EventInput) (Event, error) {
 	if err != nil {
 		return Event{}, err
 	}
-	return s.mainEvent(ser), nil
+	ev := s.mainEvent(ser)
+	ev.Version = etagValue(etag)
+	return ev, nil
 }
 
 // EventPatch is the body of an update request. Fields left out keep their
@@ -255,8 +263,11 @@ type EventPatch struct {
 	Notes    *string         `json:"notes"`
 	RRule    json.RawMessage `json:"rrule"` // absent: keep; null or "": remove the rule
 
-	UID             json.RawMessage `json:"uid"`
-	Instance        json.RawMessage `json:"instance"`
+	UID      json.RawMessage `json:"uid"`
+	Instance json.RawMessage `json:"instance"`
+	// Version: the event's version when the edit was made; a newer stored
+	// version refuses the edit with a conflict.
+	Version         *string         `json:"version"`
 	CreatedByHekate json.RawMessage `json:"created_by_hekate"`
 }
 
@@ -279,12 +290,17 @@ func (p EventPatch) rrulePatch() (set bool, value string, err error) {
 // onlyHekate it refuses events Hekate did not create.
 func (s *Service) Update(ctx context.Context, uid string, p EventPatch, onlyHekate bool) (Event, error) {
 	var result Event
-	err := s.mutate(ctx, uid, func(o *object, ser *series) (bool, error) {
+	etag, err := s.mutate(ctx, uid, func(o *object, ser *series) (bool, error) {
 		if ser.master == nil {
 			return false, badInput("this event has no main entry to edit")
 		}
 		if onlyHekate && !ser.createdByHekate() {
 			return false, ErrNotOwned
+		}
+		// An edit made against an older version of the event (another editor
+		// saved in between) is refused rather than applied on top of it.
+		if p.Version != nil && *p.Version != "" && *p.Version != etagValue(o.etag) {
+			return false, errConflict
 		}
 		cur := ser.event(*ser.master, s.loc, nil)
 		// A copy per attempt: mutate retries this after an ETag conflict, and the
@@ -301,7 +317,11 @@ func (s *Service) Update(ctx context.Context, uid string, p EventPatch, onlyHeka
 		if err != nil {
 			return false, err
 		}
-		if err := checkMoveAgainstRule(ser.master.start, sp.start, sp.rrule, s.loc); err != nil {
+		zone := s.loc // membership is a property of the series, in its own zone
+		if ser.master.loc != nil {
+			zone = ser.master.loc
+		}
+		if err := checkMoveAgainstRule(ser.master.start, sp.start, sp.rrule, zone); err != nil {
 			return false, err
 		}
 		resched := !sp.start.Equal(ser.master.start) || sp.allDay != ser.master.allDay || sp.rrule != ser.rruleString()
@@ -318,6 +338,7 @@ func (s *Service) Update(ctx context.Context, uid string, p EventPatch, onlyHeka
 	if err != nil {
 		return Event{}, err
 	}
+	result.Version = etagValue(etag)
 	return result, nil
 }
 
@@ -355,38 +376,38 @@ func (s *Service) Delete(ctx context.Context, uid string, onlyHekate bool) error
 // mutate finds the event, lets fn edit it and saves with If-Match. When the
 // event changed on the server in between (412) it is fetched once more and
 // the edit is applied again.
-func (s *Service) mutate(ctx context.Context, uid string, fn func(*object, *series) (bool, error)) error {
+func (s *Service) mutate(ctx context.Context, uid string, fn func(*object, *series) (bool, error)) (etag string, err error) {
 	if s.dav == nil {
-		return ErrNotConfigured
+		return "", ErrNotConfigured
 	}
 	for attempt := 0; ; attempt++ {
 		o, err := s.dav.find(ctx, uid)
 		if err != nil {
-			return err
+			return "", err
 		}
 		ser, err := parseSeries(o.cal, s.loc)
 		if err != nil {
-			return err
+			return "", err
 		}
 		write, err := fn(o, ser)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if !write {
-			return nil
+			return o.etag, nil
 		}
-		_, err = s.dav.put(ctx, o.path, o.cal, o.etag)
+		etag, err := s.dav.put(ctx, o.path, o.cal, o.etag)
 		if errors.Is(err, errConflict) && attempt == 0 {
 			continue
 		}
 		if err != nil {
 			if errors.Is(err, errConflict) {
-				return fmt.Errorf("%w; try again", errConflict)
+				return "", fmt.Errorf("%w; try again", errConflict)
 			}
-			return err
+			return "", err
 		}
 		s.changed()
-		return nil
+		return etag, nil
 	}
 }
 
@@ -509,6 +530,13 @@ func anchorToSeries(p *EventPatch, m *component, rule string, loc *time.Location
 	if p.Start == nil && p.End == nil {
 		return nil
 	}
+	// Inputs are read in our zone (that's what the owner means by "10:00"), but
+	// the series repeats in its own DTSTART zone (another client may have
+	// written it in UTC), so occurrences and wall-clock shifts use that one.
+	zone := loc
+	if m.loc != nil {
+		zone = m.loc
+	}
 	occ, _, err := parseInput(instance, loc)
 	if err != nil {
 		return badInput("instance: %v", err)
@@ -516,7 +544,7 @@ func anchorToSeries(p *EventPatch, m *component, rule string, loc *time.Location
 	// The edit was made looking at that occurrence. If the series has moved
 	// since (another edit, or our own first attempt before an ETag retry), the
 	// occurrence no longer exists and applying the shift again would compound.
-	if !isOccurrence(m.start, occ, rule, loc) {
+	if !isOccurrence(m.start, occ, rule, zone) {
 		return errConflict
 	}
 	// shift moves t by the distance from `from` to `to` on the wall clock: whole
@@ -524,13 +552,13 @@ func anchorToSeries(p *EventPatch, m *component, rule string, loc *time.Location
 	// time would pick up a DST hour when the occurrence and the series' first
 	// date sit on different sides of a change.
 	shift := func(t, from, to time.Time, dateOnly bool) string {
-		days := civilDays(to, loc) - civilDays(from, loc)
+		days := civilDays(to, zone) - civilDays(from, zone)
 		if dateOnly {
-			return t.In(loc).AddDate(0, 0, days).Format(dateLayout)
+			return t.In(zone).AddDate(0, 0, days).Format(dateLayout)
 		}
-		x, f, tt := t.In(loc), from.In(loc), to.In(loc)
+		x, f, tt := t.In(zone), from.In(zone), to.In(zone)
 		secs := clockSeconds(tt) - clockSeconds(f)
-		return time.Date(x.Year(), x.Month(), x.Day()+days, x.Hour(), x.Minute(), x.Second()+secs, x.Nanosecond(), loc).Format(time.RFC3339)
+		return time.Date(x.Year(), x.Month(), x.Day()+days, x.Hour(), x.Minute(), x.Second()+secs, x.Nanosecond(), zone).Format(time.RFC3339)
 	}
 	newStart, base := m.start, occ
 	if p.Start != nil {
@@ -674,4 +702,9 @@ func isOccurrence(start, t time.Time, rule string, loc *time.Location) bool {
 	}
 	first, ok := firstAt(r, t)
 	return !ok || first.Equal(t)
+}
+
+// etagValue is an ETag without quotes or a weak marker, for use as a version.
+func etagValue(etag string) string {
+	return strings.Trim(strings.TrimPrefix(etag, "W/"), `"`)
 }

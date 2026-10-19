@@ -222,7 +222,13 @@ func (s *Service) completeTool() agent.Tool {
 			if err != nil {
 				return agent.Result{}, err
 			}
-			t, err := s.Complete(ctx, int64(a.ID))
+			// Complete the occurrence just looked at: if it was completed meanwhile
+			// (the menu, another device), don't advance the next one too.
+			due := ""
+			if before.Due != nil {
+				due = *before.Due
+			}
+			t, err := s.CompleteOccurrence(ctx, int64(a.ID), &due)
 			if err != nil {
 				return agent.Result{}, err
 			}

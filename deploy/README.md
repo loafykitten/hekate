@@ -22,6 +22,12 @@ How the pieces fit is in `docs/DEVELOPMENT.md` ("Deploys"). This is the one-time
 Calendar clients: add a CalDAV account with server `https://dav.<your domain>/`, the user and
 password from step 3. iOS/macOS: Settings → Calendar → Accounts → Other → CalDAV. Android: DAVx5.
 
+Mail: for each account, create an app-specific password at your provider with IMAP enabled
+(Zoho: Security → App Passwords; IMAP access must be on in Mail settings) and add
+`HEKATE_MAIL_<n>_USER` / `HEKATE_MAIL_<n>_PASS` to `hekate.env` (see the example for the
+optional host, label and archive folder). Restart the service; the first sweep caches the last
+30 days of inbox headers and sorts the last 14 days.
+
 ## On your phone
 
 1. With Tailscale connected, open `https://hekate.<your domain>/` in Safari (iOS) or Chrome

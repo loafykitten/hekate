@@ -64,12 +64,28 @@ type Config struct {
 	CalDAVPassword Secret
 	CalDAVCalendar string // display name of the calendar to use; created if missing
 
+	// Mail (IMAP). No accounts means mail is not configured.
+	MailAccounts []MailAccount
+	MailSweep    time.Duration // how often the inbox is checked and classified
+
 	// Web search (Brave). An empty key means web_search is unavailable.
 	BraveAPIKey Secret
 
 	Units       string // "imperial" or "metric", for weather
 	PushSubject string // VAPID subject: a mailto: or https: URL identifying the sender
 }
+
+// MailAccount is one IMAP mailbox, from HEKATE_MAIL_<n>_* (n = 1..9).
+type MailAccount struct {
+	Name    string // label shown in the UI, unique across accounts
+	User    string // login, also the address
+	Pass    Secret
+	Host    string // host:port, TLS
+	Archive string // folder "archive" moves mail to
+}
+
+// maxMailAccounts is the highest n read from HEKATE_MAIL_<n>_*.
+const maxMailAccounts = 9
 
 // Model is a model name plus the reasoning effort every request to it sets.
 type Model struct {
@@ -120,6 +136,22 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 	cfg.PushSubject = str("HEKATE_PUSH_SUBJECT", "mailto:hekate@example.com")
 
 	var errs []error
+
+	accounts, aerrs := loadMailAccounts(str)
+	cfg.MailAccounts = accounts
+	errs = append(errs, aerrs...)
+	cfg.MailSweep = 10 * time.Minute
+	if v := str("HEKATE_MAIL_SWEEP", ""); v != "" {
+		d, err := time.ParseDuration(v)
+		switch {
+		case err != nil:
+			errs = append(errs, fmt.Errorf("HEKATE_MAIL_SWEEP: %w", err))
+		case d < time.Minute:
+			errs = append(errs, fmt.Errorf("HEKATE_MAIL_SWEEP: %s is shorter than 1m", v))
+		default:
+			cfg.MailSweep = d
+		}
+	}
 
 	model := func(prefix, defName, defEffort string) Model {
 		m := Model{Name: str(prefix, defName), Effort: strings.ToLower(str(prefix+"_EFFORT", defEffort))}
@@ -214,6 +246,8 @@ func (c Config) LogValue() slog.Value {
 		slog.String("models_dir", c.ModelsDir),
 		slog.String("caldav_url", c.CalDAVURL),
 		slog.String("caldav_calendar", c.CalDAVCalendar),
+		slog.Any("mail_accounts", c.mailAccountNames()),
+		slog.Duration("mail_sweep", c.MailSweep),
 		slog.Bool("web_search_configured", c.BraveAPIKey != ""),
 		slog.String("units", c.Units),
 		slog.String("push_subject", c.PushSubject),
@@ -232,4 +266,67 @@ func systemZone() *time.Location {
 		}
 	}
 	return time.UTC
+}
+
+// mailAccountNames lists account labels for logging; logins are personal data
+// and passwords are secrets, so neither is logged.
+func (c Config) mailAccountNames() []string {
+	names := make([]string, len(c.MailAccounts))
+	for i, a := range c.MailAccounts {
+		names[i] = a.Name
+	}
+	return names
+}
+
+// loadMailAccounts reads HEKATE_MAIL_<n>_USER/PASS/HOST/NAME/ARCHIVE for
+// n = 1..9. Unset slots are skipped. A USER without PASS (or the reverse) is an
+// error, and so are duplicate labels: set NAME to tell two accounts at the same
+// domain apart.
+func loadMailAccounts(str func(key, def string) string) ([]MailAccount, []error) {
+	var out []MailAccount
+	var errs []error
+	seen := map[string]string{} // lower-case label -> variable prefix
+	for n := 1; n <= maxMailAccounts; n++ {
+		p := fmt.Sprintf("HEKATE_MAIL_%d_", n)
+		user, pass := str(p+"USER", ""), str(p+"PASS", "")
+		if user == "" && pass == "" {
+			continue
+		}
+		if user == "" || pass == "" {
+			errs = append(errs, fmt.Errorf("%sUSER and %sPASS must be set together", p, p))
+			continue
+		}
+		if !strings.Contains(user, "@") {
+			errs = append(errs, fmt.Errorf("%sUSER: must be the full mail address", p))
+			continue
+		}
+		a := MailAccount{
+			User:    user,
+			Pass:    Secret(pass),
+			Host:    str(p+"HOST", "imappro.zoho.com"),
+			Name:    str(p+"NAME", defaultMailName(user)),
+			Archive: str(p+"ARCHIVE", "Archive"),
+		}
+		if !strings.Contains(a.Host, ":") {
+			a.Host += ":993"
+		}
+		if prev, dup := seen[strings.ToLower(a.Name)]; dup {
+			errs = append(errs, fmt.Errorf("%sNAME: %q is already used by %s; set a different NAME", p, a.Name, prev))
+			continue
+		}
+		seen[strings.ToLower(a.Name)] = p + "*"
+		out = append(out, a)
+	}
+	return out, errs
+}
+
+// defaultMailName labels an account by its domain without the TLD:
+// rika@work.example.com is "example".
+func defaultMailName(addr string) string {
+	domain := addr[strings.LastIndex(addr, "@")+1:]
+	labels := strings.Split(domain, ".")
+	if len(labels) >= 2 {
+		return labels[len(labels)-2]
+	}
+	return domain
 }

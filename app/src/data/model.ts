@@ -99,6 +99,81 @@ export interface Weather {
   days: WeatherDay[];
 }
 
+export interface MailAddress {
+  name: string;
+  address: string;
+}
+
+export const MAIL_CATEGORIES = ["needs_reply", "important", "personal", "receipt", "notification", "newsletter", "promo"] as const;
+export type MailCategory = (typeof MAIL_CATEGORIES)[number];
+export interface Message {
+  id: string;
+  account: string;
+  from: MailAddress;
+  subject: string;
+  date: string;
+  folder: string; // INBOX, Archive, Trash or another folder
+  unread: boolean;
+  category: string | null; // normally a MailCategory; null until classified
+  gist: string | null;
+  can_unsubscribe: boolean;
+}
+
+export interface MailRule {
+  id: string;
+  match: { from: string | null; category: string | null };
+  action: string; // archive | trash | mark_read | move
+  folder: string | null;
+  label: string;
+  hits: number;
+  last_hit_at: string | null;
+  created_at: string;
+}
+
+export interface MailAccountStatus {
+  name: string;
+  address: string;
+  ok: boolean;
+  error: string;
+  last_sweep_at: string | null;
+  inbox_count: number;
+}
+export interface MailStatus {
+  configured: boolean;
+  accounts: MailAccountStatus[];
+}
+export interface MailSummary {
+  unread: Record<string, number>;
+  attention: Message[];
+}
+export interface MailBody {
+  text: string;
+  truncated: boolean;
+}
+
+export const APPROVAL_STATUSES = ["pending", "running", "done", "failed", "denied", "expired"] as const;
+export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number];
+export interface Approval {
+  id: string;
+  kind: string; // the action, e.g. mail_trash
+  title: string;
+  detail: string;
+  scope_label: string | null; // what "Always" covers; null when it can't become a rule
+  status: ApprovalStatus;
+  result: string | null;
+  decided_by: string | null; // owner | rule
+  created_at: string;
+  expires_at: string | null;
+  decided_at: string | null;
+}
+export interface ApprovalRule {
+  id: string;
+  kind: string;
+  scope_label: string;
+  uses: number;
+  created_at: string;
+}
+
 export interface WebResult {
   title: string;
   url: string;
@@ -224,6 +299,102 @@ export function asCoreEntry(v: unknown): CoreEntry | undefined {
   return { key: v.key, value: v.value, updated_at: strOr(v.updated_at) };
 }
 
+function asAddress(v: unknown): MailAddress {
+  if (!isRec(v)) return { name: "", address: "" };
+  return { name: strOr(v.name).trim(), address: strOr(v.address).trim() };
+}
+
+export function asMessage(v: unknown): Message | undefined {
+  if (!isRec(v)) return undefined;
+  const id = idOf(v.id);
+  if (id === undefined || (!isStr(v.subject) && !isStr(v.date))) return undefined;
+  return {
+    id,
+    account: strOr(v.account),
+    from: asAddress(v.from),
+    subject: strOr(v.subject),
+    date: strOr(v.date),
+    folder: strOr(v.folder, "INBOX") || "INBOX",
+    unread: v.unread === true,
+    category: strOrNull(v.category),
+    gist: strOrNull(v.gist),
+    can_unsubscribe: v.can_unsubscribe === true,
+  };
+}
+
+export function asMailRule(v: unknown): MailRule | undefined {
+  if (!isRec(v)) return undefined;
+  const id = idOf(v.id);
+  if (id === undefined || !isStr(v.label)) return undefined;
+  const match = isRec(v.match) ? v.match : {};
+  return {
+    id,
+    match: { from: strOrNull(match.from), category: strOrNull(match.category) },
+    action: strOr(v.action),
+    folder: strOrNull(v.folder),
+    label: v.label,
+    hits: Math.max(0, numOr(v.hits, 0)),
+    last_hit_at: strOrNull(v.last_hit_at),
+    created_at: strOr(v.created_at),
+  };
+}
+
+export function asMailStatus(v: unknown): MailStatus {
+  const rec = isRec(v) ? v : {};
+  return {
+    configured: rec.configured === true,
+    accounts: list(rec.accounts, (a): MailAccountStatus | undefined => {
+      if (!isRec(a) || !isStr(a.name)) return undefined;
+      return {
+        name: a.name,
+        address: strOr(a.address),
+        ok: a.ok !== false,
+        error: strOr(a.error),
+        last_sweep_at: strOrNull(a.last_sweep_at),
+        inbox_count: Math.max(0, numOr(a.inbox_count, 0)),
+      };
+    }),
+  };
+}
+
+export function asMailSummary(v: unknown): MailSummary {
+  const rec = isRec(v) ? v : {};
+  const unread: Record<string, number> = {};
+  if (isRec(rec.unread)) for (const [k, n] of Object.entries(rec.unread)) if (isNum(n) && n > 0) unread[k] = n;
+  return { unread, attention: list(rec.attention, asMessage) };
+}
+
+export function asMailBody(v: unknown): MailBody | undefined {
+  if (!isRec(v) || !isStr(v.text)) return undefined;
+  return { text: v.text, truncated: v.truncated === true };
+}
+
+export function asApproval(v: unknown): Approval | undefined {
+  if (!isRec(v)) return undefined;
+  const id = idOf(v.id);
+  if (id === undefined || !isStr(v.title) || !(APPROVAL_STATUSES as readonly string[]).includes(v.status as string)) return undefined;
+  return {
+    id,
+    kind: strOr(v.kind),
+    title: v.title,
+    detail: strOr(v.detail),
+    scope_label: strOrNull(v.scope_label),
+    status: v.status as ApprovalStatus,
+    result: strOrNull(v.result),
+    decided_by: strOrNull(v.decided_by),
+    created_at: strOr(v.created_at),
+    expires_at: strOrNull(v.expires_at),
+    decided_at: strOrNull(v.decided_at),
+  };
+}
+
+export function asApprovalRule(v: unknown): ApprovalRule | undefined {
+  if (!isRec(v)) return undefined;
+  const id = idOf(v.id);
+  if (id === undefined) return undefined;
+  return { id, kind: strOr(v.kind), scope_label: strOr(v.scope_label), uses: Math.max(0, numOr(v.uses, 0)), created_at: strOr(v.created_at) };
+}
+
 export function asWebResult(v: unknown): WebResult | undefined {
   if (!isRec(v) || !isStr(v.title)) return undefined;
   const url = safeUrl(v.url);
@@ -280,6 +451,14 @@ export interface EventsCardData {
 export interface MemoryCardData {
   items: Memory[];
 }
+export interface MailCardData {
+  items: Message[];
+  highlight: string[];
+}
+export interface MailMessageCardData {
+  message: Message;
+  excerpt: string;
+}
 export interface WebResultsCardData {
   query: string;
   items: WebResult[];
@@ -302,7 +481,10 @@ export type Card =
   | (CardBase & { kind: "memory"; data: MemoryCardData })
   | (CardBase & { kind: "weather"; data: Weather })
   | (CardBase & { kind: "web_results"; data: WebResultsCardData })
-  | (CardBase & { kind: "web_page"; data: WebPageCardData });
+  | (CardBase & { kind: "web_page"; data: WebPageCardData })
+  | (CardBase & { kind: "mail"; data: MailCardData })
+  | (CardBase & { kind: "mail_message"; data: MailMessageCardData })
+  | (CardBase & { kind: "approval"; data: Approval });
 export type CardKind = Card["kind"];
 
 function highlights(v: unknown): string[] {
@@ -339,6 +521,16 @@ export function parseCard(raw: unknown): Card | undefined {
       const url = safeUrl(d.url);
       if (!url || !isStr(d.title)) return undefined;
       return { ...base, kind: "web_page", data: { title: d.title, url, source: strOr(d.source), excerpt: strOr(d.excerpt) } };
+    }
+    case "mail":
+      return { ...base, kind: "mail", data: { items: list(d.items, asMessage), highlight: highlights(d.highlight) } };
+    case "mail_message": {
+      const message = asMessage(d.message);
+      return message && { ...base, kind: "mail_message", data: { message, excerpt: strOr(d.excerpt) } };
+    }
+    case "approval": {
+      const approval = asApproval(d);
+      return approval && { ...base, kind: "approval", data: approval };
     }
     default:
       return undefined;

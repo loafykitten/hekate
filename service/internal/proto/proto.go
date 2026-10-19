@@ -22,6 +22,7 @@ const (
 	TypeError        = "error"
 	TypeNotify       = "notify"
 	TypeInvalidate   = "invalidate"
+	TypeApproval     = "approval"
 )
 
 // Error codes the service sends.

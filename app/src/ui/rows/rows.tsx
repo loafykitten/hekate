@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import type { CalendarEvent, Memory, Reminder, Task } from "../../data/model";
+import { categoryLabel, mailWhen, senderName } from "../../data/mail";
+import type { CalendarEvent, Memory, Message, Reminder, Task } from "../../data/model";
 import { describeRrule } from "../../data/rrule";
 import { dayHeading, dayKeyOfMs, dueLabel, eventTimeLabel, formatDateTime, formatDay, relativeTime } from "../../data/time";
 import { ChevronIcon, PinIcon, RepeatIcon } from "../icons";
@@ -229,6 +230,60 @@ export function MemoryRow({ memory, highlight, compact, onOpen, expanded, now, c
         )}
       </div>
       {children}
+    </div>
+  );
+}
+
+interface MessageRowProps {
+  message: Message;
+  now: number;
+  // Shown subtly when more than one account is connected.
+  showAccount?: boolean;
+  showCategory?: boolean;
+  highlight?: boolean;
+  compact?: boolean;
+  onOpen?: () => void;
+}
+
+export function MessageRow({ message, now, showAccount, showCategory = true, highlight, compact, onOpen }: MessageRowProps) {
+  const sender = senderName(message.from);
+  const when = mailWhen(message.date, now);
+  const body = (
+    <>
+      <span className={styles.mailTop}>
+        <span className={styles.sender} data-unread={message.unread || undefined}>
+          {message.unread && <i className={styles.unreadDot} role="img" aria-label="Unread" />}
+          <span>{sender}</span>
+        </span>
+        <span className={styles.when}>{when}</span>
+      </span>
+      <span className={styles.subject} data-unread={message.unread || undefined}>
+        {message.subject || "(no subject)"}
+      </span>
+      {message.gist && <span className={styles.gist}>{message.gist}</span>}
+      <span className={styles.meta}>
+        {showCategory && message.category && (
+          <span className={styles.badge} data-tone={message.category === "needs_reply" || message.category === "important" ? "accent" : undefined}>
+            {categoryLabel(message.category)}
+          </span>
+        )}
+        {message.folder.toUpperCase() !== "INBOX" && <span className={styles.badge}>{message.folder}</span>}
+        {showAccount && message.account && <span className={styles.when}>{message.account}</span>}
+      </span>
+    </>
+  );
+  return (
+    <div className={styles.row} data-highlight={highlight || undefined} data-compact={compact || undefined}>
+      <div className={styles.line}>
+        {onOpen ? (
+          <button type="button" className={styles.body} onClick={onOpen}>
+            {body}
+            <ChevronIcon className={styles.chevron} />
+          </button>
+        ) : (
+          <div className={styles.body}>{body}</div>
+        )}
+      </div>
     </div>
   );
 }

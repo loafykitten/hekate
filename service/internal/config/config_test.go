@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 )
 
 func env(m map[string]string) func(string) string {
@@ -221,5 +222,71 @@ func TestDefaultZoneIsNamed(t *testing.T) {
 	}
 	if name := cfg.Location.String(); name == "Local" || name == "" {
 		t.Errorf("default zone = %q", name)
+	}
+}
+
+func TestMailAccounts(t *testing.T) {
+	cfg, err := LoadFrom(env(map[string]string{
+		"HEKATE_MAIL_1_USER": "rika@work.example.com", "HEKATE_MAIL_1_PASS": "pw-one",
+		"HEKATE_MAIL_2_USER": "rika@example.org", "HEKATE_MAIL_2_PASS": "pw-two",
+		"HEKATE_MAIL_2_NAME": "Home", "HEKATE_MAIL_2_HOST": "imap.example.org:143", "HEKATE_MAIL_2_ARCHIVE": "Old",
+		"HEKATE_MAIL_SWEEP": "5m",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.MailAccounts) != 2 || cfg.MailSweep != 5*time.Minute {
+		t.Fatalf("accounts = %+v sweep = %v", cfg.MailAccounts, cfg.MailSweep)
+	}
+	a, b := cfg.MailAccounts[0], cfg.MailAccounts[1]
+	if a.Name != "example" || a.Host != "imappro.zoho.com:993" || a.Archive != "Archive" || a.Pass.Reveal() != "pw-one" {
+		t.Errorf("first account = %+v", a)
+	}
+	if b.Name != "Home" || b.Host != "imap.example.org:143" || b.Archive != "Old" {
+		t.Errorf("second account = %+v", b)
+	}
+	var buf bytes.Buffer
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("cfg", "config", cfg)
+	if strings.Contains(buf.String(), "pw-one") || strings.Contains(buf.String(), "rika@") {
+		t.Errorf("config log leaks mail credentials: %s", buf.String())
+	}
+}
+
+func TestMailDefaults(t *testing.T) {
+	cfg, err := LoadFrom(env(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.MailAccounts) != 0 || cfg.MailSweep != 10*time.Minute {
+		t.Errorf("defaults = %+v %v", cfg.MailAccounts, cfg.MailSweep)
+	}
+}
+
+func TestInvalidMail(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"user without pass", map[string]string{"HEKATE_MAIL_1_USER": "rika@example.com"}, "HEKATE_MAIL_1_USER and HEKATE_MAIL_1_PASS"},
+		{"pass without user", map[string]string{"HEKATE_MAIL_3_PASS": "x"}, "HEKATE_MAIL_3_"},
+		{"not an address", map[string]string{"HEKATE_MAIL_1_USER": "rika", "HEKATE_MAIL_1_PASS": "x"}, "full mail address"},
+		{"duplicate label", map[string]string{
+			"HEKATE_MAIL_1_USER": "a@mail.example.com", "HEKATE_MAIL_1_PASS": "x",
+			"HEKATE_MAIL_2_USER": "b@example.net", "HEKATE_MAIL_2_PASS": "y"}, "HEKATE_MAIL_2_NAME"},
+		{"bad sweep", map[string]string{"HEKATE_MAIL_SWEEP": "soon"}, "HEKATE_MAIL_SWEEP"},
+		{"sweep too short", map[string]string{"HEKATE_MAIL_SWEEP": "10s"}, "HEKATE_MAIL_SWEEP"},
+		{"bad bulk effort", map[string]string{"HEKATE_MODEL_BULK_EFFORT": "wild"}, "HEKATE_MODEL_BULK_EFFORT"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := LoadFrom(env(tt.env))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("err = %v, want mention of %s", err, tt.want)
+			}
+			if strings.Contains(err.Error(), "pw") {
+				t.Errorf("error leaks a password: %v", err)
+			}
+		})
 	}
 }

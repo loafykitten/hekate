@@ -21,14 +21,18 @@ describe("classifyMicError", () => {
 });
 
 // Minimal Web Audio and getUserMedia doubles: enough to drive MicCapture's lifecycle.
-function stubAudio() {
+function stubAudio(refusals: string[] = []) {
+  const requests: MediaStreamConstraints[] = [];
   let resolveModule!: () => void;
   const moduleLoaded = new Promise<void>((r) => (resolveModule = r));
   const streams: { stopped: boolean }[] = [];
   const node = () => ({ connect: (n: unknown) => n, disconnect: () => {} });
   vi.stubGlobal("navigator", {
     mediaDevices: {
-      getUserMedia: async () => {
+      getUserMedia: async (constraints: MediaStreamConstraints) => {
+        requests.push(constraints);
+        const refusal = refusals.shift();
+        if (refusal) throw named(refusal);
         const track = { stopped: false, stop() { this.stopped = true; } };
         streams.push(track);
         return { getTracks: () => [track] };
@@ -54,11 +58,14 @@ function stubAudio() {
       disconnect = () => {};
     },
   );
-  return { streams, resolveModule };
+  return { streams, requests, resolveModule };
 }
 
 describe("MicCapture lifecycle", () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
 
   it("a start cancelled while the worklet loads never tears down the next recording", async () => {
     const audio = stubAudio();
@@ -75,5 +82,23 @@ describe("MicCapture lifecycle", () => {
     expect(mic.active).toBe(true);
     expect(audio.streams[0].stopped).toBe(true);
     expect(audio.streams[1].stopped).toBe(false);
+  });
+
+  it("retries with default audio when the tuned request finds no device", async () => {
+    const audio = stubAudio(["NotFoundError"]);
+    audio.resolveModule();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const mic = new MicCapture(() => {});
+    expect(await mic.start()).toBe(true);
+    expect(audio.requests).toHaveLength(2);
+    expect(audio.requests[1]).toEqual({ audio: true });
+  });
+
+  it("does not retry a refusal", async () => {
+    const audio = stubAudio(["NotAllowedError"]);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const mic = new MicCapture(() => {});
+    await expect(mic.start()).rejects.toMatchObject({ kind: "denied" });
+    expect(audio.requests).toHaveLength(1);
   });
 });

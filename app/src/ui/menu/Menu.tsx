@@ -1,8 +1,9 @@
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from "react";
-import { BellIcon, CalendarIcon, CloseIcon, MemoryIcon, SettingsIcon, TasksIcon, TodayIcon } from "../icons";
+import { BellIcon, CalendarIcon, CloseIcon, MailIcon, MemoryIcon, SettingsIcon, TasksIcon, TodayIcon } from "../icons";
 import { CalendarSection } from "./CalendarSection";
 import styles from "./Menu.module.css";
 import { MenuActiveContext, MenuNavigateContext } from "./MenuContext";
+import { MailSection } from "./MailSection";
 import { MemorySection } from "./MemorySection";
 import { RemindersSection } from "./RemindersSection";
 import { SECTION_LABEL, SECTIONS, type Section } from "./sections";
@@ -15,6 +16,7 @@ const ICONS: Record<Section, ReactNode> = {
   tasks: <TasksIcon />,
   reminders: <BellIcon />,
   calendar: <CalendarIcon />,
+  mail: <MailIcon />,
   memory: <MemoryIcon />,
   settings: <SettingsIcon />,
 };
@@ -29,6 +31,8 @@ function SectionBody({ section }: { section: Section }) {
       return <RemindersSection />;
     case "calendar":
       return <CalendarSection />;
+    case "mail":
+      return <MailSection />;
     case "memory":
       return <MemorySection />;
     case "settings":

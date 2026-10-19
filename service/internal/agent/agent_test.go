@@ -178,6 +178,42 @@ func lookupTool() Tool {
 	}
 }
 
+func TestStoredReplacesContentInHistory(t *testing.T) {
+	secret := Tool{
+		Name: "read_secret", Description: "Read a private thing", Effect: EffectRead,
+		Schema: json.RawMessage(`{"type":"object","properties":{}}`),
+		Run: func(context.Context, json.RawMessage) (Result, error) {
+			return Result{Content: "the private body text", Stored: "Read the thing (not kept)."}, nil
+		},
+	}
+	e := newEnv(t, func(n int, _ llmReq) (int, []string) {
+		if n == 0 {
+			return 200, callTool("", "call_1", "read_secret", `{}`)
+		}
+		return 200, say("Read it.")
+	}, envOpts{tools: []Tool{secret}})
+	e.agent.Say("c", "i", "read it")
+	e.hub.waitTurnEnd(t, 1)
+
+	// The model sees the content within the turn...
+	m := e.llm.requests()[1].Messages
+	if tool := m[len(m)-1]; tool["content"] != "the private body text" {
+		t.Errorf("tool message to the model = %v", tool)
+	}
+	// ...but neither history nor the audit log keeps it.
+	for _, msg := range e.messages() {
+		if strings.Contains(msg.Content, "private body") {
+			t.Errorf("stored message keeps the content: %+v", msg)
+		}
+	}
+	if n := e.count(`SELECT count(*) FROM messages WHERE role='tool' AND content='Read the thing (not kept).'`); n != 1 {
+		t.Errorf("stored tool results = %d, want the placeholder", n)
+	}
+	if n := e.count(`SELECT count(*) FROM activity WHERE result LIKE '%private body%'`); n != 0 {
+		t.Errorf("activity keeps the content")
+	}
+}
+
 func TestToolRoundTrip(t *testing.T) {
 	e := newEnv(t, func(n int, _ llmReq) (int, []string) {
 		if n == 0 {
@@ -434,6 +470,9 @@ func TestToolBudgetEndsInAnAnswer(t *testing.T) {
 	reqs := e.llm.requests()
 	if len(reqs) != 4 || len(reqs[3].Tools) != 0 {
 		t.Fatalf("requests = %d, last tools = %v", len(reqs), reqs[len(reqs)-1].Tools)
+	}
+	if last := reqs[3].Messages[len(reqs[3].Messages)-1]; last["role"] != "system" || last["content"] != outOfToolsNote {
+		t.Errorf("last message of the tool-less round = %v", last)
 	}
 	if end := ofType[proto.TurnEnd](ev)[0]; end.Status != "done" || end.Text != "I could not settle this, sorry about that." {
 		t.Errorf("turn_end = %+v", end)

@@ -16,11 +16,13 @@ import (
 	"time"
 
 	"github.com/loafykitten/hekate/service/internal/agent"
+	"github.com/loafykitten/hekate/service/internal/approvals"
 	"github.com/loafykitten/hekate/service/internal/buildinfo"
 	"github.com/loafykitten/hekate/service/internal/calendar"
 	"github.com/loafykitten/hekate/service/internal/config"
 	"github.com/loafykitten/hekate/service/internal/llm"
 	"github.com/loafykitten/hekate/service/internal/logging"
+	"github.com/loafykitten/hekate/service/internal/mail"
 	"github.com/loafykitten/hekate/service/internal/memory"
 	"github.com/loafykitten/hekate/service/internal/push"
 	"github.com/loafykitten/hekate/service/internal/reminders"
@@ -111,9 +113,19 @@ func run() error {
 		return fmt.Errorf("build memory: %w", err)
 	}
 
+	// Actions that wait for the owner's say-so. Features register their kinds
+	// on approvalSvc before the server starts.
+	approvalSvc, err := approvals.New(approvals.Options{Store: db, Location: cfg.Location, Events: hub, Broadcast: hub, Push: pushSvc, Logger: logger.Logger})
+	if err != nil {
+		return fmt.Errorf("build approvals: %w", err)
+	}
+
 	toolList := slices.Concat(taskSvc.Tools(), remSvc.Tools(), memSvc.Tools())
-	sources := []agent.Source{{Name: "What you know about {{tamer}}", Source: memSvc}}
-	api := []func(*http.ServeMux){taskSvc.Routes, remSvc.Routes, pushSvc.Routes, memSvc.Routes}
+	sources := []agent.Source{
+		{Name: "What you know about {{tamer}}", Source: memSvc},
+		{Name: "Waiting on {{tamer}}", Source: approvalSvc},
+	}
+	api := []func(*http.ServeMux){taskSvc.Routes, remSvc.Routes, pushSvc.Routes, memSvc.Routes, approvalSvc.Routes}
 
 	// World tools: calendar (CalDAV), web search/read, weather.
 	invalidate := func(domain string) { hub.Invalidate(domain) }
@@ -132,16 +144,31 @@ func run() error {
 	)
 	api = append(api, calSvc.Register, webSvc.Register, weatherSvc.Register)
 
+	// Mail: IMAP header cache, sweep and classification. Trashing, unsubscribing,
+	// new rules and bulk changes go through approvals.
+	llmClient := llm.New(llm.Config{
+		BaseURL: cfg.NeuralwattBaseURL,
+		APIKey:  cfg.NeuralwattAPIKey.Reveal(),
+		Logger:  logger.Logger,
+	})
+	mailSvc, err := mail.New(mail.Options{
+		Store: db, Accounts: cfg.MailAccounts, Interval: cfg.MailSweep,
+		LLM: llmClient, Model: cfg.ModelBulk, Approvals: approvalSvc,
+		OwnerName: cfg.TamerName, Location: cfg.Location, Logger: logger.Logger, OnChange: invalidate,
+	})
+	if err != nil {
+		return fmt.Errorf("build mail: %w", err)
+	}
+	toolList = slices.Concat(toolList, mailSvc.Tools())
+	sources = append(sources, agent.Source{Name: "Mail", Source: mailSvc})
+	api = append(api, mailSvc.Routes)
+
 	tools, err := agent.NewRegistry(toolList...)
 	if err != nil {
 		return fmt.Errorf("register tools: %w", err)
 	}
 	ag, err := agent.New(agent.Options{
-		LLM: llm.New(llm.Config{
-			BaseURL: cfg.NeuralwattBaseURL,
-			APIKey:  cfg.NeuralwattAPIKey.Reveal(),
-			Logger:  logger.Logger,
-		}),
+		LLM:       llmClient,
 		Store:     db,
 		Hub:       hub,
 		Synth:     synth,
@@ -161,9 +188,11 @@ func run() error {
 		return fmt.Errorf("start agent: %w", err)
 	}
 
-	// The reminder scheduler runs until the process is told to stop.
+	// The schedulers run until the process is told to stop.
 	var background sync.WaitGroup
 	background.Go(func() { remSvc.Run(ctx) })
+	background.Go(func() { approvalSvc.Run(ctx) })
+	background.Go(func() { mailSvc.Run(ctx) })
 
 	srv := server.New(server.Options{
 		Logger:       logger.Logger,

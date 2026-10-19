@@ -7,6 +7,8 @@ require (
 	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/coder/websocket v1.8.15
 	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
+	github.com/emersion/go-imap/v2 v2.0.0-beta.8
+	github.com/emersion/go-message v0.18.2
 	github.com/emersion/go-webdav v0.7.0
 	github.com/google/uuid v1.6.0
 	github.com/k2-fsa/sherpa-onnx-go v1.13.8
@@ -19,6 +21,7 @@ require (
 require (
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6 // indirect
 	github.com/go-shiori/dom v0.0.0-20230515143342-73569d674e1c // indirect
 	github.com/gogs/chardet v0.0.0-20211120154057-b7413eaefb8f // indirect
 	github.com/golang-jwt/jwt/v5 v5.2.1 // indirect

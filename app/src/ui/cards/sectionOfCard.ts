@@ -10,6 +10,9 @@ export function sectionOfCard(card: Card): Section | undefined {
       return "reminders";
     case "events":
       return "calendar";
+    case "mail":
+    case "mail_message":
+      return "mail";
     case "memory":
       return "memory";
     case "weather":

@@ -1,13 +1,16 @@
 import { useMemo } from "react";
-import { useCalendarStatus, useEvents, useNow, useSetTaskDone, useTasks, useReminders, useWeather } from "../../data/hooks";
+import { useApprovals, useCalendarStatus, useEvents, useNow, useSetTaskDone, useTasks, useReminders, useWeather } from "../../data/hooks";
 import { addDays, dayKey, dayKeyOfMs, formatDayLong, greeting, groupEventsByDay, toRfc3339, toMs } from "../../data/time";
 import { degrees, GROUP_LABEL, isDaytime, precipLabel, weatherGroup } from "../../data/weather";
 import { WeatherIcon } from "../cards/WeatherIcon";
+import { ApprovalPanel } from "../approvals/ApprovalPanel";
 import { Button, SectionTitle, StateMessage } from "../kit/kit";
 import { EventRow, ReminderRow, TaskRow } from "../rows/rows";
 import { useMenuActive, useMenuNavigate } from "./MenuContext";
 import { ReminderActions } from "./RemindersSection";
 import styles from "./sections.module.css";
+
+const OUTCOME_VISIBLE_MS = 30 * 60_000;
 
 // The day at a glance: weather, today's events, what's due or late, and the next reminders.
 export function TodaySection() {
@@ -25,6 +28,21 @@ export function TodaySection() {
   const tasks = useTasks(undefined, "open", active);
   const reminders = useReminders("upcoming", active);
   const setDone = useSetTaskDone();
+  const approvals = useApprovals("pending", active);
+  const recentApprovals = useApprovals("recent", active);
+  // Decisions stay here a while after they're made, so an action that runs and then
+  // fails still shows its outcome.
+  const justDecided = useMemo(
+    () =>
+      (recentApprovals.data ?? []).filter(
+        (a) => a.status !== "expired" && a.decided_at && now - Date.parse(a.decided_at) < OUTCOME_VISIBLE_MS,
+      ),
+    [recentApprovals.data, now],
+  );
+  const shownApprovals = useMemo(() => {
+    const pending = approvals.data ?? [];
+    return [...pending, ...justDecided.filter((a) => !pending.some((p) => p.id === a.id))];
+  }, [approvals.data, justDecided]);
 
   const todayEvents = useMemo(
     () => groupEventsByDay(events.data ?? [], {}, { from: today, to: today })[0]?.events ?? [],
@@ -48,6 +66,19 @@ export function TodaySection() {
         <h3 className={styles.hello}>{greeting(now)}</h3>
         <p className={styles.date}>{formatDayLong(today)}</p>
       </div>
+
+      {shownApprovals.length > 0 && (
+        <section>
+          <SectionTitle>{(approvals.data?.length ?? 0) > 0 ? "Needs your OK" : "Just decided"}</SectionTitle>
+          <div className={styles.group}>
+            {shownApprovals.map((a) => (
+              <div key={a.id} className={styles.approval}>
+                <ApprovalPanel approval={a} />
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <WeatherSummary query={weather} now={now} />
 

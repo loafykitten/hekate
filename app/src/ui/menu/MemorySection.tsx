@@ -1,23 +1,15 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useCoreMemory, useDeleteCore, useDeleteMemory, useMemories, useNow, usePatchMemory, usePutCore } from "../../data/hooks";
 import { MEMORY_KINDS, type CoreEntry, type Memory } from "../../data/model";
 import { EditIcon, PlusIcon, TrashIcon } from "../icons";
 import { Button, Chip, ConfirmButton, IconButton, SectionTitle, SelectField, StateMessage, TextArea, TextField } from "../kit/kit";
 import { useAutoFocus } from "../kit/useAutoFocus";
+import { useDebounced } from "../kit/useDebounced";
 import { kindLabel } from "../rows/labels";
 import { MemoryRow } from "../rows/rows";
 import { useMenuActive } from "./MenuContext";
 import styles from "./sections.module.css";
 import rowStyles from "../rows/rows.module.css";
-
-function useDebounced<T>(value: T, ms: number): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(value), ms);
-    return () => clearTimeout(t);
-  }, [value, ms]);
-  return debounced;
-}
 
 // "favorite_food" -> "Favorite food"
 function prettyKey(key: string): string {

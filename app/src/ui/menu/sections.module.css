@@ -365,3 +365,84 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Mail */
+.sectionNote {
+  margin: calc(-1 * var(--space-1)) 0 var(--space-3);
+  color: var(--fg-muted);
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+.rowAction {
+  display: flex;
+  flex: none;
+  align-items: center;
+  align-self: center;
+  padding-right: var(--space-1);
+}
+
+.mailHead {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.mailSubject {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.mailFrom {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--space-2);
+  margin: 0;
+  font-size: 0.9375rem;
+  overflow-wrap: anywhere;
+}
+
+.mailFrom span {
+  color: var(--fg-muted);
+}
+
+.mailMeta {
+  margin: 0;
+  color: var(--fg-subtle);
+  font-size: var(--text-sm);
+}
+
+.mailBody {
+  max-width: 72ch;
+  margin: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.mailNote {
+  margin: var(--space-2) 0 0;
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+}
+
+/* Approvals on Today */
+.approval {
+  border-bottom: 1px solid var(--hairline);
+}
+
+.approval:last-child {
+  border-bottom: 0;
+}

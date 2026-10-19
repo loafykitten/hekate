@@ -9,12 +9,15 @@ import {
   pushSupport,
   type PushDeps,
 } from "../../data/push";
+import { approvalKindLabel } from "../../data/approvals";
+import { useApprovalRules, useDeleteApprovalRule } from "../../data/hooks";
 import { pushApi } from "../../data/rest";
 import { useConversation, useConversationState } from "../ConversationContext";
 import { useConnection } from "../health";
-import { Button, SectionTitle } from "../kit/kit";
+import { Button, ConfirmButton, SectionTitle, StateMessage } from "../kit/kit";
 import { useMenuActive } from "./MenuContext";
 import styles from "./sections.module.css";
+import rowStyles from "../rows/rows.module.css";
 
 type Tone = "ok" | "warn" | "danger" | undefined;
 
@@ -127,6 +130,59 @@ function Notifications() {
   );
 }
 
+// What she may do without asking, because you chose "Always" once.
+function StandingPermissions() {
+  const active = useMenuActive();
+  const rules = useApprovalRules(active);
+  const remove = useDeleteApprovalRule();
+  const items = rules.data ?? [];
+  return (
+    <section>
+      <SectionTitle>Standing permissions</SectionTitle>
+      {rules.isError && !rules.data ? (
+        <StateMessage kind="error" title="Couldn't load permissions" onRetry={() => void rules.refetch()}>
+          {rules.error.message}
+        </StateMessage>
+      ) : rules.isPending ? (
+        <StateMessage kind="loading" />
+      ) : items.length === 0 ? (
+        <p className={styles.callout}>None yet. When you choose Always on a request, it shows up here and you can take it back any time.</p>
+      ) : (
+        <>
+          <p className={styles.sectionNote}>Renamon does these without asking. Revoke one and she&rsquo;ll ask again.</p>
+          <div className={styles.group}>
+            {items.map((r) => (
+              <div key={r.id} className={rowStyles.row}>
+                <div className={rowStyles.line}>
+                  <div className={rowStyles.body}>
+                    <span className={rowStyles.title}>{approvalKindLabel(r.kind)}</span>
+                    <span className={rowStyles.meta}>
+                      <span className={rowStyles.badge} data-tone="accent">
+                        {r.scope_label}
+                      </span>
+                      <span className={rowStyles.when}>{r.uses === 0 ? "Not used yet" : `Used ${r.uses} ${r.uses === 1 ? "time" : "times"}`}</span>
+                    </span>
+                  </div>
+                  <div className={styles.rowAction}>
+                    <ConfirmButton
+                      compact
+                      label="Revoke"
+                      confirmLabel="Confirm"
+                      describe={`${approvalKindLabel(r.kind)}: ${r.scope_label}`}
+                      busy={remove.isPending && remove.variables === r.id}
+                      onConfirm={() => remove.mutate(r.id)}
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 function Voice() {
   const { capabilities, connection } = useConversationState();
   const row = (title: string, detail: string, on: boolean | undefined) => (
@@ -176,6 +232,7 @@ export function SettingsSection() {
   return (
     <div className={styles.stack}>
       <Notifications />
+      <StandingPermissions />
       <Voice />
       <About />
     </div>

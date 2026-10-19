@@ -1,11 +1,16 @@
 import { keepPreviousData, MutationCache, QueryCache, QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import type { CalendarEvent, Task } from "./model";
+import { applyApproval, freshest } from "./approvals";
+import { asApproval, type Approval, type CalendarEvent, type Message, type Task } from "./model";
 import { DOMAINS, keys, type Domain } from "./queryKeys";
 import {
   ApiError,
+  approvalsApi,
   calendarApi,
   fetchWeather,
+  mailApi,
+  type ApprovalDecision,
+  type MailQuery,
   memoryApi,
   remindersApi,
   tasksApi,
@@ -28,11 +33,22 @@ export function createQueryClient(onError: (message: string, key: string) => voi
         // Only a menu section's first failure (nothing to show yet) is worth a toast. The health
         // poll and the log have their own ways of saying so.
         const section = String(query.queryKey[0]);
-        if (query.state.data === undefined && (DOMAINS as readonly string[]).includes(section)) onError(describe(error), `rest-${String(query.queryKey[0])}`);
+        if (!query.meta?.quiet && query.state.data === undefined && (DOMAINS as readonly string[]).includes(section)) onError(describe(error), `rest-${String(query.queryKey[0])}`);
       },
     }),
     mutationCache: new MutationCache({
-      onError: (error) => onError(describe(error), "rest-mutation"),
+      onSuccess: (data, _vars, _ctx, mutation) => {
+        // An allowed action that ran and failed still answers 200: say so, wherever it was decided.
+        const approval = mutation.meta?.reportsApprovalFailure ? asApproval(data) : undefined;
+        if (approval?.status === "failed") {
+          onError(approval.result ? `That didn't work: ${approval.result}` : "That didn't work.", `approval-failed-${approval.id}`);
+        }
+      },
+      onError: (error, _vars, _ctx, mutation) => {
+        // A decision somebody else made first is not a failure: the card refetches and shows it.
+        if (mutation.meta?.handles409 && error instanceof ApiError && error.status === 409) return;
+        onError(describe(error), "rest-mutation");
+      },
     }),
     defaultOptions: {
       queries: {
@@ -214,5 +230,109 @@ export function useWeather(enabled = true) {
     queryFn: ({ signal }) => fetchWeather(undefined, signal),
     staleTime: 10 * 60_000,
     enabled,
+  });
+}
+
+// --- mail ----------------------------------------------------------------------------------
+
+export function useMailStatus(enabled = true) {
+  return useQuery({ queryKey: keys.mailStatus, queryFn: ({ signal }) => mailApi.status(signal), enabled });
+}
+
+export function useMailSummary(enabled = true) {
+  return useQuery({ queryKey: keys.mailSummary, queryFn: ({ signal }) => mailApi.summary(signal), enabled });
+}
+
+export function useMailMessages(params: { q: string; category: string; account: string }, enabled = true) {
+  const query: MailQuery = {
+    q: params.q || undefined,
+    category: params.category || undefined,
+    account: params.account || undefined,
+    // Searching looks through archived mail too.
+    folder: params.q ? "all" : "inbox",
+    limit: 100,
+  };
+  return useQuery({
+    queryKey: keys.mailMessages(params.q, params.category, params.account),
+    queryFn: ({ signal }) => mailApi.messages(query, signal),
+    placeholderData: keepPreviousData,
+    enabled,
+  });
+}
+
+// The body comes from the mail server each time it is opened, so it is never stale for long.
+export function useMailMessage(id: string, enabled = true) {
+  return useQuery({
+    queryKey: keys.mailMessage(id),
+    queryFn: ({ signal }) => mailApi.message(id, signal),
+    retry: (count, error) => !(error instanceof ApiError) && count < 1,
+    staleTime: 0,
+    meta: { quiet: true },
+    enabled,
+  });
+}
+
+export function useArchiveMessage() {
+  return useDomainMutation(["mail"], (id: string) => mailApi.archive(id));
+}
+
+export function useTrashMessage() {
+  return useDomainMutation(["mail"], (id: string) => mailApi.trash(id));
+}
+
+export function useMarkRead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, unread }: { id: string; unread: boolean }) => mailApi.markRead(id, unread),
+    onSuccess: (message: Message) => {
+      qc.setQueryData<{ message: Message; body: unknown }>(keys.mailMessage(message.id), (cur) => cur && { ...cur, message });
+    },
+    // The open message keeps what the mutation returned; the lists and the counts look again.
+    onSettled: () => Promise.all([qc.invalidateQueries({ queryKey: ["mail", "list"] }), qc.invalidateQueries({ queryKey: keys.mailSummary })]),
+  });
+}
+
+export function useMailRules(enabled = true) {
+  return useQuery({ queryKey: keys.mailRules, queryFn: ({ signal }) => mailApi.rules(signal), enabled });
+}
+
+export function useDeleteMailRule() {
+  return useDomainMutation(["mail"], (id: string) => mailApi.removeRule(id));
+}
+
+// --- approvals -----------------------------------------------------------------------------
+
+export function useApprovals(status: "pending" | "recent", enabled = true) {
+  return useQuery({ queryKey: keys.approvals(status), queryFn: ({ signal }) => approvalsApi.list(status, signal), enabled });
+}
+
+export function useApprovalRules(enabled = true) {
+  return useQuery({ queryKey: keys.approvalRules, queryFn: ({ signal }) => approvalsApi.rules(signal), enabled });
+}
+
+export function useDeleteApprovalRule() {
+  return useDomainMutation(["approvals"], (id: string) => approvalsApi.removeRule(id));
+}
+
+// An approval as it is now: the snapshot a card arrived with, kept current by `approval` events,
+// decisions made here and refetches.
+export function useLiveApproval(initial: Approval): Approval {
+  const q = useQuery({
+    queryKey: keys.approval(initial.id),
+    queryFn: ({ signal }) => approvalsApi.find(initial.id, signal),
+    initialData: initial,
+    staleTime: Infinity,
+  });
+  return q.data ? freshest(initial, q.data) : initial;
+}
+
+export function useDecideApproval() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, decision }: { id: string; decision: ApprovalDecision }) => approvalsApi.decide(id, decision),
+    meta: { handles409: true, reportsApprovalFailure: true },
+    onSuccess: (approval) => applyApproval(qc, approval),
+    // Allowing can change mail, and a 409 means somebody decided first: either way, look again.
+    onSettled: () => Promise.all([qc.invalidateQueries({ queryKey: ["approvals"] }), qc.invalidateQueries({ queryKey: ["mail"] })]),
   });
 }

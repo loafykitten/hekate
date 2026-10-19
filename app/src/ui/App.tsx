@@ -2,6 +2,7 @@ import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import type { Stage } from "../character/stage";
 import { Conversation } from "../conversation/conversation";
+import { applyApproval } from "../data/approvals";
 import { createQueryClient } from "../data/hooks";
 import { invalidationKeys } from "../data/queryKeys";
 import { CardStack } from "./cards/CardStack";
@@ -80,6 +81,9 @@ export function App() {
       }),
     [conversation, queryClient],
   );
+
+  // An approval changed (here or on another device): every card and list showing it updates.
+  useEffect(() => conversation.onApprovalChange((approval) => applyApproval(queryClient, approval)), [conversation, queryClient]);
 
   // A notification tapped while the app is open asks it to show the right section.
   useEffect(() => {

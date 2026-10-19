@@ -116,7 +116,7 @@
   order: 2;
   display: grid;
   flex: none;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(7, 1fr);
   padding: 4px calc(var(--space-1) + var(--safe-right)) calc(4px + var(--safe-bottom)) calc(var(--space-1) + var(--safe-left));
   border-top: 1px solid var(--hairline);
   background: rgba(18, 15, 28, 0.6);

@@ -589,3 +589,27 @@ func TestFireUsesEditsMadeAfterTheSnapshot(t *testing.T) {
 		t.Errorf("notices = %+v, want the edited text", ns)
 	}
 }
+
+// Snoozing by conversation ("again in ten minutes") must not move a daily
+// reminder's schedule: tomorrow is still 09:00, not 09:10.
+func TestSpokenSnoozeKeepsTheRepeatAnchor(t *testing.T) {
+	f := newFixture(t)
+	r := f.create(t, "Pills", "2026-10-20T09:00", "FREQ=DAILY")
+	f.clock.set(f.at("2026-10-20T09:00"))
+	if n, err := f.svc.fireDue(t.Context(), 0); err != nil || n != 1 {
+		t.Fatalf("fire: %d %v", n, err)
+	}
+	if _, err := runTool(t, f, "reminder_snooze", `{"id":"`+r.ID+`","minutes":10}`); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.get(t, r.ID); got.At != "2026-10-20T09:10:00-05:00" {
+		t.Fatalf("after snooze at = %s", got.At)
+	}
+	f.clock.set(f.at("2026-10-20T09:10"))
+	if n, err := f.svc.fireDue(t.Context(), 0); err != nil || n != 1 {
+		t.Fatalf("snoozed fire: %d %v", n, err)
+	}
+	if got := f.get(t, r.ID); got.At != "2026-10-21T09:00:00-05:00" {
+		t.Errorf("next regular occurrence = %s, want 2026-10-21T09:00:00-05:00", got.At)
+	}
+}

@@ -560,3 +560,42 @@ func deref(s *string) string {
 	}
 	return *s
 }
+
+// All-day series move by calendar days, never picking up a DST hour (the review
+// case: moving the Nov 2 occurrence to Oct 26 must land the series on Oct 12).
+func TestAnchorToSeriesAllDayAcrossDST(t *testing.T) {
+	loc, _ := time.LoadLocation("America/Chicago")
+	day := func(s string) time.Time { v, _ := time.ParseInLocation("2006-01-02", s, loc); return v }
+	master := &component{start: day("2026-10-19"), end: day("2026-10-20"), allDay: true}
+	str := func(s string) *string { return &s }
+	inst, _ := json.Marshal("2026-11-02")
+	p := EventPatch{Instance: inst, Start: str("2026-10-26"), End: str("2026-10-28")}
+	if err := anchorToSeries(&p, master, true, loc); err != nil {
+		t.Fatal(err)
+	}
+	if *p.Start != "2026-10-12" || *p.End != "2026-10-14" {
+		t.Errorf("start, end = %s, %s; want 2026-10-12, 2026-10-14", *p.Start, *p.End)
+	}
+}
+
+// Update retries its edit after an ETag conflict; each attempt must translate
+// the caller's original patch, not the previous attempt's result.
+func TestAnchorToSeriesIsRepeatableOnACopy(t *testing.T) {
+	loc, _ := time.LoadLocation("America/Chicago")
+	at := func(s string) time.Time { v, _ := time.ParseInLocation("2006-01-02T15:04", s, loc); return v }
+	master := &component{start: at("2026-10-19T09:00"), end: at("2026-10-19T10:00")}
+	str := func(s string) *string { return &s }
+	inst, _ := json.Marshal("2026-10-26T09:00:00-05:00")
+	p := EventPatch{Instance: inst, Start: str("2026-10-26T10:00"), End: str("2026-10-26T11:00")}
+	var starts []string
+	for range 2 { // first attempt, then the retry
+		attempt := p
+		if err := anchorToSeries(&attempt, master, true, loc); err != nil {
+			t.Fatal(err)
+		}
+		starts = append(starts, *attempt.Start)
+	}
+	if starts[0] != "2026-10-19T10:00:00-05:00" || starts[1] != starts[0] || *p.Start != "2026-10-26T10:00" {
+		t.Errorf("attempts = %v, caller's start = %s", starts, *p.Start)
+	}
+}

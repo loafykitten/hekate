@@ -15,7 +15,7 @@ const maxCardItems = 20
 
 // Tools returns the model's reminder tools.
 func (s *Service) Tools() []agent.Tool {
-	return []agent.Tool{s.createTool(), s.listTool(), s.updateTool(), s.cancelTool()}
+	return []agent.Tool{s.createTool(), s.listTool(), s.updateTool(), s.snoozeTool(), s.cancelTool()}
 }
 
 const atHelp = "Local time unless it has an offset: 2026-10-20T09:00, or RFC 3339. A time of day is required."
@@ -109,8 +109,8 @@ func (s *Service) listTool() agent.Tool {
 func (s *Service) updateTool() agent.Tool {
 	return agent.Tool{
 		Name: "reminder_update",
-		Description: "Change a reminder: its text, its time (`at` or `in_minutes`, which also snoozes one that already fired), " +
-			"or its repeat rule (empty string stops repeating).",
+		Description: "Change a reminder: its text, its time (`at` or `in_minutes`; for a repeating reminder this moves every " +
+			"future occurrence) or its repeat rule (empty string stops repeating). To put off just this once, use reminder_snooze.",
 		Schema: json.RawMessage(`{"type":"object","required":["id"],"properties":{
 			"id":{"type":"string","description":"The reminder id, as shown in reminder results."},
 			"text":{"type":"string"},
@@ -139,6 +139,37 @@ func (s *Service) updateTool() agent.Tool {
 				return agent.Result{}, err
 			}
 			return s.result(ctx, "Reminder updated: "+oneLine(r), r)
+		},
+	}
+}
+
+func (s *Service) snoozeTool() agent.Tool {
+	return agent.Tool{
+		Name: "reminder_snooze",
+		Description: "Put a reminder off for a while (\"remind me again in ten minutes\"). A repeating reminder fires again " +
+			"after the snooze, then keeps its usual schedule.",
+		Schema: json.RawMessage(`{"type":"object","required":["id","minutes"],"properties":{
+			"id":{"type":"string","description":"The reminder id, as shown in reminder results."},
+			"minutes":{"type":"integer","minimum":1}
+		}}`),
+		Effect: agent.EffectLocal,
+		Label:  "Snoozing the reminder",
+		Run: func(ctx context.Context, raw json.RawMessage) (agent.Result, error) {
+			var a struct {
+				ID      agent.ID `json:"id"`
+				Minutes int      `json:"minutes"`
+			}
+			if err := agent.DecodeArgs(raw, &a); err != nil {
+				return agent.Result{}, err
+			}
+			if a.ID == 0 {
+				return agent.Result{}, httpx.BadRequest("id is required")
+			}
+			r, err := s.Snooze(ctx, int64(a.ID), a.Minutes)
+			if err != nil {
+				return agent.Result{}, err
+			}
+			return s.result(ctx, "Reminder snoozed: "+oneLine(r), r)
 		},
 	}
 }

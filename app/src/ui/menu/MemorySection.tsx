@@ -160,6 +160,9 @@ function MemoryEditor({ memory, busy, deleting, onSave, onCancel, onDelete }: {
   onCancel: () => void;
   onDelete: () => void;
 }) {
+  // Compare against the record as it was when editing began: refetches replace the prop, and
+  // diffing against the new copy would undo changes made meanwhile on another device.
+  const [base] = useState(memory);
   const [content, setContent] = useState(memory.content);
   const [kind, setKind] = useState(memory.kind);
   const [importance, setImportance] = useState(memory.importance);
@@ -171,9 +174,9 @@ function MemoryEditor({ memory, busy, deleting, onSave, onCancel, onDelete }: {
       onSubmit={(e) => {
         e.preventDefault();
         const fields: { content?: string; kind?: string; importance?: number } = {};
-        if (content.trim() !== memory.content) fields.content = content.trim();
-        if (kind !== memory.kind) fields.kind = kind;
-        if (importance !== memory.importance) fields.importance = importance;
+        if (content.trim() !== base.content) fields.content = content.trim();
+        if (kind !== base.kind) fields.kind = kind;
+        if (importance !== base.importance) fields.importance = importance;
         if (Object.keys(fields).length === 0) return onCancel();
         onSave(fields);
       }}

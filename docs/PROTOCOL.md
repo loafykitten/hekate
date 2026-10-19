@@ -169,7 +169,7 @@ focuses or opens `url`.
 | `GET /api/calendar/status` | | `{ configured, calendar_name? }` |
 | `GET /api/calendar/events?from=&to=` (default today through +7 days) | | `{ events: [Event] }` sorted by start |
 | `POST /api/calendar/events` | `{ title, start, end?, all_day?, location?, notes?, rrule? }` | `Event` (201) |
-| `PATCH /api/calendar/events/{uid}` | Event fields (applies to the whole series). Send `instance` when editing from one occurrence: a moved `start` shifts the series by the same amount and a new `end` sets its length. | `Event` |
+| `PATCH /api/calendar/events/{uid}` | Event fields (applies to the whole series). Send `instance` when editing from one occurrence: a moved `start` shifts the series by the same amount (whole days for all-day events) and a new `end` sets its length. | `Event` |
 
 All-day events use an exclusive end date (RFC 5545): a one-day event on the 20th has `start: "2026-10-20"`, `end: "2026-10-21"`. Renamon can only edit or delete events she created; the owner can change any event through REST.
 | `DELETE /api/calendar/events/{uid}` | | 204 (whole series) |

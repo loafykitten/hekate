@@ -74,6 +74,9 @@ function EventForm({ event, startMs, busy, submitLabel, onSubmit, onCancel, chil
   onCancel: () => void;
   children?: ReactNode;
 }) {
+  // Compare against the record as it was when editing began: refetches replace the prop, and
+  // diffing against the new copy would undo changes made meanwhile on another device.
+  const [base] = useState(event);
   const [d, setD] = useState(() => draftFor(event, startMs));
   const first = useAutoFocus<HTMLInputElement>();
   const set = (patch: Partial<EventDraft>) => setD((prev) => ({ ...prev, ...patch }));
@@ -96,12 +99,12 @@ function EventForm({ event, startMs, busy, submitLabel, onSubmit, onCancel, chil
 
   // All-day ends are exclusive (RFC 5545): a one-day event on the 20th ends on the 21st. Moving a
   // multi-day event keeps its length.
-  const wasAllDayEvent = !!event && (event.all_day || isDateOnly(event.start));
-  const spanDays = event && wasAllDayEvent ? Math.max(1, daysBetween(toDateInput(event.start), toDateInput(event.end))) : 1;
+  const wasAllDayEvent = !!base && (base.all_day || isDateOnly(base.start));
+  const spanDays = base && wasAllDayEvent ? Math.max(1, daysBetween(toDateInput(base.start), toDateInput(base.end))) : 1;
 
   function submit() {
     const fields: EventFields & { title: string; start: string } = { title: d.title.trim(), start };
-    if (!event) {
+    if (!base) {
       fields.all_day = d.allDay;
       fields.end = d.allDay ? addDays(d.startDate, 1) : end;
       if (d.location.trim()) fields.location = d.location.trim();
@@ -111,20 +114,20 @@ function EventForm({ event, startMs, busy, submitLabel, onSubmit, onCancel, chil
     }
     // Editing sends only what changed, so a recurring series keeps its original start.
     const changed: EventFields = {};
-    if (fields.title !== event.title) changed.title = fields.title;
-    const wasAllDay = event.all_day || isDateOnly(event.start);
+    if (fields.title !== base.title) changed.title = fields.title;
+    const wasAllDay = base.all_day || isDateOnly(base.start);
     if (d.allDay !== wasAllDay) changed.all_day = d.allDay;
-    const startChanged = d.allDay !== wasAllDay || (d.allDay ? start !== toDateInput(event.start) : toMs(start) !== toMs(event.start));
+    const startChanged = d.allDay !== wasAllDay || (d.allDay ? start !== toDateInput(base.start) : toMs(start) !== toMs(base.start));
     if (startChanged) changed.start = start;
     if (d.allDay) {
       if (startChanged) changed.end = addDays(d.startDate, wasAllDay ? spanDays : 1);
-    } else if (startChanged || toMs(end) !== toMs(event.end)) changed.end = end;
-    if (d.location.trim() !== event.location) changed.location = d.location.trim();
-    if (d.notes.trim() !== event.notes) changed.notes = d.notes.trim();
-    if (d.rrule !== event.rrule) changed.rrule = d.rrule;
+    } else if (startChanged || toMs(end) !== toMs(base.end)) changed.end = end;
+    if (d.location.trim() !== base.location) changed.location = d.location.trim();
+    if (d.notes.trim() !== base.notes) changed.notes = d.notes.trim();
+    if (d.rrule !== base.rrule) changed.rrule = d.rrule;
     if (Object.keys(changed).length === 0) return onCancel();
     // Times edited on one occurrence of a series apply to the series relative to that occurrence.
-    if (event.instance && (changed.start || changed.end)) changed.instance = event.instance;
+    if (base.instance && (changed.start || changed.end)) changed.instance = base.instance;
     onSubmit(changed as EventFields & { title: string; start: string });
   }
 

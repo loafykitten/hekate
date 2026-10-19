@@ -284,10 +284,13 @@ func (s *Service) Update(ctx context.Context, uid string, p EventPatch, onlyHeka
 			return false, ErrNotOwned
 		}
 		cur := ser.event(*ser.master, s.loc, nil)
-		if err := anchorToSeries(&p, ser.master, ser.rruleString() != "", s.loc); err != nil {
+		// A copy per attempt: mutate retries this after an ETag conflict, and the
+		// translation must start from the caller's patch each time.
+		patch := p
+		if err := anchorToSeries(&patch, ser.master, ser.rruleString() != "", s.loc); err != nil {
 			return false, err
 		}
-		in, err := mergePatch(cur, ser.master, p, s.loc)
+		in, err := mergePatch(cur, ser.master, patch, s.loc)
 		if err != nil {
 			return false, err
 		}
@@ -504,11 +507,13 @@ func anchorToSeries(p *EventPatch, m *component, recurring bool, loc *time.Locat
 	if err != nil {
 		return badInput("instance: %v", err)
 	}
-	format := func(t time.Time, dateOnly bool) string {
+	// shift moves t by the distance from `from` to `to`: whole calendar days for
+	// dates (an all-day edit must not pick up a DST hour), elapsed time otherwise.
+	shift := func(t, from, to time.Time, dateOnly bool) string {
 		if dateOnly {
-			return t.In(loc).Format(dateLayout)
+			return t.In(loc).AddDate(0, 0, civilDays(to, loc)-civilDays(from, loc)).Format(dateLayout)
 		}
-		return t.In(loc).Format(time.RFC3339)
+		return t.Add(to.Sub(from)).In(loc).Format(time.RFC3339)
 	}
 	newStart, base := m.start, occ
 	if p.Start != nil {
@@ -516,19 +521,27 @@ func anchorToSeries(p *EventPatch, m *component, recurring bool, loc *time.Locat
 		if err != nil {
 			return badInput("start: %v", err)
 		}
-		newStart, base = m.start.Add(ns.Sub(occ)), ns
-		v := format(newStart, dateOnly)
-		p.Start = &v
+		v := shift(m.start, occ, ns, dateOnly)
+		if newStart, _, err = parseInput(v, loc); err != nil {
+			return badInput("start: %v", err)
+		}
+		base, p.Start = ns, &v
 	}
 	if p.End != nil {
 		ne, dateOnly, err := parseInput(*p.End, loc)
 		if err != nil {
 			return badInput("end: %v", err)
 		}
-		v := format(newStart.Add(ne.Sub(base)), dateOnly)
+		v := shift(newStart, base, ne, dateOnly)
 		p.End = &v
 	}
 	return nil
+}
+
+// civilDays counts calendar days since the epoch for t's date in loc.
+func civilDays(t time.Time, loc *time.Location) int {
+	y, mo, d := t.In(loc).Date()
+	return int(time.Date(y, mo, d, 0, 0, 0, 0, time.UTC).Unix() / 86400)
 }
 
 func mergePatch(cur Event, m *component, p EventPatch, loc *time.Location) (EventInput, error) {

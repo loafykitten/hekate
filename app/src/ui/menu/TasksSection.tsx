@@ -40,6 +40,9 @@ function TaskEditor({ task, lists, busy, onSave, onCancel, onDelete, deleting }:
   onDelete: () => void;
 }) {
   const listId = useId();
+  // Compare against the record as it was when editing began: refetches replace the prop, and
+  // diffing against the new copy would undo changes made meanwhile on another device.
+  const [base] = useState(task);
   const [title, setTitle] = useState(task.title);
   const [notes, setNotes] = useState(task.notes);
   const [date, setDate] = useState(task.due ? toDateInput(task.due) : "");
@@ -54,12 +57,12 @@ function TaskEditor({ task, lists, busy, onSave, onCancel, onDelete, deleting }:
   function save() {
     const due = dueFromInputs(date, time);
     const fields: TaskFields = {};
-    if (title.trim() !== task.title) fields.title = title.trim();
-    if (notes !== task.notes) fields.notes = notes;
-    if (!sameDue(due, task.due)) fields.due = due;
-    if (rrule !== task.rrule) fields.rrule = rrule;
-    if (priority !== task.priority) fields.priority = priority;
-    if (list.trim() !== task.list) fields.list = list.trim();
+    if (title.trim() !== base.title) fields.title = title.trim();
+    if (notes !== base.notes) fields.notes = notes;
+    if (!sameDue(due, base.due)) fields.due = due;
+    if (rrule !== base.rrule) fields.rrule = rrule;
+    if (priority !== base.priority) fields.priority = priority;
+    if (list.trim() !== base.list) fields.list = list.trim();
     if (Object.keys(fields).length === 0) return onCancel();
     onSave(fields);
   }

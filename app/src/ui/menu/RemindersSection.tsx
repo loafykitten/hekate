@@ -81,10 +81,12 @@ function ReminderForm({ initial, now, submitLabel, busy, onSubmit, onCancel, chi
   now: number;
   submitLabel: string;
   busy: boolean;
-  onSubmit: (value: FormValue) => void;
+  // `base` is the reminder as it was when editing began, to diff against.
+  onSubmit: (value: FormValue, base?: Reminder) => void;
   onCancel: () => void;
   children?: ReactNode;
 }) {
+  const [base] = useState(initial);
   const startAt = initial?.at ?? toRfc3339(nextHour(now));
   const [text, setText] = useState(initial?.text ?? "");
   const [date, setDate] = useState(toDateInput(startAt));
@@ -98,7 +100,7 @@ function ReminderForm({ initial, now, submitLabel, busy, onSubmit, onCancel, chi
       className={styles.form}
       onSubmit={(e) => {
         e.preventDefault();
-        if (valid) onSubmit({ text: text.trim(), at, rrule });
+        if (valid) onSubmit({ text: text.trim(), at, rrule }, base);
       }}
       onKeyDown={(e) => {
         if (e.key === "Escape") {
@@ -217,11 +219,12 @@ export function RemindersSection() {
                       submitLabel="Save"
                       busy={patch.isPending}
                       onCancel={() => setOpenId(undefined)}
-                      onSubmit={(v) => {
+                      onSubmit={(v, base = r) => {
+                        // Diff against the reminder as it was when editing began, not a refetched copy.
                         const fields: { text?: string; at?: string; rrule?: string | null } = {};
-                        if (v.text !== r.text) fields.text = v.text;
-                        if (toMs(v.at) !== toMs(r.at)) fields.at = v.at;
-                        if (v.rrule !== r.rrule) fields.rrule = v.rrule;
+                        if (v.text !== base.text) fields.text = v.text;
+                        if (toMs(v.at) !== toMs(base.at)) fields.at = v.at;
+                        if (v.rrule !== base.rrule) fields.rrule = v.rrule;
                         if (Object.keys(fields).length === 0) return setOpenId(undefined);
                         patch.mutate({ id: r.id, fields }, { onSuccess: () => setOpenId(undefined) });
                       }}

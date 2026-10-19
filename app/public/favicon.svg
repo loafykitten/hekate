@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>Hekate</title>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2b2440"/>
+      <stop offset="1" stop-color="#120f1c"/>
+    </linearGradient>
+    <linearGradient id="flame" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd98a"/>
+      <stop offset="1" stop-color="#f0a83c"/>
+    </linearGradient>
+    <mask id="crescent">
+      <rect width="512" height="512" fill="#fff"/>
+      <circle cx="294" cy="226" r="104" fill="#000"/>
+    </mask>
+  </defs>
+  <rect width="512" height="512" fill="url(#sky)"/>
+  <g transform="translate(20 4)">
+    <!-- Crescent moon, opening toward the upper right. -->
+    <circle cx="236" cy="262" r="124" fill="#f3eefc" mask="url(#crescent)"/>
+    <!-- A small torch: handle and flame, tucked into the crescent's opening. -->
+    <g transform="rotate(14 313 300)">
+      <rect x="305" y="262" width="16" height="74" rx="8" fill="#f3eefc"/>
+      <path d="M313 148c18 30 46 48 46 84 0 28-20 48-46 48s-46-20-46-48c0-20 10-33 20-45 3 15 10 23 18 25-5-23-3-46 8-64z" fill="url(#flame)"/>
+      <path d="M313 204c10 14 23 23 23 40 0 14-10 24-23 24s-23-10-23-24c0-10 5-17 10-23 2 8 5 12 9 13-3-11-2-21 4-30z" fill="#fff4d6"/>
+    </g>
+  </g>
+</svg>

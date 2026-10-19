@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Manual controls for the homelab deployment. Run from the stack directory.
+#   hekatectl status | logs | rollback | pause | resume | deploys [n]
+set -euo pipefail
+cd "$(dirname "$(readlink -f "$0")")"
+state=state
+case "${1:-status}" in
+  status)
+    docker compose ps
+    echo
+    curl -fsS --max-time 3 http://127.0.0.1:3200/healthz 2>/dev/null \
+      || docker exec hekate-deployer curl -fsS --max-time 3 http://127.0.0.1:3200/healthz || echo "healthz unreachable"
+    echo
+    [[ -f $state/paused ]] && echo "deploys: PAUSED" || echo "deploys: active"
+    tail -n 5 "$state/deploy.log" 2>/dev/null || true
+    ;;
+  logs) docker compose logs -f --tail 100 hekate ;;
+  deploys) tail -n "${2:-20}" "$state/deploy.log" ;;
+  rollback)
+    touch "$state/paused"
+    HEKATE_IMAGE=hekate-local:previous docker compose up -d --no-deps hekate
+    echo "Rolled back to the previous image and paused deploys. 'hekatectl resume' to continue."
+    ;;
+  pause) touch "$state/paused"; echo "deploys paused" ;;
+  resume) rm -f "$state/paused" "$state/bad-image"; echo "deploys resumed" ;;
+  *) echo "usage: $0 status|logs|deploys [n]|rollback|pause|resume" >&2; exit 2 ;;
+esac

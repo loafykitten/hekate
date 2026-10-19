@@ -5,8 +5,9 @@
     "moduleResolution": "bundler",
     "types": ["node"],
     "strict": true,
+    "allowImportingTsExtensions": true,
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["vite.config.ts", "server"]
+  "include": ["vite.config.ts", "vitest.config.ts", "pwa-assets.config.ts", "server"]
 }

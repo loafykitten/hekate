@@ -1,0 +1,27 @@
+# Add to the reverse proxy that shares the Tailscale container's network namespace.
+# Only the owner's devices get through: match the TCP peer address (tailnet IPs), never
+# client-supplied forwarding headers.
+
+(owner_devices) {
+	@owner remote_ip 100.64.0.1 100.64.0.2   # replace with your devices' tailnet IPs
+}
+
+hekate.example.com {
+	import owner_devices
+	handle @owner {
+		reverse_proxy 127.0.0.1:3200
+	}
+	handle {
+		respond "Private service." 403
+	}
+}
+
+dav.example.com {
+	import owner_devices
+	handle @owner {
+		reverse_proxy 127.0.0.1:5232
+	}
+	handle {
+		respond "Private service." 403
+	}
+}

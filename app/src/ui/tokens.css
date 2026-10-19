@@ -1,0 +1,46 @@
+/* Design tokens. The two background values are also read by vite.config.ts for the PWA manifest. */
+:root {
+  /* Palette: dusk purple with an amber accent */
+  --bg-top: #2b2440;
+  --bg-bottom: #120f1c;
+  --surface: rgba(255, 255, 255, 0.08);
+  --surface-strong: rgba(255, 255, 255, 0.14);
+  --border: rgba(255, 255, 255, 0.16);
+  --fg: #f3eefc;
+  --fg-muted: rgba(243, 238, 252, 0.62);
+  --accent: #f0a83c;
+  --accent-fg: #1b1408;
+  --ok: #7ad99a;
+  --warn: #f0a83c;
+  --danger: #ef7a85;
+  --bubble-bg: #fffaf0;
+  --bubble-fg: #2a2233;
+  --shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+
+  /* Type */
+  --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-md: 1rem;
+
+  /* Space and shape */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  /* Motion */
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --duration: 200ms;
+
+  /* Layering and safe areas (the page is edge to edge under black-translucent) */
+  --z-overlay: 10;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+}

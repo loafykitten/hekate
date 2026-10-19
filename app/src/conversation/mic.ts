@@ -200,7 +200,7 @@ export class MicCapture {
     if (pending) {
       const generation = this.generation;
       await pending; // warming up already: wait for it rather than open twice
-      if (generation !== this.generation && !this.isOpen()) return false;
+      if (generation !== this.generation) return false; // cancelled (or superseded) meanwhile
     }
     if (this.isOpen()) return this.record(++this.generation);
     if (this.stream) throw new MicError("busy", "Already capturing.");

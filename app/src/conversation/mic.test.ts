@@ -395,4 +395,20 @@ describe("MicCapture recording handoff", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(audio.requests).toHaveLength(0);
   });
+
+  it("a press cancelled while waiting for the warm-up never takes over the next press", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    stubDocument();
+    const audio = stubAudio();
+    const mic = new MicCapture(() => {}, { stayOpen: true });
+    mic.prepare();
+    await vi.waitFor(() => expect(audio.requests).toHaveLength(1)); // warm-up waits on the worklet
+    const first = mic.start(); // waits for the warm-up
+    await mic.stop(); // cancelled
+    const second = mic.start();
+    audio.resolveModule();
+    expect(await first).toBe(false);
+    expect(await second).toBe(true);
+    expect(mic.active).toBe(true);
+  });
 });

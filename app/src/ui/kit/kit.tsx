@@ -39,8 +39,11 @@ export function IconButton({ label, children, className, type = "button", ...res
 }
 
 // A two-step delete: the first press arms it, the second confirms; it disarms itself.
-export function ConfirmButton({ label, confirmLabel = "Tap again to confirm", onConfirm, busy, icon }: {
+export function ConfirmButton({ label, confirmLabel = "Tap again to confirm", onConfirm, busy, icon, compact, describe }: {
+  // What it acts on, for screen readers: "Delete" alone is ambiguous in a list.
+  describe?: string;
   label: string;
+  compact?: boolean;
   confirmLabel?: string;
   onConfirm: () => void;
   busy?: boolean;
@@ -55,8 +58,10 @@ export function ConfirmButton({ label, confirmLabel = "Tap again to confirm", on
   return (
     <Button
       variant="danger"
+      compact={compact}
       busy={busy}
       data-armed={armed || undefined}
+      aria-label={describe ? (armed ? `${confirmLabel}: ${describe}` : `${label} ${describe}`) : undefined}
       onClick={() => {
         if (armed) onConfirm();
         else setArmed(true);

@@ -1,16 +1,30 @@
 import {
+  asApproval,
+  asApprovalRule,
   asCoreEntry,
   asEvent,
+  asMailBody,
+  asMailRule,
+  asMailStatus,
+  asMailSummary,
   asMemory,
+  asMessage,
   asReminder,
   asTask,
   asTaskList,
   asWeather,
   isRec,
   list,
+  type Approval,
+  type ApprovalRule,
   type CalendarEvent,
   type CoreEntry,
+  type MailBody,
+  type MailRule,
+  type MailStatus,
+  type MailSummary,
   type Memory,
+  type Message,
   type Task,
   type TaskList,
   type Weather,
@@ -192,3 +206,68 @@ export async function fetchWeather(place?: string, signal?: AbortSignal): Promis
     throw e;
   }
 }
+
+// --- mail ----------------------------------------------------------------------------------
+
+export interface MailQuery {
+  q?: string;
+  category?: string;
+  account?: string;
+  folder?: "inbox" | "all";
+  unread?: boolean;
+  limit?: number;
+}
+
+export interface MailMessageDetail {
+  message: Message;
+  body: MailBody;
+}
+
+export const mailApi = {
+  status: async (signal?: AbortSignal): Promise<MailStatus> => asMailStatus(await request("GET", "/mail/status", { signal })),
+  summary: async (signal?: AbortSignal): Promise<MailSummary> => asMailSummary(await request("GET", "/mail/summary", { signal })),
+  messages: async (params: MailQuery, signal?: AbortSignal) =>
+    many(
+      await request("GET", "/mail/messages", {
+        query: { ...params, unread: params.unread === undefined ? undefined : String(params.unread) },
+        signal,
+      }),
+      "messages",
+      asMessage,
+    ),
+  // Fetched live from the mail server; 404 when the message is gone from it.
+  message: async (id: string, signal?: AbortSignal): Promise<MailMessageDetail> => {
+    const body = await request("GET", `/mail/messages/${encodeURIComponent(id)}`, { signal });
+    const message = asMessage(field(body, "message"));
+    if (!message) throw new ApiError("Hekate sent something unexpected.", 200);
+    return { message, body: asMailBody(field(body, "body")) ?? { text: "", truncated: false } };
+  },
+  archive: async (id: string) => one(await request("POST", `/mail/messages/${encodeURIComponent(id)}/archive`), asMessage),
+  trash: async (id: string) => one(await request("POST", `/mail/messages/${encodeURIComponent(id)}/trash`), asMessage),
+  markRead: async (id: string, unread: boolean) =>
+    one(await request("POST", `/mail/messages/${encodeURIComponent(id)}/read`, { body: { unread } }), asMessage),
+  rules: async (signal?: AbortSignal): Promise<MailRule[]> => many(await request("GET", "/mail/rules", { signal }), "rules", asMailRule),
+  removeRule: async (id: string) => void (await request("DELETE", `/mail/rules/${encodeURIComponent(id)}`)),
+};
+
+// --- approvals -----------------------------------------------------------------------------
+
+export type ApprovalDecision = "once" | "always" | "deny";
+
+export const approvalsApi = {
+  list: async (status: "pending" | "recent", signal?: AbortSignal): Promise<Approval[]> =>
+    many(await request("GET", "/approvals", { query: { status }, signal }), "approvals", asApproval),
+  // There is no endpoint for one approval; it is in the pending list, or among the recent ones.
+  find: async (id: string, signal?: AbortSignal): Promise<Approval | null> => {
+    for (const status of ["pending", "recent"] as const) {
+      const found = (await approvalsApi.list(status, signal)).find((a) => a.id === id);
+      if (found) return found;
+    }
+    return null;
+  },
+  decide: async (id: string, decision: ApprovalDecision) =>
+    one(await request("POST", `/approvals/${encodeURIComponent(id)}/decide`, { body: { decision } }), asApproval),
+  rules: async (signal?: AbortSignal): Promise<ApprovalRule[]> =>
+    many(await request("GET", "/approvals/rules", { signal }), "rules", asApprovalRule),
+  removeRule: async (id: string) => void (await request("DELETE", `/approvals/rules/${encodeURIComponent(id)}`)),
+};

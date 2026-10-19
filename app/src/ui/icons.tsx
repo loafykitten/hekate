@@ -161,3 +161,30 @@ export const ExternalIcon = (p: SVGProps<SVGSVGElement>) => (
     <path d="M13.5 4.5h6v6M19.5 4.5 11 13M17.5 14v4a2 2 0 0 1-2 2h-9a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h4" />
   </Icon>
 );
+
+export const MailIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <rect x="3.5" y="5.5" width="17" height="13" rx="3" />
+    <path d="m5 8.5 7 5 7-5" />
+  </Icon>
+);
+
+export const ShieldIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M12 3.5 5 6v5.5c0 4.2 2.8 7.2 7 9 4.2-1.8 7-4.8 7-9V6l-7-2.5Z" />
+    <path d="m9 12 2.2 2.2L15.2 10" />
+  </Icon>
+);
+
+export const ArchiveIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <rect x="3.5" y="4.5" width="17" height="4" rx="1.5" />
+    <path d="M5 8.5v8a2.5 2.5 0 0 0 2.5 2.5h9a2.5 2.5 0 0 0 2.5-2.5v-8M10 12.5h4" />
+  </Icon>
+);
+
+export const BackIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="m14.5 6-6 6 6 6" />
+  </Icon>
+);

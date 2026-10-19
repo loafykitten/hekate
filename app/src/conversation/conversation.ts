@@ -4,7 +4,7 @@ import { ConversationClient, type ConnectionStatus } from "./client";
 import type { LiveEntry } from "./log";
 import { MicCapture, MicError, classifyMicError, setAudioSession } from "./mic";
 import { SegmentPlayer } from "./player";
-import { parseCard } from "../data/model";
+import { asApproval, parseCard, type Approval } from "../data/model";
 import { setZone } from "../data/time";
 import { CardDeck, type DeckEntry } from "./deck";
 import { MAX_TEXT_LENGTH, type Capabilities, type Notify, type Segment, type TurnEnd } from "./protocol";
@@ -28,7 +28,7 @@ export interface Notice {
   title: string;
   body: string;
   // The menu section it belongs to, when it has one.
-  section?: "reminders";
+  section?: "reminders" | "today";
 }
 
 export const NOTICE_MS = 12_000;
@@ -121,6 +121,7 @@ export class Conversation {
   private notices: Notice[] = [];
   private noticeTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private invalidateListeners = new Set<(domains: string[]) => void>();
+  private approvalListeners = new Set<(approval: Approval) => void>();
 
   constructor(deps: ConversationDeps = {}) {
     this.client = deps.client ?? new ConversationClient();
@@ -146,6 +147,7 @@ export class Conversation {
       c.on("card", (m) => this.onCard(m.turn_id, m.card)),
       c.on("notify", (m) => this.onNotify(m)),
       c.on("invalidate", (m) => this.emitInvalidate(m.domains)),
+      c.on("approval", (m) => this.onApproval(m.approval)),
       c.on("error", (m) => this.onError(m.code, m.message, m.input_id)),
     ];
     c.connect();
@@ -192,6 +194,12 @@ export class Conversation {
   onInvalidate(listener: (domains: string[]) => void): () => void {
     this.invalidateListeners.add(listener);
     return () => this.invalidateListeners.delete(listener);
+  }
+
+  // Called when an approval was created or changed, on any device.
+  onApprovalChange(listener: (approval: Approval) => void): () => void {
+    this.approvalListeners.add(listener);
+    return () => this.approvalListeners.delete(listener);
   }
 
   dismissCard(key: string) {
@@ -389,7 +397,7 @@ export class Conversation {
     this.live = [];
     this.historyEpoch++;
     this.emit();
-    this.emitInvalidate(["tasks", "reminders", "calendar", "memory", "weather"]);
+    this.emitInvalidate(["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals"]);
   }
 
   private onTranscript(id: string, text: string, superseded = false) {
@@ -489,7 +497,7 @@ export class Conversation {
       id: m.id,
       title: m.title || "Hekate",
       body: m.body || "",
-      section: m.kind === "reminder" ? "reminders" : undefined,
+      section: m.kind === "reminder" ? "reminders" : m.kind === "approval" ? "today" : undefined,
     };
     clearTimeout(this.noticeTimers.get(notice.id));
     this.notices = [...this.notices.filter((n) => n.id !== notice.id), notice].slice(-2);
@@ -500,6 +508,11 @@ export class Conversation {
     // A soft nod, unless she's in the middle of talking.
     if (!this.player?.busy && this.client.ready?.gestures.includes(ACK_GESTURE)) this.stage?.character?.playGesture(ACK_GESTURE);
     this.emit();
+  }
+
+  private onApproval(raw: unknown) {
+    const approval = asApproval(raw);
+    if (approval) for (const listener of [...this.approvalListeners]) listener(approval);
   }
 
   private emitInvalidate(domains: string[]) {

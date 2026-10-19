@@ -193,6 +193,88 @@ All-day events use an exclusive end date (RFC 5545): a one-day event on the 20th
 | `PUT /api/memory/core/{key}` | `{ value }` | the entry |
 | `DELETE /api/memory/core/{key}` | | 204 |
 
+### Mail
+
+Mail accounts come from the homelab's environment (`HEKATE_MAIL_<n>_*`). Hekate keeps a header
+cache of each account's inbox with her classification; bodies are fetched from IMAP on demand and
+never stored.
+
+```jsonc
+// Message
+{
+  "id": "381",
+  "account": "work",                 // the account's label
+  "from": { "name": "Shopify", "address": "no-reply@example.com" },
+  "subject": "Your weekly update",
+  "date": "2026-10-19T08:12:00-05:00",
+  "folder": "INBOX",                 // where it is now: INBOX, Archive, Trash or another folder; "other" once it left the inbox for somewhere Hekate doesn't know
+  "unread": true,
+  "category": "newsletter",          // needs_reply | important | personal | receipt | notification | newsletter | promo, null until classified
+  "gist": "Product news and a sale", // her few-word summary, null until classified
+  "can_unsubscribe": true            // the sender offers one-click unsubscribe (RFC 8058)
+}
+// MailRule: applied by the sweep to new inbox mail
+{
+  "id": "4",
+  "match": { "from": "@example.com", "category": null },  // from: an address or "@domain"; every set field must match
+  "action": "archive",               // archive | trash | mark_read | move
+  "folder": null,                    // for move
+  "label": "Archive mail from example.com",
+  "hits": 12, "last_hit_at": "…", "created_at": "…"
+}
+```
+
+| Method & path | Body | Returns |
+|---|---|---|
+| `GET /api/mail/status` | | `{ configured, accounts: [{ name, address, ok, error, last_sweep_at, inbox_count }] }` |
+| `GET /api/mail/summary` | | `{ unread: { <category>: n }, attention: [Message] }`: unread inbox mail by category (`unclassified` for mail not classified yet; categories with none are left out), and up to 10 unread `needs_reply`/`important` messages, newest first |
+| `GET /api/mail/messages?q=&category=&account=&folder=inbox\|all&unread=&limit=` (default inbox, 50, ≤ 200) | | `{ messages: [Message] }` newest first; `q` searches sender, subject and gist |
+| `GET /api/mail/messages/{id}` | | `{ message: Message, body: { text, truncated } }`, fetched live as plain text without marking it read; 404 when it's gone from the server |
+| `POST /api/mail/messages/{id}/archive` | | `Message` (its new `folder`; the id stays valid); 404 when it's gone from the server |
+| `POST /api/mail/messages/{id}/trash` | | `Message`; 404 when it's gone from the server |
+| `POST /api/mail/messages/{id}/read` | `{ unread: false \| true }` (required) | `Message`; 404 when it's gone from the server |
+| `GET /api/mail/rules` | | `{ rules: [MailRule] }` |
+| `DELETE /api/mail/rules/{id}` | | 204 |
+
+A message keeps its `id` when it moves between folders. Mail that someone else moved or deleted
+is marked as having left the inbox (`folder: "other"`) and answers 404 to reads and actions; such
+rows are forgotten after 60 days. Server problems answer 502.
+
+The owner's own actions through REST just happen. Renamon's mail tools archive, move and mark
+up to 10 messages directly when asked; trashing, unsubscribing, new rules and anything larger go
+through an approval. With no accounts configured, `status.configured` is false, the lists are
+empty and her tools say mail isn't set up.
+
+### Approvals
+
+Actions that need the owner's say-so wait as approvals. Allowing one runs the action on the
+service and records what happened; "Always" also stores a standing rule for that action and
+scope, so the next matching request runs without asking (such a run appears as an approval already `done`/`failed` with `decided_by: "rule"`). Pending approvals expire after 24 h and become `expired` (`decided_by` stays null). Each approval is decided once: a second decision, from another device or a double tap, gets 409 and runs nothing. An allowed action reads `running` until it finishes, then `done` or `failed` (the `approval` event carries each change); one cut off by a restart becomes `failed` saying so.
+
+```jsonc
+// Approval
+{
+  "id": "5",
+  "kind": "mail_trash",              // the action
+  "title": "Move 14 newsletters from example.com to Trash?",
+  "detail": "",                      // optional plain text
+  "scope_label": "mail from example.com",   // what "Always" covers; null when it can't become a rule
+  "status": "pending",               // pending | running | done | failed | denied | expired
+  "result": null,                    // after running: "Moved 14 messages to Trash" or the error
+  "decided_by": null,                // owner | rule
+  "created_at": "…", "expires_at": "…", "decided_at": null
+}
+// ApprovalRule
+{ "id": "2", "kind": "mail_trash", "scope_label": "mail from example.com", "uses": 3, "created_at": "…" }
+```
+
+| Method & path | Body | Returns |
+|---|---|---|
+| `GET /api/approvals?status=pending\|recent` (default pending) | | `{ approvals: [Approval] }`; `recent` is everything decided, run by a rule or expired in the last 7 days, newest first |
+| `POST /api/approvals/{id}/decide` | `{ decision: "once" \| "always" \| "deny" }` | `Approval` after the action ran; 409 when it's no longer pending; "always" on an approval without a scope is 400 |
+| `GET /api/approvals/rules` | | `{ rules: [ApprovalRule] }` |
+| `DELETE /api/approvals/rules/{id}` | | 204 |
+
 ### Weather
 
 | Method & path | Returns |
@@ -213,10 +295,14 @@ from stored or fetched data, never from model text. Shapes of `data` by `kind`:
 | `weather` | `{ place, unit: "F" \| "C", now: { temp, feels_like, condition, code }, today: { high, low, precip_chance, sunrise, sunset }, hours: [{ time, temp, precip_chance, code }] (next 12), days: [{ date, high, low, precip_chance, code }] (next 5) }` (`code` is the WMO weather code) |
 | `web_results` | `{ query, items: [{ title, url, snippet, source }] }` |
 | `web_page` | `{ title, url, source, excerpt }` |
+| `mail` | `{ items: [Message], highlight?: [id] }` |
+| `mail_message` | `{ message: Message, excerpt }` (the start of the body she read) |
+| `approval` | `Approval`. The card shows Allow once / Always / Deny while pending, and the outcome after. |
 
 ## More server → client events
 
 | type | fields | meaning |
 |---|---|---|
-| `notify` | `id`, `kind: "reminder"`, `title`, `body`, `card?` | Something fired. The app shows it even with no turn running. |
-| `invalidate` | `domains: ("tasks" \| "reminders" \| "calendar" \| "memory" \| "weather")[]` | Data changed; refetch those menu sections (`weather`: the home place changed). |
+| `notify` | `id`, `kind: "reminder" \| "approval"`, `title`, `body`, `card?` | Something fired, or she needs a decision she asked for outside a conversation (e.g. a rule from the weekly noise report). The app shows it even with no turn running. |
+| `approval` | `approval: Approval` | An approval was created or changed (decided, ran, expired). Clients update any card showing it. |
+| `invalidate` | `domains: ("tasks" \| "reminders" \| "calendar" \| "memory" \| "weather" \| "mail" \| "approvals")[]` | Data changed; refetch those menu sections (`weather`: the home place changed). |

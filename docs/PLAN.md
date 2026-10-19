@@ -210,9 +210,9 @@ but etags.
 - REST under `/api/`: today, tasks, lists, reminders, calendar, mail, memory, approvals,
   activity, usage, ideas, settings, push subscribe.
 - `GET /api/ws`: one conversation socket. Client → server: `say`, `ptt_start` + binary PCM
-  frames + `ptt_end`, `interrupt`, `approve`. Server → client: `transcript`, `turn_start`,
-  `segment` (+ binary audio frame), `card`, `activity` ("checking your mail…"), `approval`,
-  `turn_end`, `notify`, `invalidate` (menu data changed), `error`.
+  frames + `ptt_end`, `interrupt` (approvals are decided over REST). Server → client:
+  `transcript`, `turn_start`, `segment` (+ binary audio frame), `card`, `activity` ("checking
+  your mail…"), `approval`, `turn_end`, `notify`, `invalidate` (menu data changed), `error`.
 
 Full message shapes live in `docs/PROTOCOL.md` alongside the code that implements them.
 
@@ -233,15 +233,14 @@ Full message shapes live in `docs/PROTOCOL.md` alongside the code that implement
 Every milestone ships through the PR gate in `DEVELOPMENT.md` and deploys automatically on
 merge.
 
-Status (2026-10-19): M0–M2 are merged and running on the homelab. Next: M3 (mail; needs an
-app password per mail account in the homelab's `hekate.env`) and M4 (proactive).
+Status (2026-10-19): M0–M3 are merged and running on the homelab. Next: M4 (proactive).
 
 | Milestone | Contents | Done when |
 |---|---|---|
 | **M0 Foundation** ✅ | Repo, CI, gates, image build, homelab deployer, Caddy route, Radicale, service skeleton serving the PWA shell | `hekate.<domain>` loads Renamon from the homelab over Tailscale; merging a PR redeploys it |
 | **M1 Conversation** ✅ | Neuralwatt client, agent loop, persona, history, WebSocket, text chat, PTT + Parakeet STT, ElevenLabs TTS + segments + gestures | Talk to her by voice from the phone and she answers in voice with gestures |
 | **M2 Daily life** ✅ | Tasks, lists, reminders + web push, memory, calendar (CalDAV), web search/read, weather, cards, menu | Ask her to add things, remind you, schedule; see it all in the menu and on the phone calendar |
-| **M3 Mail** | Two Zoho accounts over IMAP, sweep + classification, rules, approvals, noise report | She tells you what matters and cleans what you've agreed to |
+| **M3 Mail** ✅ | Two Zoho accounts over IMAP, sweep + classification, rules, approvals, noise report | She tells you what matters and cleans what you've agreed to |
 | **M4 Proactive** | Briefing, heartbeat, follow-ups, reflection + diary, self-inspection, ideas | She greets you with your day and reflects nightly |
 | **M5 Polish** | Viseme lip sync from TTS timings, expression map, offline shell, UX passes | — |
 

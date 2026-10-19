@@ -435,6 +435,9 @@ func TestToolBudgetEndsInAnAnswer(t *testing.T) {
 	if len(reqs) != 4 || len(reqs[3].Tools) != 0 {
 		t.Fatalf("requests = %d, last tools = %v", len(reqs), reqs[len(reqs)-1].Tools)
 	}
+	if last := reqs[3].Messages[len(reqs[3].Messages)-1]; last["role"] != "system" || last["content"] != outOfToolsNote {
+		t.Errorf("last message of the tool-less round = %v", last)
+	}
 	if end := ofType[proto.TurnEnd](ev)[0]; end.Status != "done" || end.Text != "I could not settle this, sorry about that." {
 		t.Errorf("turn_end = %+v", end)
 	}

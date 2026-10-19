@@ -200,3 +200,64 @@ button.body:hover {
   background: linear-gradient(90deg, var(--accent-soft), transparent 85%);
   box-shadow: inset 2px 0 0 var(--accent);
 }
+
+/* Mail */
+.mailTop {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.sender {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-muted);
+  font-size: 0.875rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sender > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sender[data-unread] {
+  color: var(--fg);
+  font-weight: var(--weight-bold);
+}
+
+.unreadDot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+.mailTop .when {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.subject {
+  color: var(--fg-muted);
+  font-size: 0.9375rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.subject[data-unread] {
+  color: var(--fg);
+}
+
+.gist {
+  color: var(--fg-subtle);
+  font-size: 0.8125rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}

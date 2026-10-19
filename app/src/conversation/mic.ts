@@ -19,7 +19,8 @@ export class MicError extends Error {
 
 const MESSAGES: Record<MicErrorKind, string> = {
   denied: "Microphone access is blocked. Allow it in your browser's site settings, or type instead.",
-  "no-device": "No microphone found.",
+  "no-device":
+    "No microphone found. If one is connected, check that this browser is allowed to use it in your system's privacy settings.",
   insecure: "The microphone needs a secure (HTTPS) connection.",
   unsupported: "This browser can't capture audio.",
   busy: "The microphone is in use by another app.",
@@ -35,6 +36,21 @@ export function classifyMicError(e: unknown): MicError {
   else if (name === "NotFoundError" || name === "OverconstrainedError" || name === "DevicesNotFoundError") kind = "no-device";
   else if (name === "NotReadableError" || name === "AbortError" || name === "TrackStartError") kind = "busy";
   return new MicError(kind, MESSAGES[kind]);
+}
+
+// Asks for a voice-tuned mono stream, then for any audio input if the browser can't match that
+// (Firefox reports some refusals as NotFoundError).
+async function openMic(devices: MediaDevices): Promise<MediaStream> {
+  try {
+    return await devices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+  } catch (e) {
+    const name = e instanceof Error || e instanceof DOMException ? e.name : "";
+    if (name !== "NotFoundError" && name !== "OverconstrainedError") throw e;
+    console.warn("microphone: tuned request failed, retrying with defaults", e);
+    return await devices.getUserMedia({ audio: true });
+  }
 }
 
 type AudioSessionNavigator = Navigator & { audioSession?: { type: string } };
@@ -90,9 +106,7 @@ export class MicCapture {
       const ctx = (this.ctx ??= new AudioContext({ latencyHint: "interactive" }));
       const resumed = ctx.resume();
       setAudioSession("play-and-record");
-      stream = await devices.getUserMedia({
-        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      });
+      stream = await openMic(devices);
       if (generation !== this.generation) return this.dropStale(stream); // released before the stream arrived
       this.stream = stream;
       await resumed.catch(() => {});
@@ -131,6 +145,7 @@ export class MicCapture {
       }
       this.release();
       setAudioSession("playback");
+      console.warn("microphone: capture failed", e);
       throw classifyMicError(e);
     }
   }

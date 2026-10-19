@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { asEvent, asMemory, asReminder, asTask, asWeather, parseCard, safeUrl } from "./model";
+import { asApproval, asApprovalRule, asEvent, asMailRule, asMailSummary, asMemory, asMessage, asReminder, asTask, asWeather, parseCard, safeUrl } from "./model";
 
 const task = { id: "12", title: "Oat milk", notes: "", list: "Groceries", due: "2026-10-20", rrule: null, priority: 0, completed_at: null, created_at: "x", updated_at: "y" };
 const reminder = { id: "7", text: "Call the dentist", at: "2026-10-20T09:00:00-05:00", rrule: null, status: "scheduled", last_fired_at: null, created_at: "x" };
@@ -23,6 +23,32 @@ const weather = {
   today: { high: 24, low: 16, precip_chance: 10, sunrise: "2026-10-20T07:45:00+01:00", sunset: "2026-10-20T18:55:00+01:00" },
   hours: [{ time: "2026-10-20T14:00:00+01:00", temp: 22, precip_chance: 5, code: 1 }],
   days: [{ date: "2026-10-21", high: 23, low: 15, precip_chance: 40, code: 61 }],
+};
+
+const message = {
+  id: "381",
+  account: "work",
+  from: { name: "Shopify", address: "no-reply@example.com" },
+  subject: "Your weekly update",
+  date: "2026-10-19T08:12:00-05:00",
+  folder: "INBOX",
+  unread: true,
+  category: "newsletter",
+  gist: "Product news and a sale",
+  can_unsubscribe: true,
+};
+const approval = {
+  id: "5",
+  kind: "mail_trash",
+  title: "Move 14 newsletters from example.com to Trash?",
+  detail: "",
+  scope_label: "mail from example.com",
+  status: "pending",
+  result: null,
+  decided_by: null,
+  created_at: "2026-10-19T08:00:00Z",
+  expires_at: "2026-10-20T08:00:00Z",
+  decided_at: null,
 };
 
 const card = (kind: string, data: unknown, extra: object = {}) => ({ kind, id: "c1", title: "A card", data, ...extra });
@@ -145,5 +171,44 @@ describe("parseCard", () => {
 
   it("accepts a numeric id and a missing title", () => {
     expect(parseCard({ kind: "memory", id: 4, data: { items: [] } })).toMatchObject({ id: "4", title: "" });
+  });
+
+  it("parses mail, mail message and approval cards", () => {
+    const mail = parseCard(card("mail", { items: [message, { nope: 1 }], highlight: [381] }));
+    expect(mail?.kind === "mail" && mail.data).toEqual({ items: [message], highlight: ["381"] });
+    const one = parseCard(card("mail_message", { message, excerpt: "Hello" }));
+    expect(one?.kind === "mail_message" && one.data).toEqual({ message, excerpt: "Hello" });
+    expect(parseCard(card("mail_message", { excerpt: "no message" }))).toBeUndefined();
+    const a = parseCard(card("approval", approval, { id: "approval-5" }));
+    expect(a?.kind === "approval" && a.data).toEqual(approval);
+    expect(parseCard(card("approval", { ...approval, status: "weird" }))).toBeUndefined();
+  });
+});
+
+describe("mail and approval guards", () => {
+  it("fills what a message may omit", () => {
+    expect(asMessage({ id: 7, subject: "Hi", from: { address: "a@example.com" } })).toMatchObject({
+      id: "7",
+      from: { name: "", address: "a@example.com" },
+      folder: "INBOX",
+      unread: false,
+      category: null,
+      gist: null,
+    });
+    expect(asMessage({ subject: "no id" })).toBeUndefined();
+  });
+
+  it("reads rules, the summary and approval rules", () => {
+    const rule = { id: "4", match: { from: "@example.com", category: null }, action: "archive", folder: null, label: "Archive mail from example.com", hits: 12, last_hit_at: null, created_at: "x" };
+    expect(asMailRule(rule)).toEqual(rule);
+    expect(asMailRule({ id: "4" })).toBeUndefined();
+    expect(asMailSummary({ unread: { newsletter: 3, promo: 0, bad: "x" }, attention: [message] })).toEqual({ unread: { newsletter: 3 }, attention: [message] });
+    expect(asMailSummary(null)).toEqual({ unread: {}, attention: [] });
+    expect(asApprovalRule({ id: "2", kind: "mail_trash", scope_label: "mail from example.com", uses: 3, created_at: "x" })).toMatchObject({ uses: 3 });
+  });
+
+  it("reads every approval status, including running", () => {
+    for (const status of ["pending", "running", "done", "failed", "denied", "expired"]) expect(asApproval({ ...approval, status })?.status).toBe(status);
+    expect(asApproval({ ...approval, scope_label: null })?.scope_label).toBeNull();
   });
 });

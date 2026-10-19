@@ -143,9 +143,10 @@ func TestBackupRetention(t *testing.T) {
 	ctx := context.Background()
 	s, dir := openTemp(t)
 	_ = s.Close()
-	for i := 2; i < 16; i++ {
+	base := nextVersion()
+	for i := base; i < base+14; i++ {
 		migs := append([]migration{}, migrations...)
-		for v := 2; v <= i; v++ {
+		for v := base; v <= i; v++ {
 			migs = append(migs, migration{version: v, name: "t", sql: fmt.Sprintf("CREATE TABLE t%d (id INTEGER)", v)})
 		}
 		st, err := open(ctx, dir, migs)

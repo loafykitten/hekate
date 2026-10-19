@@ -4,11 +4,12 @@ import { invalidationKeys, keys } from "./queryKeys";
 describe("invalidationKeys", () => {
   it("maps each domain to its query key prefix", () => {
     expect(invalidationKeys(["tasks"])).toEqual([["tasks"]]);
+    expect(invalidationKeys(["mail", "approvals"])).toEqual([["mail"], ["approvals"]]);
     expect(invalidationKeys(["tasks", "reminders", "calendar", "memory", "weather"])).toEqual([["tasks"], ["reminders"], ["calendar"], ["memory"], ["weather"]]);
   });
 
   it("ignores unknown domains, duplicates and junk", () => {
-    expect(invalidationKeys(["mail", "tasks", "tasks", 7, null])).toEqual([["tasks"]]);
+    expect(invalidationKeys(["spaceships", "tasks", "tasks", 7, null])).toEqual([["tasks"]]);
     expect(invalidationKeys([])).toEqual([]);
     expect(invalidationKeys(undefined)).toEqual([]);
     expect(invalidationKeys("tasks")).toEqual([]);
@@ -25,5 +26,7 @@ describe("invalidationKeys", () => {
     expect(prefixOf(keys.core)).toEqual(["memory"]);
     expect(prefixOf(keys.weather(undefined))).toEqual(["weather"]);
     expect(prefixOf(keys.weather("Lisbon"))).toEqual(["weather"]);
+    for (const key of [keys.mailStatus, keys.mailSummary, keys.mailMessages("q", "", ""), keys.mailMessage("1"), keys.mailRules]) expect(prefixOf(key)).toEqual(["mail"]);
+    for (const key of [keys.approvals("pending"), keys.approval("1"), keys.approvalRules]) expect(prefixOf(key)).toEqual(["approvals"]);
   });
 });

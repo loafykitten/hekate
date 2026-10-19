@@ -1,12 +1,15 @@
 import { useMemo, useState, type MouseEvent, type ReactNode } from "react";
-import type { Card, Memory, Reminder, Task } from "../../data/model";
-import { useDeleteMemory, useNow, useReminderDone, useSetTaskDone, useSnoozeReminder } from "../../data/hooks";
+import { senderName } from "../../data/mail";
+import type { Card, Memory, Message, Reminder, Task } from "../../data/model";
+import { useDeleteMemory, useLiveApproval, useNow, useReminderDone, useSetTaskDone, useSnoozeReminder } from "../../data/hooks";
 import { dayHeading, dayKeyOfMs, groupEventsByDay, formatDay, formatTime, formatWeekday } from "../../data/time";
 import { degrees, GROUP_LABEL, isDaytime, precipLabel, weatherGroup } from "../../data/weather";
 import type { Section } from "../menu/sections";
-import { BellIcon, CalendarIcon, CloseIcon, ExternalIcon, MemoryIcon, TasksIcon, TodayIcon } from "../icons";
+import { BellIcon, CalendarIcon, CloseIcon, ExternalIcon, MailIcon, MemoryIcon, ShieldIcon, TasksIcon, TodayIcon } from "../icons";
 import { Button } from "../kit/kit";
-import { EventRow, MemoryRow, ReminderRow, TaskRow } from "../rows/rows";
+import { ApprovalPanel } from "../approvals/ApprovalPanel";
+import { setMailTarget } from "../menu/mailTarget";
+import { EventRow, MemoryRow, MessageRow, ReminderRow, TaskRow } from "../rows/rows";
 import { sectionOfCard } from "./sectionOfCard";
 import styles from "./cards.module.css";
 import { WeatherIcon } from "./WeatherIcon";
@@ -21,6 +24,9 @@ const KIND_ICON: Partial<Record<Card["kind"], ReactNode>> = {
   events: <CalendarIcon />,
   memory: <MemoryIcon />,
   weather: <TodayIcon />,
+  mail: <MailIcon />,
+  mail_message: <MailIcon />,
+  approval: <ShieldIcon />,
 };
 
 const DEFAULT_TITLE: Record<Card["kind"], string> = {
@@ -31,6 +37,9 @@ const DEFAULT_TITLE: Record<Card["kind"], string> = {
   weather: "Weather",
   web_results: "Search results",
   web_page: "Page",
+  mail: "Mail",
+  mail_message: "Mail",
+  approval: "Approval",
 };
 
 interface FrameProps {
@@ -47,7 +56,8 @@ function isInteractive(target: EventTarget | null): boolean {
 
 export function CardFrame({ card, onClose, onOpenSection, children }: FrameProps) {
   const section = sectionOfCard(card);
-  const title = card.title || DEFAULT_TITLE[card.kind];
+  // An approval's own title is the question, shown in full in the body.
+  const title = card.kind === "approval" ? DEFAULT_TITLE.approval : card.title || DEFAULT_TITLE[card.kind];
   return (
     <article
       className={styles.card}
@@ -102,9 +112,23 @@ export function CardView({ card, onClose, onOpenSection }: Omit<FrameProps, "chi
     case "web_page":
       content = <WebPageCard data={card.data} />;
       break;
+    case "mail":
+      content = <MailCard data={card.data} onOpenSection={onOpenSection} />;
+      break;
+    case "mail_message":
+      content = <MailMessageCard data={card.data} onOpenSection={onOpenSection} />;
+      break;
+    case "approval":
+      content = <ApprovalCard approval={card.data} />;
+      break;
   }
+  // Opening a mail card from its title lands on the message it is about.
+  const openFromFrame = (section: Section) => {
+    if (card.kind === "mail_message") setMailTarget(card.data.message.id);
+    onOpenSection(section);
+  };
   return (
-    <CardFrame card={card} onClose={onClose} onOpenSection={onOpenSection}>
+    <CardFrame card={card} onClose={onClose} onOpenSection={openFromFrame}>
       {content}
     </CardFrame>
   );
@@ -337,4 +361,55 @@ function WebPageCard({ data }: { data: Extract<Card, { kind: "web_page" }>["data
       {data.excerpt && <span className={styles.excerpt}>{data.excerpt}</span>}
     </a>
   );
+}
+
+// --- mail ----------------------------------------------------------------------------------
+
+function MailCard({ data, onOpenSection }: { data: Extract<Card, { kind: "mail" }>["data"]; onOpenSection: (s: Section) => void }) {
+  const now = useNow();
+  if (data.items.length === 0) return <Empty>No messages.</Empty>;
+  const accounts = new Set(data.items.map((m: Message) => m.account));
+  return (
+    <div className={styles.list}>
+      {data.items.map((m) => (
+        <MessageRow
+          key={m.id}
+          message={m}
+          now={now}
+          compact
+          showAccount={accounts.size > 1}
+          highlight={data.highlight.includes(m.id)}
+          onOpen={() => {
+            setMailTarget(m.id);
+            onOpenSection("mail");
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function MailMessageCard({ data, onOpenSection }: { data: Extract<Card, { kind: "mail_message" }>["data"]; onOpenSection: (s: Section) => void }) {
+  const { message, excerpt } = data;
+  return (
+    <button
+      type="button"
+      className={styles.mailMessage}
+      onClick={() => {
+        setMailTarget(message.id);
+        onOpenSection("mail");
+      }}
+    >
+      <span className={styles.mailFrom}>{senderName(message.from)}</span>
+      <span className={styles.mailSubject}>{message.subject || "(no subject)"}</span>
+      {message.gist && <span className={styles.mailGist}>{message.gist}</span>}
+      {excerpt && <span className={styles.mailExcerpt}>{excerpt}</span>}
+    </button>
+  );
+}
+
+// --- approvals -----------------------------------------------------------------------------
+
+function ApprovalCard({ approval }: { approval: Extract<Card, { kind: "approval" }>["data"] }) {
+  return <ApprovalPanel approval={useLiveApproval(approval)} />;
 }

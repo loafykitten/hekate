@@ -381,6 +381,23 @@ describe("Conversation: cards, notices and invalidation", () => {
     expect(t.state().notices).toEqual([]);
   });
 
+  it("shows an approval notify like a reminder, pointing at Today", () => {
+    const t = setup();
+    const approval = { id: "5", kind: "mail_trash", title: "Trash 14 newsletters?", detail: "", scope_label: "mail from example.com", status: "pending", result: null, decided_by: null, created_at: "x", expires_at: null, decided_at: null };
+    t.socket.receive({ type: "notify", id: "n3", kind: "approval", title: "Needs your OK", body: "Trash 14 newsletters?", card: { kind: "approval", id: "approval-5", title: "Trash?", data: approval } });
+    expect(t.state().notices).toMatchObject([{ id: "n3", section: "today" }]);
+    expect(t.state().cards.map((c) => [c.card.kind, c.source])).toEqual([["approval", "notify"]]);
+  });
+
+  it("passes approval events on, and ignores malformed ones", () => {
+    const t = setup();
+    const seen: string[] = [];
+    t.conversation.onApprovalChange((a) => seen.push(`${a.id}:${a.status}`));
+    t.socket.receive({ type: "approval", approval: { id: "5", title: "Trash?", status: "running" } });
+    t.socket.receive({ type: "approval", approval: { id: "5" } });
+    expect(seen).toEqual(["5:running"]);
+  });
+
   it("shows a notice without a card, and stays quiet if she has no acknowledging gesture", () => {
     const t = setup();
     const play = vi.fn();
@@ -401,7 +418,7 @@ describe("Conversation: cards, notices and invalidation", () => {
     t.conversation.client.reconnectNow();
     FakeSocket.last.open();
     FakeSocket.last.receive(READY);
-    expect(seen.at(-1)).toEqual(["tasks", "reminders", "calendar", "memory", "weather"]);
+    expect(seen.at(-1)).toEqual(["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals"]);
   });
 });
 

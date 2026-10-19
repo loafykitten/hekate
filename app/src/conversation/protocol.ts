@@ -111,6 +111,13 @@ export interface Invalidate {
   domains: string[];
 }
 
+// An approval was created or changed (decided, ran, expired): clients update any card showing it.
+// `approval` is read with the guards in data/model.
+export interface ApprovalChanged {
+  type: "approval";
+  approval: unknown;
+}
+
 export type ServerMessage =
   | Ready
   | CapabilitiesChanged
@@ -122,7 +129,8 @@ export type ServerMessage =
   | TurnEnd
   | ServerError
   | Notify
-  | Invalidate;
+  | Invalidate
+  | ApprovalChanged;
 export type ServerMessageType = ServerMessage["type"];
 
 export type ClientMessage =
@@ -155,6 +163,7 @@ const SERVER_TYPES: ReadonlySet<string> = new Set<ServerMessageType>([
   "error",
   "notify",
   "invalidate",
+  "approval",
 ]);
 
 // Parses one text frame. Returns undefined for anything that isn't a known server message, so

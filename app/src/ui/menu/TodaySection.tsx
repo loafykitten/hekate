@@ -1,8 +1,9 @@
 import { useMemo } from "react";
-import { useCalendarStatus, useEvents, useNow, useSetTaskDone, useTasks, useReminders, useWeather } from "../../data/hooks";
+import { useApprovals, useCalendarStatus, useEvents, useNow, useSetTaskDone, useTasks, useReminders, useWeather } from "../../data/hooks";
 import { addDays, dayKey, dayKeyOfMs, formatDayLong, greeting, groupEventsByDay, toRfc3339, toMs } from "../../data/time";
 import { degrees, GROUP_LABEL, isDaytime, precipLabel, weatherGroup } from "../../data/weather";
 import { WeatherIcon } from "../cards/WeatherIcon";
+import { ApprovalPanel } from "../approvals/ApprovalPanel";
 import { Button, SectionTitle, StateMessage } from "../kit/kit";
 import { EventRow, ReminderRow, TaskRow } from "../rows/rows";
 import { useMenuActive, useMenuNavigate } from "./MenuContext";
@@ -25,6 +26,7 @@ export function TodaySection() {
   const tasks = useTasks(undefined, "open", active);
   const reminders = useReminders("upcoming", active);
   const setDone = useSetTaskDone();
+  const approvals = useApprovals("pending", active);
 
   const todayEvents = useMemo(
     () => groupEventsByDay(events.data ?? [], {}, { from: today, to: today })[0]?.events ?? [],
@@ -48,6 +50,19 @@ export function TodaySection() {
         <h3 className={styles.hello}>{greeting(now)}</h3>
         <p className={styles.date}>{formatDayLong(today)}</p>
       </div>
+
+      {(approvals.data?.length ?? 0) > 0 && (
+        <section>
+          <SectionTitle>Needs your OK</SectionTitle>
+          <div className={styles.group}>
+            {approvals.data?.map((a) => (
+              <div key={a.id} className={styles.approval}>
+                <ApprovalPanel approval={a} />
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <WeatherSummary query={weather} now={now} />
 

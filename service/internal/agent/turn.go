@@ -116,6 +116,10 @@ func (r *turnRun) emitSegment(seg perform.Segment) {
 	r.a.hub.Broadcast(proto.NewSegment(r.t.id, seg))
 }
 
+// outOfToolsNote asks for an answer once the turn's tool budget is spent.
+const outOfToolsNote = "You can't use any more tools this turn. Answer now in plain words with what you " +
+	"have, and say plainly if something didn't work."
+
 // loop runs LLM rounds until the model answers without calling tools.
 func (r *turnRun) loop(ctx context.Context) error {
 	a := r.a
@@ -128,6 +132,11 @@ func (r *turnRun) loop(ctx context.Context) error {
 			} else {
 				specs = a.tools.Specs()
 			}
+		}
+		if !allowTools && round > 0 {
+			// Without this the model, offered no tools after a run of tool
+			// calls, sometimes ends the turn with nothing to say.
+			r.msgs = append(r.msgs, llm.Message{Role: llm.RoleSystem, Content: outOfToolsNote})
 		}
 		rd := &roundRec{index: round, model: r.model.Name, results: map[string]string{}}
 		r.rounds = append(r.rounds, rd)

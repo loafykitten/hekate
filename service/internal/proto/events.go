@@ -1,5 +1,7 @@
 package proto
 
+import "encoding/json"
+
 // Menu data domains named by invalidate events.
 const (
 	DomainTasks     = "tasks"
@@ -7,10 +9,15 @@ const (
 	DomainCalendar  = "calendar"
 	DomainMemory    = "memory"
 	DomainWeather   = "weather"
+	DomainMail      = "mail"
+	DomainApprovals = "approvals"
 )
 
-// NotifyKindReminder is the only notify kind so far.
-const NotifyKindReminder = "reminder"
+// Notify kinds.
+const (
+	NotifyKindReminder = "reminder"
+	NotifyKindApproval = "approval"
+)
 
 // Notify tells clients that something fired, even with no turn running.
 type Notify struct {
@@ -40,6 +47,16 @@ func NewInvalidate(domains ...string) Invalidate {
 	}
 	return Invalidate{TypeInvalidate, domains}
 }
+
+// ApprovalMsg says an approval was created or changed. The approval is already
+// encoded because its type lives in package approvals, which imports proto.
+type ApprovalMsg struct {
+	Type     string          `json:"type"`
+	Approval json.RawMessage `json:"approval"`
+}
+
+// NewApproval builds an approval message from the encoded Approval.
+func NewApproval(approval json.RawMessage) ApprovalMsg { return ApprovalMsg{TypeApproval, approval} }
 
 // Events is how feature packages emit server-to-client events without
 // importing the server. The hub implements it.

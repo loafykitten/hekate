@@ -9,7 +9,7 @@ import {
   useSnoozeReminder,
 } from "../../data/hooks";
 import type { Reminder } from "../../data/model";
-import { minutesUntilTomorrowMorning, timestampFromInputs, toDateInput, toMs, toRfc3339, toTimeInput } from "../../data/time";
+import { minutesUntilTomorrowMorning, timestampFromInputs, toDateInput, toMs, toRfc3339, toTimeInput, localTimeExists, SKIPPED_TIME_HINT } from "../../data/time";
 import { PlusIcon, SnoozeIcon, TrashIcon, CheckIcon } from "../icons";
 import { Button, Chip, ConfirmButton, Segmented, StateMessage, TextField } from "../kit/kit";
 import { useAutoFocus } from "../kit/useAutoFocus";
@@ -114,7 +114,7 @@ function ReminderForm({ initial, now, submitLabel, busy, onSubmit, onCancel, chi
       <TextField ref={first} label="Remind me to" value={text} onChange={(e) => setText(e.target.value)} placeholder="Call the dentist" maxLength={500} required />
       <div className={styles.pair}>
         <TextField label="Date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
-        <TextField label="Time" type="time" value={time} onChange={(e) => setTime(e.target.value)} required />
+        <TextField label="Time" type="time" value={time} onChange={(e) => setTime(e.target.value)} required hint={localTimeExists(date, time) ? undefined : SKIPPED_TIME_HINT} />
       </div>
       <RepeatSelect value={rrule} onChange={setRrule} />
       <div className={styles.actions}>

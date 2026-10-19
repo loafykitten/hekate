@@ -2,7 +2,7 @@ import { useId, useState } from "react";
 import { useCreateTask, useDeleteTask, useNow, usePatchTask, useSetTaskDone, useTaskLists, useTasks } from "../../data/hooks";
 import type { Task } from "../../data/model";
 import type { TaskFields } from "../../data/rest";
-import { dueFromInputs, isDateOnly, toDateInput, toMs, toTimeInput } from "../../data/time";
+import { dueFromInputs, isDateOnly, toDateInput, toMs, toTimeInput, localTimeExists, SKIPPED_TIME_HINT } from "../../data/time";
 import { PlusIcon, TrashIcon } from "../icons";
 import { Button, Chip, ConfirmButton, StateMessage, SectionTitle, SelectField, Switch, TextArea, TextField } from "../kit/kit";
 import { useAutoFocus } from "../kit/useAutoFocus";
@@ -47,7 +47,7 @@ function TaskEditor({ task, lists, busy, onSave, onCancel, onDelete, deleting }:
   const [list, setList] = useState(task.list);
   const first = useAutoFocus<HTMLInputElement>();
   const needsDate = rrule !== null && date === "";
-  const valid = title.trim() !== "" && list.trim() !== "" && !needsDate;
+  const valid = title.trim() !== "" && list.trim() !== "" && !needsDate && localTimeExists(date, time);
 
   function save() {
     const due = dueFromInputs(date, time, base.due);
@@ -80,7 +80,7 @@ function TaskEditor({ task, lists, busy, onSave, onCancel, onDelete, deleting }:
       <TextArea label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={4000} />
       <div className={styles.pair}>
         <TextField label="Due date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-        <TextField label="Due time" type="time" value={time} onChange={(e) => setTime(e.target.value)} disabled={!date} hint={date ? "Optional" : undefined} />
+        <TextField label="Due time" type="time" value={time} onChange={(e) => setTime(e.target.value)} disabled={!date} hint={date && time && !localTimeExists(date, time) ? SKIPPED_TIME_HINT : date ? "Optional" : undefined} />
       </div>
       {date && (
         <div>

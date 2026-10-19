@@ -22,6 +22,8 @@ import {
   toTimeInput,
   weekdayOf,
   timestampFromInputs,
+  localTimeExists,
+  SKIPPED_TIME_HINT,
 } from "../../data/time";
 import { ChevronIcon, PlusIcon, TrashIcon } from "../icons";
 import { Button, ConfirmButton, IconButton, SectionTitle, StateMessage, Switch, TextArea, TextField } from "../kit/kit";
@@ -159,11 +161,11 @@ function EventForm({ event, startMs, busy, submitLabel, onSubmit, onCancel, chil
         <>
           <div className={styles.pair}>
             <TextField label="Starts" type="date" value={d.startDate} onChange={(e) => moveStart(e.target.value, d.startTime)} required />
-            <TextField label="Start time" type="time" value={d.startTime} onChange={(e) => moveStart(d.startDate, e.target.value)} required />
+            <TextField label="Start time" type="time" value={d.startTime} onChange={(e) => moveStart(d.startDate, e.target.value)} required hint={localTimeExists(d.startDate, d.startTime) ? undefined : SKIPPED_TIME_HINT} />
           </div>
           <div className={styles.pair}>
             <TextField label="Ends" type="date" value={d.endDate} onChange={(e) => set({ endDate: e.target.value })} required />
-            <TextField label="End time" type="time" value={d.endTime} onChange={(e) => set({ endTime: e.target.value })} required />
+            <TextField label="End time" type="time" value={d.endTime} onChange={(e) => set({ endTime: e.target.value })} required hint={localTimeExists(d.endDate, d.endTime) ? undefined : SKIPPED_TIME_HINT} />
           </div>
           {endsBefore && <p className={styles.callout} data-tone="danger">The event ends before it starts.</p>}
         </>

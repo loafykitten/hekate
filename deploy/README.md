@@ -21,3 +21,13 @@ How the pieces fit is in `docs/DEVELOPMENT.md` ("Deploys"). This is the one-time
 
 Calendar clients: add a CalDAV account with server `https://dav.<your domain>/`, the user and
 password from step 3. iOS/macOS: Settings → Calendar → Accounts → Other → CalDAV. Android: DAVx5.
+
+## On your phone
+
+1. With Tailscale connected, open `https://hekate.<your domain>/` in Safari (iOS) or Chrome
+   (Android) and add it to the Home Screen. On iPhone, notifications only work for the Home Screen
+   app.
+2. Open the Home Screen app, allow the microphone the first time you hold the talk button, and
+   turn on notifications in Menu → Settings.
+3. Add the calendar: iOS Settings → Calendar → Accounts → Add Account → Other → CalDAV, server
+   `dav.<your domain>`, with the login from step 3 above. Android: DAVx5 with the same details.

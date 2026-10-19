@@ -20,9 +20,14 @@ The user is new to 3D. Explain 3D topics in plain terms and make the asset decis
 
 ## Where things stand
 
-The **vertical slice is done and approved**: it proved the model works as an avatar. Nothing
-beyond the slice exists yet: no homelab service, no LLM, no ElevenLabs, no native/mobile
-packaging. The next step is the **planning session** (agenda below).
+**Update 2026-10-19 (evening):** milestones M0–M2 of `docs/PLAN.md` are merged and auto-deployed
+to the homelab: the Go service (agent on GLM 5.3, ElevenLabs v4 voice, local Parakeet speech-to-
+text, tasks/reminders/push/memory/CalDAV calendar/web/weather) and the React PWA (push-to-talk,
+cards, menu). The rest of this document describes the original character slice, which the app
+still builds on; `docs/PLAN.md`, `docs/DEVELOPMENT.md` and `docs/PROTOCOL.md` describe the current
+system. Next: M3 (mail) and M4 (proactive: briefings, heartbeat, reflection).
+
+The **vertical slice** (first session) proved the model works as an avatar:
 
 What the slice (`app/`) does today:
 

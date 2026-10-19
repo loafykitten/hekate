@@ -53,13 +53,18 @@ if [[ "$1 $2" == "pr view" ]]; then
 fi
 echo "fake gh: unexpected $*" >&2; exit 1
 EOF
-# Fake claude: answers each session (build, check) from $fake/<name>.json; $fake/<name>.fail
-# makes that session crash.
+# Fake claude: answers each session (build, check) from $fake/<name>.json and logs it to
+# $fake/sessions.log; $fake/<name>.fail makes that session crash.
 cat >"$tmp/bin/claude" <<'EOF'
 #!/usr/bin/env bash
 fake="${FAKE_DIR:?}"
 while [[ $# -gt 0 ]]; do [[ "$1" == --name ]] && name="${2##*-}"; shift; done
 [[ -e "$fake/$name.fail" ]] && exit 1
+echo "$name" >>"$fake/sessions.log"
+# $fake/check.merges: the final-check session merges the PR, as the real one does.
+if [[ "$name" == check && -e "$fake/check.merges" ]]; then
+  jq 'map(.state = "MERGED")' "$fake/prs.json" >"$fake/prs.tmp" && mv "$fake/prs.tmp" "$fake/prs.json"
+fi
 jq '{is_error: false, total_cost_usd: 0, structured_output: .}' "$fake/$name.json"
 EOF
 chmod +x "$tmp/bin/gh" "$tmp/bin/claude"
@@ -110,8 +115,15 @@ tick; expect "$id" rejected
 scenario="final check merges it"
 id="$(queue)"; build_opens "$id"; pr "$id" OPEN
 echo '{"outcome":"merged","summary":"Shipped."}' >"$fake/check.json"
-jq 'map(.state = "MERGED")' "$fake/prs.json" >"$fake/prs.tmp" && mv "$fake/prs.tmp" "$fake/prs.json" # the session merged it
+touch "$fake/check.merges"
 tick; expect "$id" merged MERGED
+scenario="...through both sessions, with the final check's summary"
+got="$(api GET "/api/changes/$id" | jq -r .result)"
+if [[ "$(paste -sd, "$fake/sessions.log")" == build,check && "$got" == Shipped. ]]; then
+  echo "ok: $scenario"
+else
+  echo "FAIL: sessions $(paste -sd, "$fake/sessions.log"), result \"$got\" ($scenario)"; failures=$((failures + 1))
+fi
 
 scenario="final check rejects but leaves the PR open: the worker closes it"
 id="$(queue)"; build_opens "$id"; pr "$id" OPEN

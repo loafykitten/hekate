@@ -149,14 +149,22 @@ describe("ConversationClient", () => {
     expect(client.activeTurnId).toBe("t2");
   });
 
-  it("does not interrupt when no turn is running, and push-to-talk interrupts like text", () => {
+  it("does not interrupt when no turn is running, and push-to-talk interrupts its own turn like text", () => {
     const { client, socket } = connected();
     client.say("one");
     expect(socket.json.map((m) => m.type)).toEqual(["say"]);
-    socket.receive({ type: "turn_start", turn_id: "t1", input_id: "i", origin: "c2", user_text: "x" });
+    socket.receive({ type: "turn_start", turn_id: "t1", input_id: "i", origin: "c1", user_text: "x" });
     client.pttStart();
     expect(socket.json.map((m) => m.type)).toEqual(["say", "interrupt", "ptt_start"]);
     expect(socket.json[1]).toEqual({ type: "interrupt", heard_seq: -1 });
+  });
+
+  it("leaves another device's turn to the server: no interrupt with this device's position", () => {
+    const { client, socket } = connected();
+    socket.receive({ type: "turn_start", turn_id: "t1", input_id: "i", origin: "c2", user_text: "x" });
+    client.say("from here");
+    client.pttStart();
+    expect(socket.json.map((m) => m.type)).toEqual(["say", "ptt_start"]);
   });
 
   it("reconnects with backoff, resets after ready, and expects a fresh ready", () => {

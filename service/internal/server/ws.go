@@ -118,9 +118,13 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}}
 	log := s.log.With("client_id", ss.id)
 
-	// ready goes first, before the hub can queue anything else for this client.
-	ss.sendTo(proto.NewReady(ss.id, s.conv.ConversationID(), s.capabilities(), s.conv.Gestures()))
-	if !s.hub.add(ss.cl) {
+	// ready goes first, before the hub can queue anything else for this client,
+	// and its capabilities are read under the broadcast lock so a capabilities
+	// broadcast can't slip between the snapshot and registration.
+	gestures := s.conv.Gestures() // may read the manifest; keep it outside the lock
+	if !s.hub.addWithFirst(ss.cl, func() any {
+		return proto.NewReady(ss.id, s.conv.ConversationID(), s.capabilities(), gestures)
+	}) {
 		_ = conn.Close(websocket.StatusGoingAway, "shutting down")
 		return
 	}

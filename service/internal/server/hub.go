@@ -68,10 +68,25 @@ func (h *Hub) Broadcast(msg any) {
 
 // add registers a client; it reports false once the hub is closed.
 func (h *Hub) add(c *client) bool {
+	return h.addWithFirst(c, nil)
+}
+
+// addWithFirst registers c with first() as its first frame. Both happen under
+// the broadcast lock, so a broadcast either reaches c after that frame or
+// happened before first() ran (and first can see its effects).
+func (h *Hub) addWithFirst(c *client, first func() any) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed {
 		return false
+	}
+	if first != nil {
+		frame, err := json.Marshal(first())
+		if err != nil {
+			h.log.Error("cannot encode event", "error", err)
+			return false
+		}
+		c.enqueue(frame)
 	}
 	h.clients[c] = struct{}{}
 	return true

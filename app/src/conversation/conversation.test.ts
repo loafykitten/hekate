@@ -264,3 +264,21 @@ describe("Conversation: capabilities", () => {
     expect(t.state().capabilities).toEqual({ stt: true, tts: true });
   });
 });
+
+describe("Conversation: two devices", () => {
+  it("new input during another device's reply doesn't send this device's heard position", () => {
+    const t = setup();
+    t.socket.receive({ type: "turn_start", turn_id: "t9", input_id: "x", origin: "other-device", user_text: "from the phone" });
+    t.socket.receive(seg("t9", 0, "Phone reply."));
+    t.conversation.sendText("typed on the desktop");
+    expect(t.types()).toEqual(["say"]);
+  });
+
+  it("still interrupts its own running turn with what was heard", () => {
+    const t = setup();
+    t.conversation.sendText("first");
+    t.socket.receive({ type: "turn_start", turn_id: "t1", input_id: "x", origin: "c1", user_text: "first" });
+    t.conversation.sendText("second");
+    expect(t.types()).toEqual(["say", "interrupt", "say"]);
+  });
+});

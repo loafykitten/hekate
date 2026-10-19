@@ -297,7 +297,9 @@ export class Conversation {
   // New input while she's thinking or talking: stop that first and tell the server what was heard.
   private interruptIfBusy(): boolean {
     if (!this.client.turnActive && !this.player?.busy && !this.myTurn) return false;
-    this.client.interrupt(this.client.getHeardSeq());
+    // Only report what was heard of a turn this device played; another device's running turn is
+    // interrupted by the server when our input arrives.
+    if (!this.client.turnActive || this.client.activeTurnMine) this.client.interrupt(this.client.getHeardSeq());
     this.player?.stop();
     this.myTurn = undefined;
     this.spoke = false;

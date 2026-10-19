@@ -58,8 +58,7 @@ from the audio's loudness.
 | `ptt_cancel` | `id` | Discard the audio. |
 | `interrupt` | `heard_seq` (last segment seq the user heard at least partly, or -1) | Stop the current turn. The server keeps segments up to `heard_seq` in history. |
 
-An `interrupt` that arrives after the turn already ended (the client was still playing queued audio) trims the saved reply to `heard_seq` and broadcasts a second `turn_end` with status `interrupted`, so every client stops playing that turn. With no recent turn it is ignored. New input while a turn is running interrupts that turn first (as if `interrupt` was sent with
-the last segment delivered to the origin client).
+An `interrupt` that arrives after the turn already ended (the client was still playing queued audio) trims the saved reply to `heard_seq` and broadcasts a second `turn_end` with status `interrupted`, so every client stops playing that turn. With no recent turn it is ignored. New input while a turn is running interrupts that turn first. The client sends `interrupt` with its `heard_seq` only for a turn it started (it knows what was heard); for another device's turn it just sends the input, and the server interrupts that turn keeping what it delivered.
 
 ### Limits
 

@@ -74,6 +74,7 @@ export class ConversationClient {
   private _status: ConnectionStatus = "closed";
   private _ready?: Ready;
   private activeTurn?: string;
+  private activeOrigin?: string;
   private handlers = new Map<string, Set<Handler<never>>>();
   private statusHandlers = new Set<(status: ConnectionStatus) => void>();
 
@@ -114,6 +115,11 @@ export class ConversationClient {
 
   get activeTurnId(): string | undefined {
     return this.activeTurn;
+  }
+
+  // The running turn was started by this client (so this client knows what was heard of it).
+  get activeTurnMine(): boolean {
+    return this.activeTurn !== undefined && this.activeOrigin === this.clientId;
   }
 
   on<K extends ServerMessageType>(type: K, handler: Handler<MessageOf<K>>): () => void {
@@ -194,9 +200,11 @@ export class ConversationClient {
     return !!this._ready && !!this.socket && this.socket.readyState === OPEN;
   }
 
-  // New input while a turn is running stops that turn first, as the protocol asks.
+  // New input while our own turn is running stops it first, reporting what was heard. Another
+  // device's turn is left to the server, which interrupts it on new input keeping what it
+  // delivered; we don't know what was heard there.
   private interruptForNewInput() {
-    if (this.activeTurn !== undefined) this.interrupt();
+    if (this.activeTurnMine) this.interrupt();
   }
 
   private send(message: ClientMessage): boolean {
@@ -240,6 +248,7 @@ export class ConversationClient {
         break;
       case "turn_start":
         this.activeTurn = message.turn_id;
+        this.activeOrigin = message.origin;
         break;
       case "turn_end":
         if (this.activeTurn === message.turn_id) this.activeTurn = undefined;

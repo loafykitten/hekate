@@ -752,3 +752,33 @@ func TestStaleTranscriptionFromAnotherDeviceIsDropped(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 }
+
+// finishesWhileChecked becomes ready at the moment a client's ready snapshot
+// reads it, the worst case for the race between snapshot and registration.
+type finishesWhileChecked struct {
+	loadingSTT
+	once sync.Once
+}
+
+func (f *finishesWhileChecked) Ready() bool {
+	was := f.ready.Load()
+	f.once.Do(func() { go f.finish() })
+	return was
+}
+
+func TestCapabilitiesNotMissedWhenSTTFinishesDuringConnect(t *testing.T) {
+	stt := &finishesWhileChecked{loadingSTT: loadingSTT{done: make(chan struct{})}}
+	env := newWSServer(t, newFakeConv(), stt, false)
+	c := env.dial(t)
+	ready := readMsg(t, c)
+	if ready["type"] != "ready" {
+		t.Fatalf("first frame = %v", ready)
+	}
+	if ready["capabilities"].(map[string]any)["stt"] == true {
+		return // the snapshot already saw it ready: nothing to announce
+	}
+	m := readMsg(t, c)
+	if m["type"] != "capabilities" || m["capabilities"].(map[string]any)["stt"] != true {
+		t.Fatalf("got %v, want capabilities with stt", m)
+	}
+}

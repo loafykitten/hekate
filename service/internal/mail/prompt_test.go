@@ -3,10 +3,14 @@ package mail
 import (
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/loafykitten/hekate/service/internal/config"
 )
 
 func TestPromptContext(t *testing.T) {
 	f := newFixture(t)
+	f.sweep()
 	text, err := f.svc.PromptContext(t.Context(), f.clock.Now())
 	if err != nil || text != "Unread: none." {
 		t.Fatalf("empty inbox = %q %v", text, err)
@@ -48,5 +52,40 @@ func TestPromptContextDoesNotCallUnsortedMailCalm(t *testing.T) {
 	}
 	if strings.Contains(text, "none urgent") || !strings.Contains(text, "2 not sorted yet") {
 		t.Errorf("unsorted mail must not read as non-urgent:\n%s", text)
+	}
+}
+
+func TestPromptContextSaysWhenMailCantBeChecked(t *testing.T) {
+	// The first check fails (here the server is unreachable): an empty cache is not an empty inbox.
+	f := newFixture(t, func(o *fixtureOpts) {
+		o.accounts = []config.MailAccount{{Name: "work", User: testUser, Pass: "wrong", Archive: "Archive"}}
+	})
+	f.sweep()
+	text, err := f.svc.PromptContext(t.Context(), f.clock.Now())
+	if err != nil || !strings.Contains(text, "work couldn't be checked") || strings.Contains(text, "Unread: none.") {
+		t.Fatalf("context after a failed first check = %q, %v", text, err)
+	}
+	res := f.mustCall("mail_summary", `{}`)
+	if !strings.Contains(res.Content, "work couldn't be checked") || strings.Contains(res.Content, "No unread mail in the inbox") {
+		t.Errorf("summary after a failed first check:\n%s", res.Content)
+	}
+}
+
+func TestPromptContextFlagsAnOutageAfterAGoodSync(t *testing.T) {
+	f := newFixture(t)
+	f.deliver("INBOX", mailSpec{subject: "Hello"})
+	f.sweep()
+	f.svc.saveError(t.Context(), "personal", "the mail server could not be reached")
+	text, _ := f.svc.PromptContext(t.Context(), f.clock.Now())
+	if !strings.Contains(text, "the last check of personal failed") || !strings.Contains(text, "may be out of date") {
+		t.Errorf("context during an outage = %q", text)
+	}
+
+	// Recovered, but the sweep stopped running: the counts go stale.
+	f.sweep()
+	f.clock.Advance(time.Hour)
+	text, _ = f.svc.PromptContext(t.Context(), f.clock.Now())
+	if !strings.Contains(text, "hasn't been checked since") {
+		t.Errorf("context after an hour without a sweep = %q", text)
 	}
 }

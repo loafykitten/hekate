@@ -19,6 +19,20 @@ func (s *Service) PromptContext(ctx context.Context, _ time.Time) (string, error
 	if !s.Configured() {
 		return "", nil
 	}
+	note, err := s.healthNote(ctx)
+	if err != nil {
+		return "", err
+	}
+	text, err := s.promptCounts(ctx, note != "")
+	if err != nil || note == "" {
+		return text, err
+	}
+	return note + "\n" + text, nil
+}
+
+// promptCounts is the unread part of the prompt context. partial says some
+// account couldn't be checked, so "none" must not sound like a clean inbox.
+func (s *Service) promptCounts(ctx context.Context, partial bool) (string, error) {
 	sum, err := s.Summary(ctx, promptAttention)
 	if err != nil {
 		return "", err
@@ -28,6 +42,9 @@ func (s *Service) PromptContext(ctx context.Context, _ time.Time) (string, error
 		total += n
 	}
 	if total == 0 {
+		if partial {
+			return "Unread: none in the mail that could be checked.", nil
+		}
 		return "Unread: none.", nil
 	}
 	reply, important := sum.Unread[CategoryNeedsReply], sum.Unread[CategoryImportant]
@@ -70,4 +87,40 @@ func displayFrom(m Message) string {
 		return m.From.Name
 	}
 	return m.From.Address
+}
+
+// staleAfter is how long since an account's last good sync before its counts
+// are called out of date, in sweep intervals.
+const staleAfter = 3
+
+// healthNote says which accounts' mail can't be trusted right now (never
+// checked, failing, or not checked for a while), or "" when all are current.
+// Without it an account that can't sign in would look like an empty inbox.
+func (s *Service) healthNote(ctx context.Context) (string, error) {
+	st, err := s.Status(ctx)
+	if err != nil {
+		return "", err
+	}
+	var notes []string
+	for _, a := range st {
+		var last time.Time
+		if a.LastSweepAt != nil {
+			last, _ = time.Parse(time.RFC3339, *a.LastSweepAt)
+		}
+		switch {
+		case a.LastSweepAt == nil && a.Error != nil:
+			notes = append(notes, fmt.Sprintf("%s couldn't be checked (%s), so its mail is unknown", a.Name, oneLine(*a.Error, 160)))
+		case a.LastSweepAt == nil:
+			notes = append(notes, a.Name+" hasn't been checked yet, so its mail is unknown")
+		case a.Error != nil:
+			notes = append(notes, fmt.Sprintf("the last check of %s failed (%s); what's known is from %s and may be out of date",
+				a.Name, oneLine(*a.Error, 160), s.localTime(*a.LastSweepAt)))
+		case s.now().Sub(last) > staleAfter*s.interval:
+			notes = append(notes, fmt.Sprintf("%s hasn't been checked since %s, so it may be out of date", a.Name, s.localTime(*a.LastSweepAt)))
+		}
+	}
+	if len(notes) == 0 {
+		return "", nil
+	}
+	return "Mail problems: " + strings.Join(notes, "; ") + ".", nil
 }

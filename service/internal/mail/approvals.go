@@ -108,7 +108,7 @@ func (s *Service) execBulk(ctx context.Context, raw json.RawMessage) (string, er
 	default:
 		return "", fmt.Errorf("unknown bulk action %q", p.Action)
 	}
-	out, err := s.perform(ctx, p.Action, p.Folder, p.IDs)
+	out, err := s.perform(ctx, p.Action, p.Folder, p.IDs, nil)
 	if err != nil {
 		return "", err
 	}

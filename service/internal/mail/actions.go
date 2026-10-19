@@ -86,7 +86,7 @@ func (s *Service) requireConfigured() error {
 }
 
 // moveMessages moves messages to the folder t names, keeping their Hekate ids.
-func (s *Service) moveMessages(ctx context.Context, ids []int64, t target) (Outcome, error) {
+func (s *Service) moveMessages(ctx context.Context, ids []int64, t target, keep pick) (Outcome, error) {
 	rows, err := s.rowsByID(ctx, ids)
 	if err != nil {
 		return Outcome{}, err
@@ -109,6 +109,7 @@ func (s *Service) moveMessages(ctx context.Context, ids []int64, t target) (Outc
 			if err != nil {
 				return err
 			}
+			fresh = keep.filter(fresh)
 			byKey, keys, missing := groupRows(fresh)
 			out.Missing += missing
 			for _, k := range keys {
@@ -175,7 +176,7 @@ func (s *Service) moveGroup(ctx context.Context, c *imapclient.Client, k serverK
 }
 
 // setRead marks messages read (unread false) or unread.
-func (s *Service) setRead(ctx context.Context, ids []int64, unread bool) (Outcome, error) {
+func (s *Service) setRead(ctx context.Context, ids []int64, unread bool, keep pick) (Outcome, error) {
 	rows, err := s.rowsByID(ctx, ids)
 	if err != nil {
 		return Outcome{}, err
@@ -192,6 +193,7 @@ func (s *Service) setRead(ctx context.Context, ids []int64, unread bool) (Outcom
 			if err != nil {
 				return err
 			}
+			fresh = keep.filter(fresh)
 			byKey, keys, missing := groupRows(fresh)
 			out.Missing += missing
 			for _, k := range keys {
@@ -241,13 +243,13 @@ func (s *Service) wrapServerErr(err error) error {
 
 // Archive moves messages to their account's archive folder.
 func (s *Service) Archive(ctx context.Context, ids []int64) (Outcome, error) {
-	return s.moveMessages(ctx, ids, target{kind: ActionArchive})
+	return s.moveMessages(ctx, ids, target{kind: ActionArchive}, nil)
 }
 
 // Trash moves messages to their account's trash folder. Callers go through an
 // approval unless the owner is acting directly.
 func (s *Service) Trash(ctx context.Context, ids []int64) (Outcome, error) {
-	return s.moveMessages(ctx, ids, target{kind: ActionTrash})
+	return s.moveMessages(ctx, ids, target{kind: ActionTrash}, nil)
 }
 
 // MoveTo moves messages to an existing folder other than the trash.
@@ -255,32 +257,32 @@ func (s *Service) MoveTo(ctx context.Context, ids []int64, folder string) (Outco
 	if strings.TrimSpace(folder) == "" {
 		return Outcome{}, httpx.BadRequest("a folder name is required")
 	}
-	return s.moveMessages(ctx, ids, target{kind: ActionMove, name: strings.TrimSpace(folder)})
+	return s.moveMessages(ctx, ids, target{kind: ActionMove, name: strings.TrimSpace(folder)}, nil)
 }
 
 // MarkRead marks messages read.
 func (s *Service) MarkRead(ctx context.Context, ids []int64) (Outcome, error) {
-	return s.setRead(ctx, ids, false)
+	return s.setRead(ctx, ids, false, nil)
 }
 
 // MarkUnread marks messages unread.
 func (s *Service) MarkUnread(ctx context.Context, ids []int64) (Outcome, error) {
-	return s.setRead(ctx, ids, true)
+	return s.setRead(ctx, ids, true, nil)
 }
 
 // perform runs a rule or bulk action by name.
-func (s *Service) perform(ctx context.Context, action, folder string, ids []int64) (Outcome, error) {
+func (s *Service) perform(ctx context.Context, action, folder string, ids []int64, keep pick) (Outcome, error) {
 	switch action {
 	case ActionArchive:
-		return s.Archive(ctx, ids)
+		return s.moveMessages(ctx, ids, target{kind: ActionArchive}, keep)
 	case ActionTrash:
-		return s.Trash(ctx, ids)
+		return s.moveMessages(ctx, ids, target{kind: ActionTrash}, keep)
 	case ActionMove:
-		return s.MoveTo(ctx, ids, folder)
+		return s.moveMessages(ctx, ids, target{kind: ActionMove, name: strings.TrimSpace(folder)}, keep)
 	case ActionMarkRead:
-		return s.MarkRead(ctx, ids)
+		return s.setRead(ctx, ids, false, keep)
 	case actionMarkUnread:
-		return s.MarkUnread(ctx, ids)
+		return s.setRead(ctx, ids, true, keep)
 	}
 	return Outcome{}, fmt.Errorf("unknown mail action %q", action)
 }

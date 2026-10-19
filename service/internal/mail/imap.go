@@ -243,6 +243,27 @@ type target struct {
 	name string // the folder to move to (kind move)
 }
 
+// pick narrows the messages an action touches, decided under the account's
+// lock against their current state; nil keeps them all.
+type pick func(row) bool
+
+// unruledInbox keeps messages still waiting in the inbox for the rules: a rule
+// must not act on mail the owner has filed or handled since it was selected.
+func unruledInbox(r row) bool { return r.Folder == inbox && !r.Gone && !r.RulesApplied }
+
+func (p pick) filter(rows []row) []row {
+	if p == nil {
+		return rows
+	}
+	var out []row
+	for _, r := range rows {
+		if p(r) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // resolve finds the folder t names, creating the archive folder when the
 // server does not have it yet. The cached folder list is refreshed once before
 // giving up, because folders can be created while the connection is open.

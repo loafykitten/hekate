@@ -51,17 +51,18 @@ type row struct {
 	HasPost      bool
 	Unsubscribed bool
 	Gone         bool
+	RulesApplied bool
 }
 
 const rowCols = `id, account, folder, uidvalidity, uid, message_id, from_name, from_addr, subject, date, unread,
-	category, gist, list_id, unsub_url, has_post, unsubscribed_at IS NOT NULL, gone`
+	category, gist, list_id, unsub_url, has_post, unsubscribed_at IS NOT NULL, gone, rules_applied`
 
 type scanner interface{ Scan(dest ...any) error }
 
 func scanRow(sc scanner) (row, error) {
 	var r row
 	err := sc.Scan(&r.ID, &r.Account, &r.Folder, &r.Validity, &r.UID, &r.MessageID, &r.FromName, &r.FromAddr, &r.Subject,
-		&r.Date, &r.Unread, &r.Category, &r.Gist, &r.ListID, &r.UnsubURL, &r.HasPost, &r.Unsubscribed, &r.Gone)
+		&r.Date, &r.Unread, &r.Category, &r.Gist, &r.ListID, &r.UnsubURL, &r.HasPost, &r.Unsubscribed, &r.Gone, &r.RulesApplied)
 	return r, err
 }
 

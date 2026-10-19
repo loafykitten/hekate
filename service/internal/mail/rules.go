@@ -296,7 +296,7 @@ func (s *Service) applyRules(ctx context.Context, a *account) (int, error) {
 		if r.Folder != nil {
 			folder = *r.Folder
 		}
-		out, err := s.perform(ctx, r.Action, folder, ids)
+		out, err := s.perform(ctx, r.Action, folder, ids, unruledInbox)
 		if err != nil {
 			// Left unsettled: tried again next sweep, once the cause is fixed.
 			s.log.Warn("mail rule failed", "account", a.cfg.Name, "rule", r.ID, "error", err)

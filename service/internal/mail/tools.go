@@ -149,11 +149,21 @@ func (s *Service) summaryTool() agent.Tool {
 					counts = append(counts, fmt.Sprintf("%d %s", n, label))
 				}
 			}
+			note, err := s.healthNote(ctx)
+			if err != nil {
+				return agent.Result{}, err
+			}
 			var text string
-			if total == 0 {
+			switch {
+			case total == 0 && note != "":
+				text = "No unread mail in what could be checked."
+			case total == 0:
 				text = "No unread mail in the inbox."
-			} else {
+			default:
 				text = fmt.Sprintf("%d unread in the inbox: %s.", total, strings.Join(counts, ", "))
+			}
+			if note != "" {
+				text = note + "\n" + text
 			}
 			if len(sum.Attention) > 0 {
 				text += "\n" + s.wrapList("Unread messages that need a reply or are important, newest first.", sum.Attention)
@@ -278,7 +288,7 @@ func (s *Service) directOrBulk(ctx context.Context, ids []int64, action, folder,
 			Payload: payloadOf(bulkPayload{Action: action, IDs: ids, Folder: folder}),
 		})
 	}
-	out, err := s.perform(ctx, action, folder, ids)
+	out, err := s.perform(ctx, action, folder, ids, nil)
 	if err != nil {
 		return agent.Result{}, err
 	}

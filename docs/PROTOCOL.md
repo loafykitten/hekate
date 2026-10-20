@@ -222,6 +222,10 @@ never stored.
     "subject": "upgrade",            // a phrase the subject must contain, any case; null for none
     "body": null                     // a phrase the body must contain, any case; null for none
   },                                 // a rule always has from or category; subject and body only narrow it
+  "except": [                        // mail the rule spares; every field an exception sets must match
+    { "category": "receipt" },       // from?, category?, subject? (words, any case)
+    { "subject": "transaction" }     // [] when there are none
+  ],
   "action": "trash",                 // archive | trash | mark_read | move
   "folder": null,                    // for move
   "label": "Trash mail from example.com with \"upgrade\" in the subject",
@@ -240,6 +244,12 @@ never stored.
 | `POST /api/mail/messages/{id}/read` | `{ unread: false \| true }` (required) | `Message`; 404 when it's gone from the server |
 | `GET /api/mail/rules` | | `{ rules: [MailRule] }` |
 | `DELETE /api/mail/rules/{id}` | | 204 |
+
+A message an exception covers is left alone by that rule, and later rules still get their turn.
+Exceptions fail safe: mail with no category counts as matching a category exception, and a
+subject too long for the cache counts as containing an exception's words. Exceptions never change
+in place: a rule proposed with the same match and action but other exceptions replaces the old one
+(keeping its hits and its place in the order), once the owner approves it.
 
 Rules look at each new inbox message once, after it's classified (without waiting when there's
 no model or classification gave up). The oldest rule that matches acts. For a rule with body words the sweep reads the first 64 KB of

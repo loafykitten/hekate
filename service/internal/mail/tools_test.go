@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -351,7 +352,7 @@ func TestRuleProposeTool(t *testing.T) {
 		t.Error("a proposal made in conversation must not also notify")
 	}
 	if r.Kind != "mail_rule_create" || r.Title != "Archive mail from shop.example.net?" || r.Detail != "You never open these." || r.Scope != "" ||
-		spec != (RuleSpec{From: "@shop.example.net", Action: "archive"}) {
+		!reflect.DeepEqual(spec, RuleSpec{From: "@shop.example.net", Action: "archive"}) {
 		t.Errorf("request %+v spec %+v", r, spec)
 	}
 	if !strings.Contains(res.Content, "Asked Rika") || res.Card.Kind != "approval" {

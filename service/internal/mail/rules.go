@@ -23,19 +23,23 @@ const (
 	maxRuleWords  = 100      // longest
 	ruleBodyBatch = 20       // messages whose text the rules read at a time
 	ruleBodyBytes = 64 << 10 // how much of a message the body words are looked for in
+	maxExceptions = 5        // per rule
+	// maxCachedSubject is how much of a subject the cache keeps; the sweep clips longer ones.
+	maxCachedSubject = 500
 )
 
 // Rule is the API shape from PROTOCOL.md: a standing instruction the sweep
 // applies to new inbox mail.
 type Rule struct {
-	ID        string    `json:"id"`
-	Match     RuleMatch `json:"match"`
-	Action    string    `json:"action"`
-	Folder    *string   `json:"folder"`
-	Label     string    `json:"label"`
-	Hits      int       `json:"hits"`
-	LastHitAt *string   `json:"last_hit_at"`
-	CreatedAt string    `json:"created_at"`
+	ID        string          `json:"id"`
+	Match     RuleMatch       `json:"match"`
+	Except    []RuleException `json:"except"`
+	Action    string          `json:"action"`
+	Folder    *string         `json:"folder"`
+	Label     string          `json:"label"`
+	Hits      int             `json:"hits"`
+	LastHitAt *string         `json:"last_hit_at"`
+	CreatedAt string          `json:"created_at"`
 }
 
 // RuleMatch says which mail a rule covers; every field that is set must match.
@@ -47,14 +51,22 @@ type RuleMatch struct {
 	Body     *string `json:"body"`
 }
 
-// RuleSpec is what creates a rule: the approval payload and the tool arguments.
-type RuleSpec struct {
+// RuleException is mail a rule spares: every field that is set must match.
+type RuleException struct {
 	From     string `json:"from,omitempty"`
 	Category string `json:"category,omitempty"`
-	Subject  string `json:"subject,omitempty"`
-	Body     string `json:"body,omitempty"`
-	Action   string `json:"action"`
-	Folder   string `json:"folder,omitempty"`
+	Subject  string `json:"subject,omitempty"` // words the subject contains, any case
+}
+
+// RuleSpec is what creates a rule: the approval payload and the tool arguments.
+type RuleSpec struct {
+	From     string          `json:"from,omitempty"`
+	Category string          `json:"category,omitempty"`
+	Subject  string          `json:"subject,omitempty"`
+	Body     string          `json:"body,omitempty"`
+	Except   []RuleException `json:"except,omitempty"`
+	Action   string          `json:"action"`
+	Folder   string          `json:"folder,omitempty"`
 }
 
 func nullable(s string) *string {
@@ -78,6 +90,9 @@ func (sp RuleSpec) normalize() (RuleSpec, error) {
 		return sp, err
 	}
 	if sp.Body, err = ruleWords("body", sp.Body); err != nil {
+		return sp, err
+	}
+	if sp.Except, err = normalizeExceptions(sp.Except); err != nil {
 		return sp, err
 	}
 	if sp.From != "" {
@@ -120,6 +135,51 @@ func ruleWords(field, s string) (string, error) {
 		return "", httpx.BadRequest("%s words must be %d to %d characters", field, minRuleWords, maxRuleWords)
 	}
 	return w, nil
+}
+
+// normalizeExceptions cleans a rule's exceptions, drops repeats and sorts them,
+// so the same set always reads (and compares) the same.
+func normalizeExceptions(in []RuleException) ([]RuleException, error) {
+	if len(in) > maxExceptions {
+		return nil, httpx.BadRequest("a rule can have at most %d exceptions", maxExceptions)
+	}
+	var out []RuleException
+	for _, e := range in {
+		e.From = strings.ToLower(strings.TrimSpace(e.From))
+		e.Category = strings.ToLower(strings.TrimSpace(e.Category))
+		var err error
+		if e.Subject, err = ruleWords("exception subject", e.Subject); err != nil {
+			return nil, err
+		}
+		if e.From == "" && e.Category == "" && e.Subject == "" {
+			return nil, httpx.BadRequest("an exception needs a sender (from), a category or subject words")
+		}
+		if e.From != "" {
+			if err := checkSender(e.From); err != nil {
+				return nil, err
+			}
+		}
+		if e.Category != "" && !validCategory(e.Category) {
+			return nil, httpx.BadRequest("exception category must be one of %s", strings.Join(categories, ", "))
+		}
+		if !slices.Contains(out, e) {
+			out = append(out, e)
+		}
+	}
+	slices.SortFunc(out, func(a, b RuleException) int {
+		return strings.Compare(a.From+"\x00"+a.Category+"\x00"+a.Subject, b.From+"\x00"+b.Category+"\x00"+b.Subject)
+	})
+	return out, nil
+}
+
+// exceptJSON is how a rule's exceptions are stored: nil (NULL) for none.
+func exceptJSON(ex []RuleException) *string {
+	if len(ex) == 0 {
+		return nil
+	}
+	b, _ := json.Marshal(ex) // plain struct of strings: cannot fail
+	s := string(b)
+	return &s
 }
 
 // foldWords lowercases text and collapses its whitespace, so words match
@@ -166,22 +226,50 @@ func (sp RuleSpec) label() string {
 	if sp.Action == ActionMove {
 		l += " to " + sp.Folder
 	}
+	if len(sp.Except) > 0 {
+		spares := make([]string, len(sp.Except))
+		for i, e := range sp.Except {
+			spares[i] = e.label()
+		}
+		l += ", except " + strings.Join(spares, " or ")
+	}
 	return l
+}
+
+// label words an exception, e.g. "receipts from example.com with “transaction” in the subject".
+func (e RuleException) label() string {
+	what := "mail"
+	if e.Category != "" {
+		what = strings.ReplaceAll(e.Category, "_", " ") + " mail"
+	}
+	if e.From != "" {
+		what += " from " + strings.TrimPrefix(e.From, "@")
+	}
+	if e.Subject != "" {
+		what += " with “" + e.Subject + "” in the subject"
+	}
+	return what
 }
 
 // senderLabel words a sender key for approval titles: "example.com" or "a@example.com".
 func senderLabel(key string) string { return strings.TrimPrefix(key, "@") }
 
-const ruleCols = `id, match_from, match_category, match_subject, match_body, action, folder, label, hits, last_hit_at, created_at`
+const ruleCols = `id, match_from, match_category, match_subject, match_body, except_json, action, folder, label, hits, last_hit_at, created_at`
 
 func scanRule(sc scanner) (Rule, error) {
 	var r Rule
 	var id int64
-	var from, cat, subject, body, folder, last sql.NullString
-	if err := sc.Scan(&id, &from, &cat, &subject, &body, &r.Action, &folder, &r.Label, &r.Hits, &last, &r.CreatedAt); err != nil {
+	var from, cat, subject, body, except, folder, last sql.NullString
+	if err := sc.Scan(&id, &from, &cat, &subject, &body, &except, &r.Action, &folder, &r.Label, &r.Hits, &last, &r.CreatedAt); err != nil {
 		return r, err //nolint:wrapcheck // callers add context
 	}
 	r.ID = strconv.FormatInt(id, 10)
+	r.Except = []RuleException{}
+	if except.Valid {
+		if err := json.Unmarshal([]byte(except.String), &r.Except); err != nil {
+			return r, fmt.Errorf("rule %d exceptions: %w", id, err)
+		}
+	}
 	if from.Valid {
 		r.Match.From = &from.String
 	}
@@ -203,9 +291,10 @@ func scanRule(sc scanner) (Rule, error) {
 	return r, nil
 }
 
-// Rules lists rules, oldest first (the order they are tried in).
+// Rules lists rules, oldest first (the order they are tried in). A rule that
+// replaced another keeps the original's place.
 func (s *Service) Rules(ctx context.Context) ([]Rule, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+ruleCols+` FROM mail_rules ORDER BY id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+ruleCols+` FROM mail_rules ORDER BY place, id`)
 	if err != nil {
 		return nil, fmt.Errorf("list mail rules: %w", err)
 	}
@@ -221,40 +310,95 @@ func (s *Service) Rules(ctx context.Context) ([]Rule, error) {
 	return out, rows.Err() //nolint:wrapcheck // plain iteration error
 }
 
-// CreateRule stores a rule. An identical rule is returned as it is.
+// CreateRule stores a rule; see putRule.
 func (s *Service) CreateRule(ctx context.Context, spec RuleSpec) (Rule, error) {
+	r, _, err := s.putRule(ctx, spec)
+	return r, err
+}
+
+// putRule stores a rule. An identical rule is returned as it is. A rule with
+// the same match and action but other exceptions replaces that one: a new rule
+// that keeps its hits, its age and its place in the order, so exceptions never change
+// under a sweep that is applying the old rule (to that sweep, the old rule was
+// deleted). replaced says so.
+func (s *Service) putRule(ctx context.Context, spec RuleSpec) (r Rule, replaced bool, err error) {
 	if err := s.requireConfigured(); err != nil {
-		return Rule{}, err
+		return Rule{}, false, err
 	}
 	sp, err := spec.normalize()
 	if err != nil {
-		return Rule{}, err
+		return Rule{}, false, err
 	}
-	row := s.db.QueryRowContext(ctx, `SELECT `+ruleCols+` FROM mail_rules
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Rule{}, false, fmt.Errorf("create mail rule: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // a no-op after Commit
+	existing, err := scanRule(tx.QueryRowContext(ctx, `SELECT `+ruleCols+` FROM mail_rules
 		WHERE COALESCE(match_from, '') = ? AND COALESCE(match_category, '') = ? AND COALESCE(match_subject, '') = ?
 		AND COALESCE(match_body, '') = ? AND action = ? AND COALESCE(folder, '') = ?`,
-		sp.From, sp.Category, sp.Subject, sp.Body, sp.Action, sp.Folder)
-	if existing, err := scanRow2(row); err == nil {
-		return existing, nil
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return Rule{}, fmt.Errorf("create mail rule: %w", err)
+		sp.From, sp.Category, sp.Subject, sp.Body, sp.Action, sp.Folder))
+	found := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return Rule{}, false, fmt.Errorf("create mail rule: %w", err)
 	}
-	res, err := s.db.ExecContext(ctx, `INSERT INTO mail_rules (match_from, match_category, match_subject, match_body, action, folder, label, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, nullable(sp.From), nullable(sp.Category), nullable(sp.Subject), nullable(sp.Body),
-		sp.Action, nullable(sp.Folder), sp.label(), stamp(s.now()))
+	if found && slices.Equal(existing.Except, sp.Except) {
+		return existing, false, nil
+	}
+	created, hits := stamp(s.now()), 0
+	var lastHit *string
+	var place *int64 // nil: a new rule goes last, at its own id
+	if found {
+		created, hits, lastHit = existing.CreatedAt, existing.Hits, existing.LastHitAt
+		var p int64
+		if err := tx.QueryRowContext(ctx, `SELECT place FROM mail_rules WHERE id = ?`, existing.ID).Scan(&p); err != nil {
+			return Rule{}, false, fmt.Errorf("replace mail rule: %w", err)
+		}
+		place = &p
+		if _, err := tx.ExecContext(ctx, `DELETE FROM mail_rules WHERE id = ?`, existing.ID); err != nil {
+			return Rule{}, false, fmt.Errorf("replace mail rule: %w", err)
+		}
+	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO mail_rules (match_from, match_category, match_subject, match_body, except_json,
+		action, folder, label, hits, last_hit_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		nullable(sp.From), nullable(sp.Category), nullable(sp.Subject), nullable(sp.Body), exceptJSON(sp.Except),
+		sp.Action, nullable(sp.Folder), sp.label(), hits, lastHit, created)
 	if err != nil {
-		return Rule{}, fmt.Errorf("create mail rule: %w", err)
+		return Rule{}, false, fmt.Errorf("create mail rule: %w", err)
 	}
 	id, _ := res.LastInsertId()
-	r, err := scanRow2(s.db.QueryRowContext(ctx, `SELECT `+ruleCols+` FROM mail_rules WHERE id = ?`, id))
+	if place == nil {
+		place = &id
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE mail_rules SET place = ? WHERE id = ?`, *place, id); err != nil {
+		return Rule{}, false, fmt.Errorf("create mail rule: %w", err)
+	}
+	r, err = scanRule(tx.QueryRowContext(ctx, `SELECT `+ruleCols+` FROM mail_rules WHERE id = ?`, id))
 	if err != nil {
-		return Rule{}, fmt.Errorf("create mail rule: %w", err)
+		return Rule{}, false, fmt.Errorf("create mail rule: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return Rule{}, false, fmt.Errorf("create mail rule: %w", err)
 	}
 	s.changed()
-	return r, nil
+	return r, found, nil
 }
 
-func scanRow2(row *sql.Row) (Rule, error) { return scanRule(row) }
+// sameRule finds the rule with the same match and action as spec (normalized),
+// whatever its exceptions.
+func (s *Service) sameRule(ctx context.Context, sp RuleSpec) (Rule, bool, error) {
+	r, err := scanRule(s.db.QueryRowContext(ctx, `SELECT `+ruleCols+` FROM mail_rules
+		WHERE COALESCE(match_from, '') = ? AND COALESCE(match_category, '') = ? AND COALESCE(match_subject, '') = ?
+		AND COALESCE(match_body, '') = ? AND action = ? AND COALESCE(folder, '') = ?`,
+		sp.From, sp.Category, sp.Subject, sp.Body, sp.Action, sp.Folder))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Rule{}, false, nil
+	}
+	if err != nil {
+		return Rule{}, false, fmt.Errorf("find mail rule: %w", err)
+	}
+	return r, true, nil
+}
 
 // DeleteRule removes a rule. Mail it already handled stays handled.
 func (s *Service) DeleteRule(ctx context.Context, id int64) error {
@@ -282,6 +426,32 @@ func (r Rule) matchesHeaders(m row) bool {
 		return false
 	}
 	return true
+}
+
+// spares reports whether one of the rule's exceptions covers a message, so the
+// rule leaves it alone. Every field an exception sets must match. When it can't
+// tell, it spares: mail with no category counts as matching a category, and a
+// subject the cache clipped counts as containing the words.
+func (r Rule) spares(m row) bool {
+	for _, e := range r.Except {
+		if e.Category != "" && m.Category.Valid && m.Category.String != e.Category {
+			continue
+		}
+		if e.From != "" && !senderMatches(e.From, m.FromAddr) {
+			continue
+		}
+		if e.Subject != "" && !strings.Contains(foldWords(m.Subject), e.Subject) && !subjectClipped(m.Subject) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// subjectClipped reports whether the cache cut a subject short, so words past
+// the cut can't be seen.
+func subjectClipped(s string) bool {
+	return strings.HasSuffix(s, "…") && utf8.RuneCountInString(s) > maxCachedSubject
 }
 
 // needsBody reports whether the rule has to read a message's text to decide.
@@ -355,6 +525,9 @@ func (s *Service) applyRules(ctx context.Context, a *account) (int, error) {
 					if !strings.Contains(text, *r.Match.Body) {
 						continue
 					}
+				}
+				if r.spares(m) {
+					continue // this rule leaves it alone; a later one may not
 				}
 				matched = i
 				break

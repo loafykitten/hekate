@@ -1,7 +1,10 @@
 package mail
 
 import (
+	"database/sql"
 	"encoding/json"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -283,7 +286,7 @@ func TestRuleProposeToolWords(t *testing.T) {
 	var spec RuleSpec
 	_ = json.Unmarshal(r.Payload, &spec)
 	if r.Title != `Trash mail from example.net with "upgrade" in the subject?` ||
-		spec != (RuleSpec{From: "@example.net", Subject: "upgrade", Action: "trash"}) {
+		!reflect.DeepEqual(spec, RuleSpec{From: "@example.net", Subject: "upgrade", Action: "trash"}) {
 		t.Errorf("request %+v spec %+v", r, spec)
 	}
 	if _, err := f.appr.run(t.Context(), 0); err != nil {
@@ -294,5 +297,142 @@ func TestRuleProposeToolWords(t *testing.T) {
 	}
 	if _, err := f.call("mail_rule_propose", `{"subject":"upgrade","action":"trash","reason":"x"}`); err == nil {
 		t.Error("a rule of words alone was proposed")
+	}
+}
+
+func TestRuleExceptionsSpareMatchingMail(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	if _, err := f.svc.CreateRule(ctx, RuleSpec{From: "@bank.example.net", Action: "trash", Except: []RuleException{
+		{Category: "receipt"},
+		{Subject: "Transaction"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	// A later rule still gets mail the first one spares.
+	if _, err := f.svc.CreateRule(ctx, RuleSpec{Category: "receipt", Action: "mark_read"}); err != nil {
+		t.Fatal(err)
+	}
+	f.deliver("INBOX", mailSpec{subject: "Big sale on upgrades", from: "Bank <news@bank.example.net>"})
+	f.deliver("INBOX", mailSpec{subject: "Your receipt", from: "Bank <billing@bank.example.net>"})
+	f.deliver("INBOX", mailSpec{subject: "New transaction on your card", from: "Bank <alerts@bank.example.net>"})
+	f.sweep()
+
+	if m := f.bySubject("Big sale on upgrades"); m.Folder != "Trash" {
+		t.Errorf("unexcepted mail spared: %+v", m)
+	}
+	if m := f.bySubject("Your receipt"); m.Folder != "INBOX" || m.Unread {
+		t.Errorf("category exception: want spared by the trash rule, then marked read by the next: %+v", m)
+	}
+	if m := f.bySubject("New transaction on your card"); m.Folder != "INBOX" || !m.Unread {
+		t.Errorf("subject exception: %+v", m)
+	}
+}
+
+func TestRuleExceptionsFailSafe(t *testing.T) {
+	ex := Rule{Except: []RuleException{{Category: "receipt"}, {Subject: "transaction"}}}
+	unclassified := row{FromAddr: "a@example.net", Subject: "Hello"}
+	if !ex.spares(unclassified) {
+		t.Error("mail with no category should count as matching a category exception")
+	}
+	promo := row{FromAddr: "a@example.net", Subject: "Hello", Category: sql.NullString{String: "promo", Valid: true}}
+	if ex.spares(promo) {
+		t.Error("a promo spared by a receipt exception")
+	}
+	clipped := promo
+	clipped.Subject = strings.Repeat("x", maxCachedSubject) + "…"
+	if !ex.spares(clipped) {
+		t.Error("a clipped subject should count as containing the exception's words")
+	}
+	// All of an exception's fields must match.
+	both := Rule{Except: []RuleException{{From: "@bank.example.net", Subject: "transaction"}}}
+	if both.spares(row{FromAddr: "a@other.example.net", Subject: "transaction", Category: promo.Category}) {
+		t.Error("an exception matched on one of its two fields")
+	}
+}
+
+func TestRuleExceptionsValidateAndLabel(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	for name, ex := range map[string][]RuleException{
+		"empty":    {{}},
+		"category": {{Category: "spam"}},
+		"sender":   {{From: "not an address"}},
+		"short":    {{Subject: "ab"}},
+		"too many": {{Subject: "aaa"}, {Subject: "bbb"}, {Subject: "ccc"}, {Subject: "ddd"}, {Subject: "eee"}, {Subject: "fff"}},
+	} {
+		if _, err := f.svc.CreateRule(ctx, RuleSpec{From: "@example.net", Action: "trash", Except: ex}); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	r, err := f.svc.CreateRule(ctx, RuleSpec{Category: "promo", From: "@Example.net", Action: "trash", Except: []RuleException{
+		{Subject: "  Transaction "}, {Category: "Receipt"}, {Subject: "transaction"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Trash promo mail from example.net, except mail with “transaction” in the subject or receipt mail"
+	if r.Label != want {
+		t.Errorf("label = %q, want %q", r.Label, want)
+	}
+	if len(r.Except) != 2 {
+		t.Errorf("exceptions = %+v, want the repeat dropped", r.Except)
+	}
+	// The same exceptions in another order are the same rule.
+	again, err := f.svc.CreateRule(ctx, RuleSpec{Category: "promo", From: "@example.net", Action: "trash", Except: []RuleException{
+		{Category: "receipt"}, {Subject: "TRANSACTION"},
+	}})
+	if err != nil || again.ID != r.ID {
+		t.Errorf("same rule = %+v, %v; want id %s", again, err, r.ID)
+	}
+}
+
+func TestNewExceptionsReplaceTheRuleInPlace(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	first, _ := f.svc.CreateRule(ctx, RuleSpec{From: "@bank.example.net", Action: "trash"})
+	second, _ := f.svc.CreateRule(ctx, RuleSpec{Category: "promo", Action: "archive"})
+	if _, err := f.store.DB().Exec(`UPDATE mail_rules SET hits = 7 WHERE id = ?`, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	r, replaced, err := f.svc.putRule(ctx, RuleSpec{From: "@bank.example.net", Action: "trash", Except: []RuleException{{Category: "receipt"}}})
+	if err != nil || !replaced {
+		t.Fatalf("put = %+v, %v, %v", r, replaced, err)
+	}
+	if r.ID == first.ID || r.Hits != 7 || r.CreatedAt != first.CreatedAt || len(r.Except) != 1 {
+		t.Errorf("replacement = %+v", r)
+	}
+	rules, _ := f.svc.Rules(ctx)
+	if len(rules) != 2 || rules[0].ID != r.ID || rules[1].ID != second.ID {
+		t.Errorf("rules = %+v; want the replacement first, where the original was", rules)
+	}
+	// An in-flight sweep sees the old rule as deleted.
+	if id, _ := strconv.ParseInt(first.ID, 10, 64); f.svc.ruleExists(ctx, id) {
+		t.Error("the replaced rule still exists")
+	}
+}
+
+func TestRuleProposeToolExceptions(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.svc.CreateRule(t.Context(), RuleSpec{From: "@bank.example.net", Action: "trash"}); err != nil {
+		t.Fatal(err)
+	}
+	f.mustCall("mail_rule_propose", `{"from":"@bank.example.net","action":"trash","except":[{"category":"receipt"}],"reason":"Keep the receipts."}`)
+	r := f.appr.requests()[0]
+	if r.Title != "Update the rule: Trash mail from bank.example.net, except receipt mail?" ||
+		!strings.HasPrefix(r.Detail, "Replaces “Trash mail from bank.example.net”.") {
+		t.Errorf("request = %+v", r)
+	}
+	if _, err := f.appr.run(t.Context(), 0); err != nil {
+		t.Fatal(err)
+	}
+	res := f.mustCall("mail_rules", `{}`).Content
+	if !strings.Contains(res, "except receipt mail") || strings.Count(res, "\n") != 0 {
+		t.Errorf("mail_rules = %q", res)
+	}
+	// Proposing it again changes nothing and asks nobody.
+	again := f.mustCall("mail_rule_propose", `{"from":"@bank.example.net","action":"trash","except":[{"category":"receipt"}],"reason":"x"}`).Content
+	if !strings.Contains(again, "already exists") || len(f.appr.requests()) != 1 {
+		t.Errorf("again = %q, %d requests", again, len(f.appr.requests()))
 	}
 }

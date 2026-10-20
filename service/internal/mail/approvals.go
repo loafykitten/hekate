@@ -136,9 +136,12 @@ func (s *Service) execRuleCreate(ctx context.Context, raw json.RawMessage) (stri
 	if err := decodePayload(raw, &p); err != nil {
 		return "", err
 	}
-	r, err := s.CreateRule(ctx, p)
+	r, replaced, err := s.putRule(ctx, p)
 	if err != nil {
 		return "", err
+	}
+	if replaced {
+		return "Updated the rule: " + r.Label, nil
 	}
 	return "Created the rule: " + r.Label, nil
 }

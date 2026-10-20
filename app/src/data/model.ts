@@ -122,6 +122,7 @@ export interface Message {
 export interface MailRule {
   id: string;
   match: { from: string | null; category: string | null; subject: string | null; body: string | null };
+  except: { from: string | null; category: string | null; subject: string | null }[]; // mail the rule spares
   action: string; // archive | trash | mark_read | move
   folder: string | null;
   label: string;
@@ -355,6 +356,9 @@ export function asMailRule(v: unknown): MailRule | undefined {
   return {
     id,
     match: { from: strOrNull(match.from), category: strOrNull(match.category), subject: strOrNull(match.subject), body: strOrNull(match.body) },
+    except: (Array.isArray(v.except) ? v.except : [])
+      .filter(isRec)
+      .map((e) => ({ from: strOrNull(e.from), category: strOrNull(e.category), subject: strOrNull(e.subject) })),
     action: strOr(v.action),
     folder: strOrNull(v.folder),
     label: v.label,

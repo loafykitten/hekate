@@ -246,6 +246,14 @@ Telegram backup channel and a voice-off toggle. Next: M5 (polish).
 | **M4 Proactive** ✅ | Briefing, heartbeat, follow-ups, reflection + diary, self-inspection, ideas | She greets you with your day and reflects nightly |
 | **M5 Polish** | Viseme lip sync from TTS timings, expression map, offline shell, UX passes | — |
 
+### M5 as built
+
+- **Viseme lip sync**: the service turns the voice's per-character timing into timed mouth shapes
+  (`perform/visemes.go`; viseme classes, English letter rules); the app maps them to the rig's
+  morphs from the manifest and scales them by loudness (`character/lips.ts`). Lines without
+  usable timing, and a voice that's off, fall back to the loudness-driven mouth.
+  `npm run verify:lipsync` checks it on the real character.
+
 ### M4 as built (2026-10-20)
 
 - **Routines** run on a small scheduler (`service/internal/jobs`): daily at a time, caught up

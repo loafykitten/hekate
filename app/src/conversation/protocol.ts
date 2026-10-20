@@ -65,6 +65,8 @@ export interface Segment {
   words: SegmentWord[] | null;
   gestures: SegmentGesture[];
   expressions: SegmentExpression[];
+  // Mouth shapes timed to the audio (viseme classes); null without audio, empty when unknown.
+  visemes?: { v: string; at: number }[] | null;
 }
 
 export interface Card {

@@ -18,6 +18,8 @@ export interface CharacterRig {
   headBone: string;
   // Morph targets blended in proportion to how open the mouth is.
   mouth: MorphWeight[];
+  // Viseme class (aa, PP, ...) -> morph weights making that mouth shape. Absent: loudness only.
+  visemes?: Record<string, Record<string, number>>;
   // Eyelid morph targets, closed at weight 1.
   blink: string[];
   // Outlines are drawn by OutlineEffect, styled per mesh (null = no outline; fallback covers
@@ -30,6 +32,12 @@ export interface CharacterRig {
   // chinLift (radians): how far to raise the head while speaking, for idles that look down.
   procedural: { spine?: string; tail: string[]; ears: string[]; chinLift: number };
 }
+
+// A viseme is fully made at this loudness (mouthOpen) and fainter below it, so quiet sounds and
+// the gaps between syllables close the mouth.
+const LIP_FULL_AT = 0.35;
+// How quickly viseme morphs follow their targets (per second).
+const LIP_RATE = 28;
 
 const toonRamp = (() => {
   const data = new Uint8Array([90, 170, 255]);
@@ -124,6 +132,10 @@ export class Character {
   private blinkUntil = 0;
   private time = 0;
   mouthOpen = 0;
+  // Viseme classes showing now (from LipTrack), or undefined: the mouth follows mouthOpen alone.
+  // With them, the shapes come from the visemes and loudness only says how fully they're made.
+  visemes?: Record<string, number>;
+  private lipWeights = new Map<string, number>();
   speaking = false;
   private engaged = 0; // eases toward 1 while speaking, so the chin lift isn't a snap
   blinkEnabled = true;
@@ -397,7 +409,7 @@ export class Character {
     if (eyesClosed > 0) for (const n of this.rig.blink) overlay.set(n, Math.max(overlay.get(n) ?? 0, eyesClosed));
     // Morphs the mouth and blink code rewrites every frame keep that value as the floor; the
     // others start from zero, so releasing an expression eases back to neutral.
-    const driven = new Set([...this.rig.mouth.map((w) => w.name), ...(this.blinkEnabled ? this.rig.blink : [])]);
+    const driven = new Set([...this.rig.mouth.map((w) => w.name), ...this.lipWeights.keys(), ...(this.blinkEnabled ? this.rig.blink : [])]);
     for (const name of new Set([...overlay.keys(), ...this.overlaid])) {
       const floor = driven.has(name) ? this.morphWeight(name) : 0;
       this.setMorph(name, Math.max(floor, overlay.get(name) ?? 0));
@@ -478,7 +490,7 @@ export class Character {
     const tail = this.tailMotion.update({ dt, liveliness: this.engaged, baseTurn, baseTip, baseLean });
     p.tail.forEach((n, i) => this.layer(n, [["pitch", tail[i].pitch], ["yaw", tail[i].yaw]]));
 
-    for (const w of this.rig.mouth) this.setMorph(w.name, w.weight * talking);
+    this.updateMouth(talking, dt);
     // A slight chin lift while speaking reads as engagement.
     this.layer(this.rig.headBone, [["pitch", this.headLayer * (0.03 * Math.sin(t * 0.7) - p.chinLift * this.engaged)]]);
     p.ears.forEach((n, i) => this.layer(n, [["pitch", 0.05 * Math.sin(t * 2 + i) * (0.3 + talking)]]));
@@ -491,6 +503,32 @@ export class Character {
       for (const n of this.rig.blink) this.setMorph(n, t < this.blinkUntil ? 1 : 0);
     }
     this.applyExpression();
+  }
+
+  // Writes the mouth morphs: viseme shapes scaled by loudness when the line has timed visemes,
+  // otherwise the loudness-driven open mouth. Each viseme morph eases to its target, so shapes
+  // flow into each other and back to rest.
+  private updateMouth(talking: number, dt: number) {
+    const shapes = this.rig.visemes;
+    const lips = shapes && this.visemes;
+    const target = new Map<string, number>();
+    if (lips) {
+      const energy = Math.min(1, talking / LIP_FULL_AT);
+      for (const [v, strength] of Object.entries(lips)) {
+        for (const [name, w] of Object.entries(shapes[v] ?? {})) target.set(name, Math.min(1, (target.get(name) ?? 0) + w * strength * energy));
+      }
+    }
+    for (const w of this.rig.mouth) this.setMorph(w.name, lips ? 0 : w.weight * talking);
+    const ease = 1 - Math.exp(-LIP_RATE * dt);
+    for (const name of new Set([...this.lipWeights.keys(), ...target.keys()])) {
+      const cur = this.lipWeights.get(name) ?? 0;
+      const next = cur + ((target.get(name) ?? 0) - cur) * ease;
+      this.setMorph(name, next);
+      if (next < 0.001 && !target.has(name)) {
+        this.setMorph(name, 0);
+        this.lipWeights.delete(name);
+      } else this.lipWeights.set(name, next);
+    }
   }
 
   headScreenAnchor(camera: THREE.Camera, out: THREE.Vector3): THREE.Vector3 {

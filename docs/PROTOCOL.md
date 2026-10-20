@@ -40,13 +40,22 @@ client whose input started a turn (`origin` matches its `client_id`) plays the a
   "audio_format": "mp3",            // null without TTS
   "words": [{ "text": "Morning,", "start": 0.0, "end": 0.41 }],   // null without TTS
   "gestures": [{ "name": "waving", "at": 0.0 }],                   // seconds into this segment
-  "expressions": [{ "name": "laughs", "at": 0.9 }]                 // ElevenLabs tags, for faces
+  "expressions": [{ "name": "laughs", "at": 0.9 }],                // ElevenLabs tags, for faces
+  "visemes": [{ "v": "PP", "at": 0.02 }, { "v": "O", "at": 0.09 }] // mouth shapes; null without TTS, [] when timing is unknown
 }
 ```
 
 The client plays segments back to back in `seq` order. It reveals `text` word by word using
-`words` (or evenly over `duration` without TTS), fires gestures at `at`, and drives the mouth
-from the audio's loudness.
+`words` (or evenly over `duration` without TTS), fires gestures at `at`, and drives the mouth.
+
+`visemes` are read from the voice's per-character timing: each display letter (or letter pair,
+such as "th" or "ee") is mapped to one of the 15 Oculus viseme classes (`sil`, `PP`, `FF`, `TH`,
+`DD`, `kk`, `CH`, `SS`, `nn`, `RR`, `aa`, `E`, `I`, `O`, `U`) at the time that letter is spoken,
+with `sil` in pauses over 80 ms between words and at the end. The rules are English rules of
+thumb, good enough for a mouth. When the alignment doesn't match the text (the provider
+normalised it), the list is empty. The client maps each class to morphs through the manifest's
+`lipsync.viseme_based`, eases from one shape into the next, and lets loudness scale how fully a
+shape is made; with no visemes the mouth follows loudness alone.
 
 ### Client → server
 

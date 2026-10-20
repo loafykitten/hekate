@@ -2,6 +2,7 @@ package perform
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"reflect"
 	"strings"
@@ -348,7 +349,7 @@ func TestSegmentJSONShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"seq":0,"text":"Hi.","duration":1.2,"audio_b64":null,"audio_format":null,"words":null,"gestures":[],"expressions":[]}`
+	want := `{"seq":0,"text":"Hi.","duration":1.2,"audio_b64":null,"audio_format":null,"words":null,"gestures":[],"expressions":[],"visemes":null}`
 	if string(b) != want {
 		t.Errorf("json = %s\nwant   %s", b, want)
 	}
@@ -372,5 +373,56 @@ func TestSplitterCutsFirstSentenceEarly(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("sentence %d = %q, want %q", i, got[i], want[i])
 		}
+	}
+}
+
+func TestSpell(t *testing.T) {
+	for _, tt := range []struct{ word, want string }{
+		{"Morning,", "PP O RR nn I nn"}, // "ng" is one sound
+		{"Rika.", "RR I kk aa"},
+		{"the", "TH E"},      // a final e after th... is still spoken: "th" isn't a consonant letter here
+		{"take", "DD aa kk"}, // silent final e
+		{"nice", "nn I SS"},  // soft c
+		{"cheese", "CH I SS"},
+		{"phone", "FF O nn"},
+		{"quick", "kk I kk"},
+		{"high", "I"},         // h is breath, gh silent
+		{"Ñandú", "aa nn DD"}, // letters it doesn't know hold the shape before
+		{"3:15", ""},
+	} {
+		var got []string
+		for _, s := range spell([]rune(tt.word)) {
+			got = append(got, s.v)
+		}
+		if strings.Join(got, " ") != tt.want {
+			t.Errorf("spell(%q) = %q, want %q", tt.word, strings.Join(got, " "), tt.want)
+		}
+	}
+}
+
+func TestBuildVisemes(t *testing.T) {
+	// "Hi, Rika." with each character 0.1 s; the pause after the comma is
+	// stretched to 0.3 s so the mouth closes in it.
+	tagged := Parse("Hi, Rika.", vocab)
+	sp := speechFor(tagged.TTSText, 0, 0, 0.1)
+	sp.Alignment.Ends[3] = 0.6 // the space after "Hi," lasts until 0.6
+	for i := 4; i < len(sp.Alignment.Starts); i++ {
+		sp.Alignment.Starts[i] += 0.2
+		sp.Alignment.Ends[i] += 0.2
+	}
+	seg := Build(0, tagged, sp)
+	var got []string
+	for _, v := range seg.Visemes {
+		got = append(got, fmt.Sprintf("%s@%.1f", v.V, v.At))
+	}
+	// h is breath: "Hi" starts its shape on the i.
+	want := "I@0.1 sil@0.3 RR@0.6 I@0.7 kk@0.8 aa@0.9 sil@1.1"
+	if strings.Join(got, " ") != want {
+		t.Errorf("visemes = %q\nwant      %q", strings.Join(got, " "), want)
+	}
+
+	// Without usable timing the mouth follows loudness: an empty list.
+	if seg := Build(0, Parse("Twenty past three.", vocab), speechFor("20 past 3.", 0, 0, 0.2)); seg.Visemes == nil || len(seg.Visemes) != 0 {
+		t.Errorf("mismatched alignment visemes = %+v", seg.Visemes)
 	}
 }

@@ -3,6 +3,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { OutlineEffect } from "three/addons/effects/OutlineEffect.js";
 import { Bubble } from "./bubble";
 import { Character } from "./character";
+import { LipTrack } from "./lips";
 import { loadCharacterSource } from "./manifest";
 import { Speech } from "./speech";
 
@@ -95,6 +96,8 @@ function disposeObject(root: THREE.Object3D) {
 export class Stage {
   readonly params: StageParams;
   readonly speech: Speech;
+  // Mouth shapes of the lines queued in speech, when the service sent them.
+  readonly lips = new LipTrack();
   readonly bubble?: Bubble;
   private readonly search: URLSearchParams;
   private readonly renderer: THREE.WebGLRenderer;
@@ -225,6 +228,7 @@ export class Stage {
     if (character) {
       const target = mouthTarget(this.speech.level(), this.params.forcedMouth);
       character.mouthOpen = smoothMouth(character.mouthOpen, target, dt);
+      character.visemes = this.params.forcedMouth === undefined ? this.lips.at(this.speech.position) : undefined;
       character.speaking = this.speech.speaking || this.params.forcedMouth !== undefined;
       character.fidgets = this.idle && !this.params.gesture;
       character.update(dt);

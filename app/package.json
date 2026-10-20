@@ -19,7 +19,8 @@
     "verify:tail": "node scripts/verify/tail.mjs",
     "verify:voice": "node scripts/verify/voice.mjs",
     "verify:diary": "node scripts/verify/diary.mjs",
-    "verify:briefing": "node scripts/verify/briefing.mjs"
+    "verify:briefing": "node scripts/verify/briefing.mjs",
+    "verify:lipsync": "node scripts/verify/lipsync.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.104.4",

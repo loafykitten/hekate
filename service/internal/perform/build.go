@@ -45,6 +45,7 @@ type Segment struct {
 	Words       []Word       `json:"words"`
 	Gestures    []Gesture    `json:"gestures"`
 	Expressions []Expression `json:"expressions"`
+	Visemes     []Viseme     `json:"visemes"` // mouth shapes; null without audio, empty when the timing is unknown
 }
 
 // Build maps a tagged sentence onto time. sp may be nil (no voice).
@@ -101,6 +102,10 @@ func Build(seq int, t Tagged, sp *voice.Speech) Segment {
 
 	exact := times != nil && len(d2t) == len(display)
 	if hasAudio {
+		seg.Visemes = []Viseme{}
+		if exact {
+			seg.Visemes = visemes(display, func(i int) float64 { return times.starts[d2t[i]] }, func(i int) float64 { return times.ends[d2t[i]] })
+		}
 		seg.Words = []Word{} // with audio, "no words" is an empty list, not null
 		for _, w := range splitWords(display) {
 			word := Word{Text: string(display[w.a:w.b]), Start: prop(w.a), End: prop(w.b)}

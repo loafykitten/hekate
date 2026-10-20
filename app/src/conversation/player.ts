@@ -1,5 +1,6 @@
 import type { Bubble } from "../character/bubble";
 import type { Character } from "../character/character";
+import type { LipTrack } from "../character/lips";
 import type { Speech } from "../character/speech";
 import type { Segment } from "./protocol";
 import {
@@ -17,6 +18,7 @@ import {
 
 export interface PlayerHost {
   speech: Speech;
+  lips?: LipTrack;
   bubble?: Bubble;
   // The character, once loaded.
   character: () => Character | undefined;
@@ -123,6 +125,7 @@ export class SegmentPlayer {
   stop() {
     this.epoch++;
     this.host.speech.stop();
+    this.host.lips?.clear();
     this.items = [];
     this.active = [];
     this.turnOver = true;
@@ -173,6 +176,7 @@ export class SegmentPlayer {
       start = Math.max(speech.now() + LEAD, notBefore);
       end = start + Math.max(0.3, segment.duration);
     }
+    if (buffer && segment.visemes?.length) this.host.lips?.add(start, end, segment.visemes);
     const duration = end - start;
     const hasTimings = buffer && segment.words && segment.words.length > 0;
     this.items.push({

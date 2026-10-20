@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -232,13 +233,19 @@ func TestRunPollsAndKeepsTheOffset(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() { s.Run(ctx); close(done) }()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if off, _ := s.store.GetSettingInt(t.Context(), offsetSetting, 0); off == 42 {
-			break
+	// Wait for the poll after the update, which must ask from past it.
+	polledPast := func() bool {
+		for _, c := range b.sent("getUpdates") {
+			if c.params["offset"] == float64(42) {
+				return true
+			}
 		}
+		return false
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for !polledPast() {
 		if time.Now().After(deadline) {
-			t.Fatal("the offset never moved past the update")
+			t.Fatal("no poll asked from past the update")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -247,9 +254,8 @@ func TestRunPollsAndKeepsTheOffset(t *testing.T) {
 	if len(d.decisions) != 1 || d.decisions[0] != "7|deny|not now" {
 		t.Errorf("decisions = %v", d.decisions)
 	}
-	polls := b.sent("getUpdates")
-	if len(polls) == 0 || polls[len(polls)-1].params["offset"] != float64(42) {
-		t.Errorf("the next poll didn't ask from the saved offset: %+v", polls)
+	if off, _ := s.store.GetSettingInt(t.Context(), offsetSetting, 0); off != 42 {
+		t.Errorf("saved offset = %d, want 42", off)
 	}
 }
 
@@ -295,5 +301,24 @@ func TestSendsDontHangOnAStalledTelegram(t *testing.T) {
 	}
 	if took := time.Since(start); took > 2*time.Second {
 		t.Errorf("the backup send blocked for %s", took)
+	}
+}
+
+func TestLongResultsStillAcknowledgeTheButton(t *testing.T) {
+	b := newFakeBot(t)
+	s, d := newService(t, b)
+	d.err = errors.New(strings.Repeat("x", 600))
+	u := update{UpdateID: 1}
+	u.Callback = &struct {
+		ID      string   `json:"id"`
+		From    user     `json:"from"`
+		Message *message `json:"message"`
+		Data    string   `json:"data"`
+	}{ID: "cb", From: user{ID: owner}, Data: "approval:7:once", Message: &message{MessageID: 101}}
+	u.Callback.Message.Chat.ID = owner
+	s.handle(t.Context(), u)
+	answers := b.sent("answerCallbackQuery")
+	if len(answers) != 1 || len([]rune(answers[0].params["text"].(string))) > 200 {
+		t.Errorf("answer = %+v", answers)
 	}
 }

@@ -297,7 +297,12 @@ func (s *Service) handle(ctx context.Context, u update) {
 		reply := s.decideButton(ctx, cb.Data)
 		actx, cancel := context.WithTimeout(ctx, s.sendFor)
 		defer cancel()
-		if err := s.call(actx, "answerCallbackQuery", map[string]any{"callback_query_id": cb.ID, "text": reply}, nil); err != nil {
+		// Telegram takes at most 200 characters here; the full reply follows in the chat.
+		ack := reply
+		if utf8.RuneCountInString(ack) > 190 {
+			ack = string([]rune(ack)[:189]) + "…"
+		}
+		if err := s.call(actx, "answerCallbackQuery", map[string]any{"callback_query_id": cb.ID, "text": ack}, nil); err != nil {
 			s.log.Warn("cannot answer a telegram button", "error", err)
 		}
 		// The buttons have done their job either way.

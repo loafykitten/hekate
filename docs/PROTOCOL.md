@@ -405,7 +405,7 @@ nudged twice (what was sent is remembered for a year). Renamon can change these 
 
 The morning briefing is written at `briefing_at` (caught up within 3 h), from the weather at home,
 today's events, tasks due or late, today's reminders, mail that needs the owner and follow-ups,
-using the background model. It's pushed (`notify` kind `briefing`, opening `/?briefing=1`) and
+using the background model. It's pushed (`notify` kind `briefing`, opening Today, `/?menu=today`) and
 waits to be played: the app plays it when opened (see `ready`), with weather, events, tasks,
 reminders and mail cards.
 

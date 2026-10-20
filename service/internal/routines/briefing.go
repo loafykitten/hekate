@@ -133,7 +133,7 @@ func (s *Service) WriteBriefing(ctx context.Context) (string, error) {
 	line := pushLine(text)
 	s.events.Notify(proto.NewNotify("briefing-"+day, proto.NotifyKindBriefing, "Good morning", line, nil))
 	if s.pusher != nil {
-		if _, err := s.pusher.Send(ctx, push.Payload{Title: "Good morning", Body: line, URL: "/?briefing=1", Tag: "briefing"}, push.UrgencyNormal); err != nil {
+		if _, err := s.pusher.Send(ctx, push.Payload{Title: "Good morning", Body: line, URL: "/?menu=today", Tag: "briefing"}, push.UrgencyNormal); err != nil {
 			s.log.Warn("briefing push failed", "error", err)
 		}
 	}

@@ -153,6 +153,7 @@ export class Conversation {
   private everOpen = false;
   private briefingWaiting = false;
   private offeringBriefing = false;
+  private deferredBriefing?: boolean; // tapped before she loaded: the replay flag to send
   private readonly deck = new CardDeck(() => this.emit());
   private notices: Notice[] = [];
   private noticeTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -217,10 +218,17 @@ export class Conversation {
     this.stage = stage;
     if (stage) {
       stage.speech.muted = !this.voice;
-      void this.offerBriefing(); // it may have been waiting for the stage
       const host = { speech: stage.speech, bubble: stage.bubble as Bubble | undefined, character: () => stage.character };
       this.player = new SegmentPlayer(host);
       this.player.onChange(() => this.emit());
+      // The briefing may have been waiting for her, or tapped while she loaded.
+      if (this.deferredBriefing !== undefined) {
+        const replay = this.deferredBriefing;
+        this.deferredBriefing = undefined;
+        this.playBriefing(replay);
+      } else {
+        void this.offerBriefing();
+      }
     }
     this.emit();
   }
@@ -264,6 +272,12 @@ export class Conversation {
   // the app asks without replay: if another device already has it, nothing happens here.
   playBriefing(replay = true): boolean {
     this.unlockAudio();
+    if (!this.player) {
+      // She's still loading: ask once she can perform it (attachStage).
+      this.deferredBriefing = replay;
+      this.dismissNotice(BRIEFING_NOTICE);
+      return true;
+    }
     if (!this.connected) {
       this.toast("error", "Not connected to Hekate yet.", "offline-briefing");
       return false;
@@ -281,7 +295,8 @@ export class Conversation {
   // The briefing is waiting: start it when the app is in view and it can be heard (or her voice is
   // off), otherwise offer it with a notice to tap.
   private async offerBriefing() {
-    if (!this.briefingWaiting || this.offeringBriefing) return;
+    // Without the stage there's nothing to perform it with: attachStage offers it again.
+    if (!this.briefingWaiting || this.offeringBriefing || !this.stage) return;
     this.offeringBriefing = true;
     try {
       const visible = typeof document === "undefined" || document.visibilityState === "visible";

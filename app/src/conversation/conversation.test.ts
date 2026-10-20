@@ -393,6 +393,17 @@ describe("Conversation: morning briefing", () => {
     expect(t.socket.json.at(-1)).toMatchObject({ type: "briefing", replay: true });
   });
 
+  it("waits for her to load before offering or playing it", async () => {
+    const t = setup({ ready: { ...READY, briefing: true } }); // no stage yet
+    await vi.advanceTimersByTimeAsync(500);
+    expect(t.state().notices).toEqual([]);
+    t.socket.receive({ type: "notify", id: "briefing-x", kind: "briefing", title: "Good morning", body: "Rain." });
+    t.conversation.playBriefing(); // tapped while she loads
+    expect(t.types()).not.toContain("briefing");
+    t.conversation.attachStage({ speech: new FakeSpeech(), bubble: undefined, character: undefined } as never);
+    expect(t.socket.json.at(-1)).toMatchObject({ type: "briefing", replay: true });
+  });
+
   it("plays quietly at once when her voice is off", async () => {
     const speech = new FakeSpeech();
     speech.unlockable = false;

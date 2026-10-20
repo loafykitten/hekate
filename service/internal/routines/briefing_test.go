@@ -106,7 +106,7 @@ func TestBriefingIsWrittenPushedAndPlayed(t *testing.T) {
 	if n.Kind != proto.NotifyKindBriefing || n.Title != "Good morning" || n.Body != "Morning, Rika. Rain all day, so take the umbrella to the dentist at three." {
 		t.Errorf("notice = %+v", n)
 	}
-	if p := f.rec.pushes[0]; p.URL != "/?briefing=1" || p.Tag != "briefing" {
+	if p := f.rec.pushes[0]; p.URL != "/?menu=today" || p.Tag != "briefing" {
 		t.Errorf("push = %+v", p)
 	}
 	if !f.svc.BriefingWaiting(ctx) {

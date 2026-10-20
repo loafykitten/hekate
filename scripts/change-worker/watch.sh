@@ -31,7 +31,10 @@ for stale in $(jq -r '.changes[].id' <<<"$working"); do
     log "change $stale: its saved outcome is unreadable; ignoring it"
     rm -f "$pending"
   fi
-  if [[ -n "$merged" ]]; then
+  if [[ -n "$merged" && -f "$pending" && "$(jq -r .outcome "$pending")" == merged ]]; then
+    log "change $stale: reporting the merge its run couldn't"
+    "$worker_dir/report.sh" finish "$stale" merged "$(jq -r .result "$pending")" --pr "$merged" || exit 0
+  elif [[ -n "$merged" ]]; then
     log "change $stale: was cut off after merging"
     "$worker_dir/report.sh" finish "$stale" merged "Merged; the worker was interrupted before it could confirm the deploy." --pr "$merged" || exit 0
   elif [[ -f "$pending" ]]; then

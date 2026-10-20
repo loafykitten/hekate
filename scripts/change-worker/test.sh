@@ -268,6 +268,18 @@ else
   fail "statuses: $(field "$id" status) and $(field "$next" status)"
 fi
 
+scenario="Hekate is down when a merged run reports: the next tick keeps its summary"
+id="$(queue)"; build_opens "$id"
+touch "$fake/hekate-down"
+tick; expect "$id" working MERGED
+echo "HEKATE_URL=http://127.0.0.1:$port" >"$tmp/config/hekate/change-worker.env"
+tick
+if [[ "$(field "$id" status)" == merged && "$(field "$id" result)" == Shipped.* ]]; then
+  echo "ok: $scenario"
+else
+  fail "after recovery: $(api GET "/api/changes/$id" | jq -c '{status, result}')"
+fi
+
 scenario="build crashes with GitHub down: stays working"
 id="$(queue)"; touch "$fake/build.fail" "$fake/gh-down"
 tick; expect "$id" working

@@ -15,6 +15,7 @@ branch="change/$id"
 report="$worker_dir/report.sh"
 mkdir -p "$run" "$state/worktrees"
 exec >>"$run/run.log" 2>&1
+rm -f "$run/outcome.json" # a new attempt: nothing an earlier one saved applies
 
 finished=0
 step="starting"

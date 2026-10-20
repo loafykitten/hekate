@@ -201,6 +201,7 @@ export const memoryApi = {
 
 export const changesApi = {
   list: async (signal?: AbortSignal): Promise<ChangeRequest[]> => many(await request("GET", "/changes", { signal }), "changes", asChangeRequest),
+  retry: async (id: string) => one(await request("POST", `/changes/${encodeURIComponent(id)}/retry`), asChangeRequest),
 };
 
 // --- weather -------------------------------------------------------------------------------

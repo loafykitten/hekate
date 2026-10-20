@@ -27,8 +27,15 @@ export function changeKindLabel(kind: string): string {
 
 // The line under the title: the worker's step while it works, the outcome once it's over, the
 // owner's reason when it was denied.
+// A change the worker failed or turned down can go back to the queue. (A proposal whose approval
+// itself failed reads "failed" too, but the worker never had it.)
+export function canRetry(c: ChangeRequest): boolean {
+  return (c.status === "failed" || c.status === "rejected") && c.attempts > 0;
+}
+
 export function changeSummary(c: ChangeRequest): string {
   if (c.status === "working") return c.stage;
+  if (c.status === "queued" && c.attempts > 0) return `Trying again (attempt ${c.attempts + 1})`;
   if (c.status === "denied") return c.feedback ?? "";
   if (c.status === "merged" || c.status === "rejected" || c.status === "failed") return c.result ?? c.stage;
   return "";

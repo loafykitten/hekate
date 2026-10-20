@@ -191,6 +191,9 @@ export interface ChangeRequest {
   issue_url: string | null;
   pr_url: string | null;
   result: string | null; // once finished: what happened
+  attempts: number; // times the worker has taken it
+  previous_result: string | null; // after a retry: how the last attempt ended
+  previous_pr_url: string | null;
   created_at: string;
   updated_at: string;
   finished_at: string | null;
@@ -434,6 +437,9 @@ export function asChangeRequest(v: unknown): ChangeRequest | undefined {
     issue_url: githubUrl(v.issue_url),
     pr_url: githubUrl(v.pr_url),
     result: strOrNull(v.result),
+    attempts: Math.max(0, numOr(v.attempts, 0)),
+    previous_result: strOrNull(v.previous_result),
+    previous_pr_url: githubUrl(v.previous_pr_url),
     created_at: strOr(v.created_at),
     updated_at: strOr(v.updated_at),
     finished_at: strOrNull(v.finished_at),

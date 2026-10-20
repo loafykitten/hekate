@@ -24,6 +24,10 @@ Report progress as you go. Each call shows on the owner's screen:
 3. **File the issue.** `gh issue create` with a short title and a body written from scratch for
    a public reader: the problem, the behavior wanted, what's in and out of scope, and a line saying
    the assistant proposed it and the owner approved it. Then report progress with `--issue`.
+   **On a retry** (the request has `issue_url`), the issue exists: reuse it, don't file another.
+   If it has `previous_pr_url`, an earlier attempt ended as `previous_result` says. Its commits
+   are still on GitHub: `git fetch origin pull/<number>/head` and build on them where they're
+   sound, then address what stopped it.
 4. **Build it** in this worktree the way `docs/DEVELOPMENT.md` describes: tests for new logic, docs
    (`docs/PROTOCOL.md`, the persona rules) kept in step, no mocks of planned features, no character
    assets, no secrets or private details. Implement it yourself in this session (you may use

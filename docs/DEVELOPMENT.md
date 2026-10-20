@@ -84,9 +84,16 @@ machine, which reaches Hekate over the tailnet like any of the owner's devices:
 - `run.sh ID` makes a worktree of `origin/main` on `change/ID` and runs a headless Claude Code
   session (`build-prompt.md`, auto permission mode, Opus at high effort). That session files a
   sanitized issue, builds the change, opens the PR and runs `ai-review.sh --astra` (up to three
-  rounds). A second, fresh session (`merge-prompt.md`, no file edits) checks CI, the review, the
-  diff's scope and privacy, then merges or closes the PR. `run.sh` confirms the PR state with
-  GitHub before reporting the outcome.
+  rounds). Then, up to three times: if `main` moved meanwhile (another change, or a merge by
+  hand), the worker merges it in (a short session, `sync-prompt.md`, resolves any conflicts),
+  pushes, reviews and waits for CI again; a second, fresh session (`merge-prompt.md`, no file
+  edits) checks CI, the review, the diff's scope and privacy and returns a verdict; and the worker
+  merges exactly the commit it checked (`--match-head-commit`), so a `main` that moved in between
+  sends it round again instead of merging something unchecked. It then waits for the deploy.
+- Merging by hand while a change is in flight is safe: the worker catches up. It still costs a
+  review round, so let the queue drain first when you can.
+- The owner can send a failed or rejected change back to the queue (Try again in the Changes
+  menu). The next run reuses its issue and is told how the last attempt ended and where its PR is.
 - Progress and outcomes go to Hekate (`report.sh`, the `/api/changes` endpoints in
   `PROTOCOL.md`); the owner sees them in the app and by push.
 

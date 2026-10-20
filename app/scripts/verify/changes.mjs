@@ -36,9 +36,11 @@ const CHANGES = [
   change(2, { title: "Read the weather before suggesting a walk", kind: "improvement", status: "working", stage: "PR open, in review", issue_url: "https://github.com/example/hekate/issues/12", pr_url: "https://github.com/example/hekate/pull/13" }),
   change(3, { title: "Snooze reminders by voice", status: "merged", result: "Merged and deployed. Say \"snooze that for an hour\" to try it.", finished_at: ago(90), pr_url: "https://github.com/example/hekate/pull/9" }),
   change(4, { title: "Rewrite the whole scheduler", kind: "improvement", status: "denied", feedback: "Too big for one change. Try the retry logic alone.", finished_at: ago(600) }),
-  change(5, { title: "Fix duplicate calendar events", kind: "fix", status: "failed", stage: "Building", result: "The build failed: tests for recurring events broke.", finished_at: ago(2000) }),
+  change(5, { title: "Fix duplicate calendar events", kind: "fix", status: "failed", stage: "Building", result: "The build failed: tests for recurring events broke.", finished_at: ago(2000), attempts: 2, previous_result: "Main moved before it could merge.", previous_pr_url: "https://github.com/example/hekate/pull/7" }),
   change(6, { title: "Add a haiku mode", status: "expired" }),
 ];
+
+const PRISTINE = structuredClone(CHANGES); // each viewport starts from these
 
 const LONG = "Build: Match mail rules on subject words?";
 const DETAIL = `What: let a mail rule match words in the subject line, not only the sender. The rule label would show the matched words so you can see why a message was filed.\nWhy: newsletters from many senders share subject words, so one rule could replace five.\nKind: feature\nTouches: mail rule matching, the rules list in Mail.\nRisk: low, rules are only applied to new mail.`;
@@ -48,7 +50,7 @@ const approval = (id, over = {}) => ({
   result: null, decided_by: null, note: null, created_at: ago(8), expires_at: ago(-60 * 24 * 7), decided_at: null, ...over,
 });
 
-const state = { approvals: [approval(41)], decisions: [] };
+const state = { approvals: [approval(41)], decisions: [], retried: [] };
 const json = (route, body, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
 
 async function wireApi(page, sockets) {
@@ -57,6 +59,13 @@ async function wireApi(page, sockets) {
     const method = route.request().method();
     if (p === "/api/ws") return route.fallback();
     if (p === "/api/changes") return json(route, { changes: CHANGES });
+    const retry = p.match(/^\/api\/changes\/(\d+)\/retry$/);
+    if (retry && method === "POST") {
+      const c = CHANGES.find((x) => x.id === retry[1]);
+      Object.assign(c, { status: "queued", previous_result: c.result, previous_pr_url: c.pr_url ?? c.previous_pr_url, result: null, pr_url: null, finished_at: null, stage: "" });
+      state.retried.push(c.id);
+      return json(route, c);
+    }
     if (p === "/api/approvals/rules") return json(route, { rules: [] });
     if (p === "/api/approvals" && method === "GET") {
       const pending = new URL(route.request().url()).searchParams.get("status") !== "recent";
@@ -108,11 +117,19 @@ async function shot(page, name) {
 
 const browser = await launch();
 for (const [vname, viewport] of [["phone", { width: 375, height: 812 }], ["desktop", { width: 1280, height: 800 }]]) {
+  CHANGES.splice(0, CHANGES.length, ...structuredClone(PRISTINE));
   let { page } = await open(browser, `${vname}-list`, viewport, "menu=changes");
   await page.getByText("Snooze reminders by voice").waitFor();
   await shot(page, `${vname}-list`);
   await page.getByRole("button", { name: /Match mail rules/ }).click();
   await shot(page, `${vname}-list-open`);
+  // A failed change: its last attempt, then Try again sends it back to the queue.
+  await page.getByRole("button", { name: /^Fix duplicate calendar events/ }).click();
+  await shot(page, `${vname}-failed-open`);
+  await page.getByRole("button", { name: "Try “Fix duplicate calendar events” again" }).click();
+  await page.getByText("Trying again (attempt 3)").waitFor();
+  await shot(page, `${vname}-retried`);
+  console.log("retried", state.retried);
   await page.close();
 
   // Deny with a reason on the approval card.

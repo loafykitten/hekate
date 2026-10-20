@@ -152,6 +152,10 @@ func TestRuleChangeWaitsForAnActionUnderWay(t *testing.T) {
 	if m := f.bySubject("Your transaction"); m.Unread {
 		t.Errorf("message = %+v, want the action that was under way finished", m)
 	}
+	// Handled by the rule as it stood, so the other rules leave it be.
+	if r, _ := f.svc.rowByID(ctx, f.id("Your transaction")); !r.RulesApplied {
+		t.Error("mail the rule handled was left for the other rules")
+	}
 	if rules, _ := f.svc.Rules(ctx); len(rules) != 1 || len(rules[0].Except) != 1 {
 		t.Errorf("rules = %+v", rules)
 	}

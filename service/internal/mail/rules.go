@@ -504,31 +504,49 @@ func (s *Service) applyRules(ctx context.Context, a *account) (int, error) {
 		// changes wait (rulesMu), so an exception approved meanwhile can't be
 		// overtaken by an action that checked before it.
 		held := false
+		release := func() {
+			if held {
+				s.rulesMu.RUnlock()
+				held = false
+			}
+		}
+		spared := map[int64]bool{} // in the inbox, but the rule no longer covers it
 		live := func(m row) bool {
 			if !held {
 				s.rulesMu.RLock()
 				held = true
 			}
-			return unruledInbox(m) && s.ruleStillMatches(ctx, rid, m)
+			if !unruledInbox(m) {
+				return false
+			}
+			if !s.ruleStillMatches(ctx, rid, m) {
+				spared[m.ID] = true
+				return false
+			}
+			return true
 		}
 		out, err := s.perform(ctx, r.Action, folder, ids, live)
-		if held {
-			s.rulesMu.RUnlock()
-		}
 		if err != nil {
+			release()
 			// Left unsettled: tried again next sweep, once the cause is fixed.
 			s.log.Warn("mail rule failed", "account", a.cfg.Name, "rule", r.ID, "error", err)
 			continue
 		}
-		// Mail the rule no longer covers (it was deleted, or an exception was
-		// added meanwhile) stays unsettled: the other rules get another look next sweep.
+		// Settled by the same check the action used, before rule changes may
+		// go ahead. Mail the rule no longer covered (it was deleted, or an
+		// exception was added) stays unsettled for the other rules next sweep,
+		// and so does everything if the action never got to check.
 		var done []int64
-		for _, m := range msgs {
-			if s.ruleStillMatches(ctx, rid, m) {
-				done = append(done, m.ID)
+		if held {
+			for _, id := range ids {
+				if !spared[id] {
+					done = append(done, id)
+				}
 			}
 		}
-		if err := s.settle(ctx, done); err != nil {
+		err = s.settle(ctx, done)
+		release()
+		if err != nil {
 			return applied, err
 		}
 		n := out.Done

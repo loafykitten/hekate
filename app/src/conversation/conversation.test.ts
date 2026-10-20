@@ -4,7 +4,12 @@ import { Conversation, type MicLike } from "./conversation";
 import { FakeSocket, FakeSpeech, READY } from "./fakes";
 import { MicError } from "./mic";
 
-function setup(opts: { startImpl?: () => Promise<boolean>; ready?: object } = {}) {
+function memoryStorage(initial: Record<string, string> = {}) {
+  const data = new Map(Object.entries(initial));
+  return { data, getItem: (k: string) => data.get(k) ?? null, setItem: (k: string, v: string) => void data.set(k, v) };
+}
+
+function setup(opts: { startImpl?: () => Promise<boolean>; ready?: object; storage?: ReturnType<typeof memoryStorage> } = {}) {
   FakeSocket.reset();
   let clock = 1000;
   const mic = {
@@ -15,8 +20,10 @@ function setup(opts: { startImpl?: () => Promise<boolean>; ready?: object } = {}
   } satisfies MicLike;
   let onChunk: (chunk: ArrayBuffer) => void = () => {};
   const client = new ConversationClient({ url: "ws://test/api/ws", socketFactory: (url) => new FakeSocket(url), setTimer: () => 0, clearTimer: () => {} });
+  const storage = opts.storage ?? memoryStorage();
   const conversation = new Conversation({
     client,
+    storage,
     now: () => clock,
     createMic: (cb) => {
       onChunk = cb;
@@ -30,6 +37,7 @@ function setup(opts: { startImpl?: () => Promise<boolean>; ready?: object } = {}
   return {
     conversation,
     socket,
+    storage,
     mic,
     chunk: (c: ArrayBuffer) => onChunk(c),
     tick: (ms: number) => (clock += ms),
@@ -336,6 +344,47 @@ describe("Conversation: superseded input and back-to-back turns", () => {
 
     t.socket.receive({ type: "turn_start", turn_id: "t2", input_id: "y", origin: "c1", user_text: "two" });
     expect(speech.stopped).toBe(1);
+  });
+});
+
+describe("Conversation: voice off", () => {
+  it("starts with her voice on, and turning it off quiets typed and spoken input and is remembered", async () => {
+    const t = setup();
+    const speech = new FakeSpeech();
+    t.conversation.attachStage({ speech, bubble: undefined, character: undefined } as never);
+    expect(t.state().voice).toBe(true);
+    expect(speech.muted).toBe(false);
+    t.conversation.sendText("loud");
+    expect(t.socket.json.at(-1)).not.toHaveProperty("quiet");
+    expect(speech.unlocks).toBe(1);
+
+    t.conversation.setVoice(false);
+    expect(t.state().voice).toBe(false);
+    expect(speech.muted).toBe(true);
+    expect(t.storage.data.get("hekate.voice")).toBe("off");
+    t.conversation.sendText("quiet please");
+    expect(t.socket.json.at(-1)).toMatchObject({ type: "say", text: "quiet please", quiet: true });
+    expect(speech.unlocks).toBe(1); // nothing to play: audio is left alone
+
+    t.conversation.pressTalk();
+    await vi.advanceTimersByTimeAsync(0);
+    t.conversation.releaseTalk();
+    t.conversation.pressTalk();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.socket.json.at(-1)).toMatchObject({ type: "ptt_end", quiet: true });
+
+    t.conversation.setVoice(true);
+    expect(speech.muted).toBe(false);
+    expect(speech.unlocks).toBe(2); // the toggle is a gesture: audio is ready for the next reply
+    expect(t.storage.data.get("hekate.voice")).toBe("on");
+  });
+
+  it("restores the device's choice, muting the stage when it arrives", () => {
+    const t = setup({ storage: memoryStorage({ "hekate.voice": "off" }) });
+    expect(t.state().voice).toBe(false);
+    const speech = new FakeSpeech();
+    t.conversation.attachStage({ speech, bubble: undefined, character: undefined } as never);
+    expect(speech.muted).toBe(true);
   });
 });
 

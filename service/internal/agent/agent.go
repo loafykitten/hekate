@@ -94,6 +94,7 @@ type turn struct {
 	inputID  string
 	origin   string
 	userText string
+	quiet    bool // the device that asked has her voice off: no speech for this turn
 
 	ctx    context.Context //nolint:containedctx // the turn's lifetime
 	cancel context.CancelCauseFunc
@@ -234,15 +235,16 @@ func (a *Agent) Gestures() []string {
 }
 
 // Say starts a turn for the given input. A running turn is interrupted first,
-// as if the client had reported the last segment it was sent as heard.
-func (a *Agent) Say(origin, inputID, text string) {
+// as if the client had reported the last segment it was sent as heard. A quiet
+// turn is answered in text only: no speech is synthesized.
+func (a *Agent) Say(origin, inputID, text string, quiet bool) {
 	if !a.llm.Configured() {
 		a.hub.Broadcast(proto.NewError(proto.CodeLLMUnavailable,
 			"I can't think right now: no language model is set up.", inputID))
 		return
 	}
 	ctx, cancel := context.WithCancelCause(a.baseCtx)
-	t := &turn{id: newID("t_"), inputID: inputID, origin: origin, userText: text,
+	t := &turn{id: newID("t_"), inputID: inputID, origin: origin, userText: text, quiet: quiet,
 		ctx: ctx, cancel: cancel, done: make(chan struct{})}
 	t.lastSeq.Store(-1)
 	t.heard.Store(heardUnset)

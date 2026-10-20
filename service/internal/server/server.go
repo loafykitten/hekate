@@ -89,7 +89,7 @@ var testHookInPTTStart func()
 // sayIfCurrent starts a turn only if no newer input arrived since gen, and
 // reports whether it did. before runs first under the same lock (to send the
 // transcript ahead of the turn).
-func (s *Server) sayIfCurrent(gen uint64, before func(), origin, id, text string) bool {
+func (s *Server) sayIfCurrent(gen uint64, before func(), origin, id, text string, quiet bool) bool {
 	s.inputMu.Lock()
 	defer s.inputMu.Unlock()
 	if s.inputs != gen {
@@ -97,17 +97,17 @@ func (s *Server) sayIfCurrent(gen uint64, before func(), origin, id, text string
 	}
 	before()
 	if text != "" {
-		s.conv.Say(origin, id, text)
+		s.conv.Say(origin, id, text, quiet)
 	}
 	return true
 }
 
 // say records a typed input and starts its turn.
-func (s *Server) say(origin, id, text string) {
+func (s *Server) say(origin, id, text string, quiet bool) {
 	s.inputMu.Lock()
 	defer s.inputMu.Unlock()
 	s.inputs++
-	s.conv.Say(origin, id, text)
+	s.conv.Say(origin, id, text, quiet)
 }
 
 // New creates a Server. Directories are opened lazily per request through

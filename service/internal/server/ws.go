@@ -37,7 +37,7 @@ type Conversation interface {
 	ConversationID() string
 	Gestures() []string
 	Timezone() string
-	Say(origin, inputID, text string)
+	Say(origin, inputID, text string, quiet bool)
 	Interrupt(turnID string, heardSeq int)
 	Hush()
 	Messages(ctx context.Context, before int64, limit int) ([]proto.HistoryMessage, error)
@@ -263,7 +263,7 @@ func (ss *session) onSay(m proto.ClientMessage) {
 		ss.sendTo(proto.NewError(proto.CodeTooLong, "That's too long for me to take in at once.", m.ID))
 		return
 	}
-	ss.s.say(ss.id, m.ID, text)
+	ss.s.say(ss.id, m.ID, text, m.Quiet)
 }
 
 func (ss *session) onPTTStart(m proto.ClientMessage) {
@@ -315,13 +315,13 @@ func (ss *session) onPTTEnd(m proto.ClientMessage) {
 	ss.wg.Add(1)
 	go func() {
 		defer ss.wg.Done()
-		ss.transcribe(id, pcm, gen)
+		ss.transcribe(id, pcm, gen, m.Quiet)
 	}()
 }
 
 // transcribe runs speech-to-text and starts a turn, unless a newer input
 // (gen changed) arrived while it ran.
-func (ss *session) transcribe(id string, pcm []int16, gen uint64) {
+func (ss *session) transcribe(id string, pcm []int16, gen uint64, quiet bool) {
 	if len(pcm) < minPTTSamples {
 		ss.sendTo(proto.NewTranscript(id, ""))
 		return
@@ -350,7 +350,7 @@ func (ss *session) transcribe(id string, pcm []int16, gen uint64) {
 		return
 	}
 	text = strings.TrimSpace(text)
-	if !ss.s.sayIfCurrent(gen, func() { ss.sendTo(proto.NewTranscript(id, text)) }, ss.id, id, text) {
+	if !ss.s.sayIfCurrent(gen, func() { ss.sendTo(proto.NewTranscript(id, text)) }, ss.id, id, text, quiet) {
 		ss.s.log.Info("dropping a transcription superseded by newer input", "client_id", ss.id)
 		superseded := proto.NewTranscript(id, "")
 		superseded.Superseded = true

@@ -43,18 +43,21 @@ type fakeConv struct {
 	sayCh chan said
 }
 
-type said struct{ origin, id, text string }
+type said struct {
+	origin, id, text string
+	quiet            bool
+}
 
 func newFakeConv() *fakeConv { return &fakeConv{sayCh: make(chan said, 8)} }
 
 func (f *fakeConv) ConversationID() string { return "default" }
 func (f *fakeConv) Gestures() []string     { return []string{"waving"} }
 func (f *fakeConv) Timezone() string       { return "America/Chicago" }
-func (f *fakeConv) Say(origin, id, text string) {
+func (f *fakeConv) Say(origin, id, text string, quiet bool) {
 	f.mu.Lock()
-	f.said = append(f.said, said{origin, id, text})
+	f.said = append(f.said, said{origin, id, text, quiet})
 	f.mu.Unlock()
-	f.sayCh <- said{origin, id, text}
+	f.sayCh <- said{origin, id, text, quiet}
 }
 func (f *fakeConv) Interrupt(turnID string, h int) {
 	f.mu.Lock()
@@ -193,8 +196,12 @@ func TestSayInterruptAndValidation(t *testing.T) {
 
 	send(t, c, map[string]any{"type": "say", "id": "u1", "text": "  hello there  "})
 	got := <-conv.sayCh
-	if got.origin != ready["client_id"] || got.id != "u1" || got.text != "hello there" {
+	if got.origin != ready["client_id"] || got.id != "u1" || got.text != "hello there" || got.quiet {
 		t.Errorf("said = %+v", got)
+	}
+	send(t, c, map[string]any{"type": "say", "id": "u1q", "text": "shh", "quiet": true})
+	if got := <-conv.sayCh; got.id != "u1q" || !got.quiet {
+		t.Errorf("quiet say = %+v", got)
 	}
 
 	send(t, c, map[string]any{"type": "say", "id": "u2", "text": "   "}) // ignored
@@ -226,7 +233,7 @@ func TestSayInterruptAndValidation(t *testing.T) {
 	if fmt.Sprint(conv.interrupt) != "[3 -1 -1]" {
 		t.Errorf("interrupts = %v", conv.interrupt)
 	}
-	if len(conv.said) != 1 {
+	if len(conv.said) != 2 {
 		t.Errorf("said = %+v", conv.said)
 	}
 }
@@ -273,13 +280,13 @@ func TestPushToTalk(t *testing.T) {
 	writeBin(t, c, raw[:1001])
 	writeBin(t, c, raw[1001:4003])
 	writeBin(t, c, raw[4003:])
-	send(t, c, map[string]any{"type": "ptt_end", "id": "p1"})
+	send(t, c, map[string]any{"type": "ptt_end", "id": "p1", "quiet": true})
 
 	if m := readMsg(t, c); m["type"] != "transcript" || m["id"] != "p1" || m["text"] != "turn on the lights" {
 		t.Fatalf("transcript = %v", m)
 	}
 	got := <-conv.sayCh
-	if got.id != "p1" || got.text != "turn on the lights" || got.origin != ready["client_id"] {
+	if got.id != "p1" || got.text != "turn on the lights" || got.origin != ready["client_id"] || !got.quiet {
 		t.Errorf("said = %+v", got)
 	}
 	stt.mu.Lock()
@@ -831,11 +838,11 @@ type orderConv struct {
 	order []string
 }
 
-func (o *orderConv) Say(origin, id, text string) {
+func (o *orderConv) Say(origin, id, text string, quiet bool) {
 	o.mu.Lock()
 	o.order = append(o.order, "say:"+text)
 	o.mu.Unlock()
-	o.fakeConv.Say(origin, id, text)
+	o.fakeConv.Say(origin, id, text, quiet)
 }
 
 func (o *orderConv) Hush() {

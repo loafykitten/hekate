@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { MAX_TEXT_LENGTH } from "../conversation/protocol";
 import { useConversation, useConversationState } from "./ConversationContext";
 import styles from "./Dock.module.css";
-import { KeyboardIcon, MicIcon, SendIcon } from "./icons";
+import { KeyboardIcon, MicIcon, SendIcon, SpeakerIcon, SpeakerOffIcon } from "./icons";
 import { useKeyboardInset } from "./keyboardInset";
 import { talkCopy, talkVerb } from "./talkCopy";
 import { TalkButton } from "./TalkButton";
@@ -96,6 +96,22 @@ export function Dock({ onOpenLog, logOpen }: Props) {
   const copy = talkCopy(state.phase, connected, state.capabilities?.stt, verb);
   const busy = state.phase === "thinking" || state.phase === "speaking";
 
+  // Her voice on this device: off for using Hekate in public, by text.
+  const voiceButton = (
+    <button
+      type="button"
+      className={styles.sideButton}
+      data-side="start"
+      aria-label={state.voice ? "Turn her voice off" : "Turn her voice on"}
+      onClick={() => {
+        conversation.setVoice(!state.voice);
+        conversation.toast("info", state.voice ? "Voice off. She'll answer in the bubble." : "Voice on.", "voice");
+      }}
+    >
+      {state.voice ? <SpeakerIcon /> : <SpeakerOffIcon />}
+    </button>
+  );
+
   function send() {
     if (conversation.sendText(draft)) setDraft("");
     inputRef.current?.focus({ preventScroll: true });
@@ -124,6 +140,7 @@ export function Dock({ onOpenLog, logOpen }: Props) {
 
       {mode === "voice" ? (
         <div className={styles.voiceRow}>
+          {voiceButton}
           <TalkButton phase={state.phase} latched={state.latched} disabled={copy.disabled} label={copy.label} />
           <button
             ref={toggleRef}
@@ -146,6 +163,7 @@ export function Dock({ onOpenLog, logOpen }: Props) {
           <button type="button" className={styles.sideButton} aria-label="Talk instead" onClick={() => switchMode("voice")}>
             <MicIcon />
           </button>
+          {voiceButton}
           <input
             ref={inputRef}
             className={styles.input}

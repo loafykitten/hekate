@@ -163,11 +163,11 @@ export class ConversationClient {
     this.open();
   }
 
-  say(text: string): string | undefined {
+  say(text: string, quiet = false): string | undefined {
     if (!this.canSend()) return undefined;
     this.interruptForNewInput();
     const id = newId();
-    return this.send({ type: "say", id, text }) ? id : undefined;
+    return this.send(quiet ? { type: "say", id, text, quiet } : { type: "say", id, text }) ? id : undefined;
   }
 
   pttStart(sampleRate = PTT_SAMPLE_RATE): string | undefined {
@@ -184,8 +184,8 @@ export class ConversationClient {
     return true;
   }
 
-  pttEnd(id: string): boolean {
-    return this.send({ type: "ptt_end", id });
+  pttEnd(id: string, quiet = false): boolean {
+    return this.send(quiet ? { type: "ptt_end", id, quiet } : { type: "ptt_end", id });
   }
 
   pttCancel(id: string): boolean {

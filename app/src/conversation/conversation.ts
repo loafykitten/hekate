@@ -38,6 +38,17 @@ function noticeSection(kind: string): Notice["section"] {
 
 export const NOTICE_MS = 12_000;
 export const ACK_GESTURE = "acknowledging";
+export const VOICE_KEY = "hekate.voice";
+
+type PrefStorage = Pick<Storage, "getItem" | "setItem">;
+
+function browserStorage(): PrefStorage | undefined {
+  try {
+    return globalThis.localStorage;
+  } catch {
+    return undefined; // blocked (private window, site data off)
+  }
+}
 
 export interface ConversationState {
   connection: ConnectionStatus;
@@ -56,6 +67,8 @@ export interface ConversationState {
   live: LiveEntry[];
   // Bumps whenever server-side history may have changed (connect, turn end).
   historyEpoch: number;
+  // Her voice on this device. Off, she answers in the bubble only.
+  voice: boolean;
 }
 
 const PENDING_TIMEOUT_MS = 60_000;
@@ -75,6 +88,8 @@ export interface ConversationDeps {
   client?: ConversationClient;
   createMic?: (onChunk: (chunk: ArrayBuffer) => void) => MicLike;
   now?: () => number;
+  // Where per-device preferences are kept (localStorage by default).
+  storage?: PrefStorage;
 }
 
 export interface MicLike {
@@ -100,7 +115,10 @@ export class Conversation {
     cards: [],
     live: [],
     historyEpoch: 0,
+    voice: true,
   };
+  private readonly storage?: PrefStorage;
+  private voice = true;
   private capabilities?: Capabilities;
   private live: LiveEntry[] = [];
   private historyEpoch = 0;
@@ -131,6 +149,13 @@ export class Conversation {
   constructor(deps: ConversationDeps = {}) {
     this.client = deps.client ?? new ConversationClient();
     this.now = deps.now ?? (() => performance.now());
+    this.storage = "storage" in deps ? deps.storage : browserStorage();
+    try {
+      this.voice = this.storage?.getItem(VOICE_KEY) !== "off";
+    } catch {
+      // unreadable: her voice stays on
+    }
+    this.state = { ...this.state, voice: this.voice };
     this.mic = (deps.createMic ?? ((onChunk) => new MicCapture(onChunk, defaultMicOptions())))((chunk) => this.onMicChunk(chunk));
     this.client.getHeardSeq = () => this.player?.heardSeq(this.lastMyTurn) ?? -1;
     this.client.getHeardTurn = () => this.lastMyTurn;
@@ -178,6 +203,7 @@ export class Conversation {
     this.player = undefined;
     this.stage = stage;
     if (stage) {
+      stage.speech.muted = !this.voice;
       const host = { speech: stage.speech, bubble: stage.bubble as Bubble | undefined, character: () => stage.character };
       this.player = new SegmentPlayer(host);
       this.player.onChange(() => this.emit());
@@ -219,6 +245,23 @@ export class Conversation {
     this.emit();
   }
 
+  // Turns her voice on or off on this device, and remembers it here. Off, she answers in the
+  // bubble at reading speed (gestures and faces included) and the service skips speech for turns
+  // this device starts; anything she's saying stops being heard at once. Call from a user
+  // gesture: turning it back on unlocks audio.
+  setVoice(on: boolean) {
+    if (on === this.voice) return;
+    this.voice = on;
+    try {
+      this.storage?.setItem(VOICE_KEY, on ? "on" : "off");
+    } catch {
+      // storage unavailable: it just isn't remembered
+    }
+    if (this.stage) this.stage.speech.muted = !on;
+    if (on) this.unlockAudio();
+    this.emit();
+  }
+
   // 0..1 microphone level while listening.
   micLevel(): number {
     return this.mic.level;
@@ -244,7 +287,7 @@ export class Conversation {
       return false;
     }
     this.interruptIfBusy();
-    const id = this.client.say(trimmed);
+    const id = this.client.say(trimmed, !this.voice);
     if (!id) return false;
     this.setPending({ id, stage: "turn" });
     this.setCaption(trimmed);
@@ -342,7 +385,7 @@ export class Conversation {
     this.emit();
     void this.mic.stop().then(() => {
       this.streamingId = undefined;
-      this.client.pttEnd(capture.id);
+      this.client.pttEnd(capture.id, !this.voice);
     });
   }
 
@@ -364,6 +407,7 @@ export class Conversation {
   }
 
   private unlockAudio() {
+    if (!this.voice) return; // nothing to play: leave the device's audio alone
     setAudioSession("playback"); // iOS: play through the speaker and ignore the silent switch
     void this.stage?.speech.unlock();
   }
@@ -616,6 +660,7 @@ export class Conversation {
       live: this.live,
       capabilities: this.capabilities,
       historyEpoch: this.historyEpoch,
+      voice: this.voice,
     };
     const s = this.state;
     const same =
@@ -629,7 +674,8 @@ export class Conversation {
       s.cards === next.cards &&
       s.live === next.live &&
       s.capabilities === next.capabilities &&
-      s.historyEpoch === next.historyEpoch;
+      s.historyEpoch === next.historyEpoch &&
+      s.voice === next.voice;
     if (same) return;
     this.state = next;
     for (const listener of [...this.listeners]) listener();

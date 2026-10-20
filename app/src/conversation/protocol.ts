@@ -137,9 +137,10 @@ export type ServerMessage =
 export type ServerMessageType = ServerMessage["type"];
 
 export type ClientMessage =
-  | { type: "say"; id: string; text: string }
+  // quiet: this device has her voice off, so the turn is answered without speech.
+  | { type: "say"; id: string; text: string; quiet?: boolean }
   | { type: "ptt_start"; id: string; sample_rate: number }
-  | { type: "ptt_end"; id: string }
+  | { type: "ptt_end"; id: string; quiet?: boolean }
   | { type: "ptt_cancel"; id: string }
   | { type: "interrupt"; heard_seq: number; turn_id?: string };
 

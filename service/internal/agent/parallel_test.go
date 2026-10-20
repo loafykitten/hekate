@@ -84,7 +84,7 @@ func TestReadToolsRunInParallelAndKeepOrder(t *testing.T) {
 		gatedTool(g, "r3", EffectRead, 80*time.Millisecond), gatedTool(g, "r4", EffectRead, 10*time.Millisecond),
 		gatedTool(g, "r5", EffectRead, 10*time.Millisecond),
 	}})
-	e.agent.Say("c", "i", "look everything up")
+	e.agent.Say("c", "i", "look everything up", false)
 	ev := e.hub.waitTurnEnd(t, 1)
 
 	if g.peak < 2 {
@@ -120,7 +120,7 @@ func TestWritesStayOrderedAndSplitReadRuns(t *testing.T) {
 		gatedTool(g, "r1", EffectRead, 40*time.Millisecond), gatedTool(g, "r2", EffectRead, 5*time.Millisecond),
 		gatedTool(g, "r3", EffectRead, 5*time.Millisecond),
 	}})
-	e.agent.Say("c", "i", "do things")
+	e.agent.Say("c", "i", "do things", false)
 	e.hub.waitTurnEnd(t, 1)
 
 	// w1 must finish before w2 starts, and w3 waits for the reads before it.
@@ -150,7 +150,7 @@ func TestParallelReadsCountAgainstTheCallBudget(t *testing.T) {
 		}
 		return 200, say("Done.")
 	}, envOpts{tools: []Tool{counter}, limits: Limits{MaxCalls: 2}})
-	e.agent.Say("c", "i", "go")
+	e.agent.Say("c", "i", "go", false)
 	e.hub.waitTurnEnd(t, 1)
 
 	if ran.Load() != 2 {
@@ -175,7 +175,7 @@ func TestToolsKnowTheirTurn(t *testing.T) {
 		}
 		return 200, say("ok")
 	}, envOpts{tools: []Tool{tool}})
-	e.agent.Say("c", "i", "who am i")
+	e.agent.Say("c", "i", "who am i", false)
 	ev := e.hub.waitTurnEnd(t, 1)
 	if id, _ := seen.Load().(string); id == "" || id != ofType[proto.TurnEnd](ev)[0].TurnID {
 		t.Errorf("tool saw turn %q", id)

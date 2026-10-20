@@ -64,6 +64,8 @@ export const READY = {
 // A speech double on a clock the test moves by hand. Audio "decodes" to its byte length / 100 s.
 export class FakeSpeech {
   running = true;
+  muted = false;
+  unlocks = 0;
   position = 100;
   queued: { start: number; end: number; duration: number }[] = [];
   stopped = 0;
@@ -85,6 +87,7 @@ export class FakeSpeech {
     this.queued = [];
   }
   async unlock() {
+    this.unlocks++;
     return true;
   }
 }

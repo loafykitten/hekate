@@ -27,7 +27,7 @@ func TestTextOnlyTurn(t *testing.T) {
 		return 200, say("{waving} Morning, ", "Rika. Did you sl", "eep well? [chuck", "les] Good.")
 	}, envOpts{})
 
-	e.agent.Say("client-1", "in-1", "hey, I just woke up")
+	e.agent.Say("client-1", "in-1", "hey, I just woke up", false)
 	ev := e.hub.waitTurnEnd(t, 1)
 
 	start := ofType[proto.TurnStart](ev)
@@ -105,9 +105,9 @@ func TestHistoryReachesNextTurn(t *testing.T) {
 	e := newEnv(t, func(n int, _ llmReq) (int, []string) {
 		return 200, say("Reply number " + string(rune('0'+n)) + " is here.")
 	}, envOpts{})
-	e.agent.Say("c", "i1", "first")
+	e.agent.Say("c", "i1", "first", false)
 	e.hub.waitTurnEnd(t, 1)
-	e.agent.Say("c", "i2", "second")
+	e.agent.Say("c", "i2", "second", false)
 	e.hub.waitTurnEnd(t, 2)
 
 	reqs := e.llm.requests()
@@ -134,7 +134,7 @@ func TestSynthesizedSegmentsStayInOrder(t *testing.T) {
 	e := newEnv(t, func(int, llmReq) (int, []string) {
 		return 200, say("First sentence is the slow one. Second one is fast. Third one too, really.")
 	}, envOpts{synth: synth})
-	e.agent.Say("c", "i", "go")
+	e.agent.Say("c", "i", "go", false)
 	ev := e.hub.waitTurnEnd(t, 1)
 
 	segs := ofType[proto.Segment](ev)
@@ -156,13 +156,31 @@ func TestSynthFailureFallsBackToText(t *testing.T) {
 	e := newEnv(t, func(int, llmReq) (int, []string) {
 		return 200, say("First sentence is fine. Second sentence fails to speak. Third is fine again.")
 	}, envOpts{synth: synth})
-	e.agent.Say("c", "i", "go")
+	e.agent.Say("c", "i", "go", false)
 	segs := ofType[proto.Segment](e.hub.waitTurnEnd(t, 1))
 	if len(segs) != 3 || segs[0].AudioB64 == nil || segs[1].AudioB64 != nil || segs[2].AudioB64 == nil {
 		t.Fatalf("segments = %+v", segs)
 	}
 	if segs[1].Duration < 1.2 {
 		t.Errorf("text-only duration = %v", segs[1].Duration)
+	}
+}
+
+func TestQuietTurnSkipsSpeech(t *testing.T) {
+	synth := &fakeSynth{}
+	e := newEnv(t, func(int, llmReq) (int, []string) {
+		return 200, say("{waving} Hi there, quietly. [laughs] Got it.")
+	}, envOpts{synth: synth})
+	e.agent.Say("c", "i", "hello", true)
+	segs := ofType[proto.Segment](e.hub.waitTurnEnd(t, 1))
+	if len(segs) != 2 || segs[0].AudioB64 != nil || segs[0].Words != nil || segs[1].AudioB64 != nil {
+		t.Fatalf("segments = %+v", segs)
+	}
+	if segs[0].Duration <= 0 || len(segs[0].Gestures) != 1 || len(segs[1].Expressions) != 1 {
+		t.Errorf("a quiet reply still needs timing, gestures and expressions: %+v", segs)
+	}
+	if got := synth.spoken(); len(got) != 0 {
+		t.Errorf("spoken = %q", got)
 	}
 }
 
@@ -192,7 +210,7 @@ func TestStoredReplacesContentInHistory(t *testing.T) {
 		}
 		return 200, say("Read it.")
 	}, envOpts{tools: []Tool{secret}})
-	e.agent.Say("c", "i", "read it")
+	e.agent.Say("c", "i", "read it", false)
 	e.hub.waitTurnEnd(t, 1)
 
 	// The model sees the content within the turn...
@@ -221,7 +239,7 @@ func TestToolRoundTrip(t *testing.T) {
 		}
 		return 200, say("You have tea in the cupboard.")
 	}, envOpts{tools: []Tool{lookupTool()}})
-	e.agent.Say("c", "i", "do we have tea?")
+	e.agent.Say("c", "i", "do we have tea?", false)
 	ev := e.hub.waitTurnEnd(t, 1)
 
 	// Text before the call is spoken, then the answer.
@@ -274,7 +292,7 @@ func TestToolRoundTrip(t *testing.T) {
 	}
 
 	// The next turn replays the tool exchange to the model.
-	e.agent.Say("c", "i2", "thanks")
+	e.agent.Say("c", "i2", "thanks", false)
 	e.hub.waitTurnEnd(t, 2)
 	reqs = e.llm.requests()
 	var roles2 []string
@@ -307,7 +325,7 @@ func TestToolFailureIsReportedToTheModel(t *testing.T) {
 		}
 		return 200, say("That did not work, sorry about it.")
 	}, envOpts{tools: []Tool{boom}})
-	e.agent.Say("c", "i", "do it")
+	e.agent.Say("c", "i", "do it", false)
 	ev := e.hub.waitTurnEnd(t, 1)
 	acts := ofType[proto.Activity](ev)
 	states := []string{}
@@ -338,7 +356,7 @@ func TestThinkDeeperSwitchesModel(t *testing.T) {
 		}
 		return 200, say("Here is what I think about that.")
 	}, envOpts{tools: []Tool{lookupTool()}})
-	e.agent.Say("c", "i", "should I take the job?")
+	e.agent.Say("c", "i", "should I take the job?", false)
 	ev := e.hub.waitTurnEnd(t, 1)
 
 	reqs := e.llm.requests()
@@ -380,7 +398,7 @@ func TestInterruptKeepsHeardSegments(t *testing.T) {
 			e := newEnv(t, func(int, llmReq) (int, []string) {
 				return 200, sayThenHang("First sentence is right here. Second sentence is also here. Third sentence is cut")
 			}, envOpts{})
-			e.agent.Say("c", "i", "tell me a story")
+			e.agent.Say("c", "i", "tell me a story", false)
 			e.hub.waitFor(t, "two segments", func(ev []any) bool { return len(ofType[proto.Segment](ev)) >= 2 })
 			e.agent.Interrupt("", tt.heard)
 			ev := e.hub.waitTurnEnd(t, 1)
@@ -412,7 +430,7 @@ func TestInterruptCancelsSynthesis(t *testing.T) {
 	e := newEnv(t, func(int, llmReq) (int, []string) {
 		return 200, sayThenHang("A sentence that never gets spoken. And another one here.")
 	}, envOpts{synth: synth})
-	e.agent.Say("c", "i", "go")
+	e.agent.Say("c", "i", "go", false)
 	e.hub.waitFor(t, "turn start", func(ev []any) bool { return len(ofType[proto.TurnStart](ev)) == 1 })
 	for len(synth.spoken()) == 0 {
 		time.Sleep(5 * time.Millisecond)
@@ -431,9 +449,9 @@ func TestNewInputInterruptsRunningTurn(t *testing.T) {
 		}
 		return 200, say("Second reply is complete.")
 	}, envOpts{})
-	e.agent.Say("c", "i1", "one")
+	e.agent.Say("c", "i1", "one", false)
 	e.hub.waitFor(t, "first segment", func(ev []any) bool { return len(ofType[proto.Segment](ev)) >= 1 })
-	e.agent.Say("c", "i2", "two")
+	e.agent.Say("c", "i2", "two", false)
 	ev := e.hub.waitTurnEnd(t, 2)
 
 	ends := ofType[proto.TurnEnd](ev)
@@ -465,7 +483,7 @@ func TestToolBudgetEndsInAnAnswer(t *testing.T) {
 		}
 		return 200, say("I could not settle this, sorry about that.")
 	}, envOpts{tools: []Tool{lookupTool()}, limits: Limits{MaxRounds: 3, MaxCalls: 12}})
-	e.agent.Say("c", "i", "loop")
+	e.agent.Say("c", "i", "loop", false)
 	ev := e.hub.waitTurnEnd(t, 1)
 	reqs := e.llm.requests()
 	if len(reqs) != 4 || len(reqs[3].Tools) != 0 {
@@ -490,7 +508,7 @@ func TestToolCallBudget(t *testing.T) {
 		}
 		return 200, say("That is all I can look up.")
 	}, envOpts{tools: []Tool{lookupTool()}, limits: Limits{MaxRounds: 6, MaxCalls: 4}})
-	e.agent.Say("c", "i", "lots")
+	e.agent.Say("c", "i", "lots", false)
 	ev := e.hub.waitTurnEnd(t, 1)
 	// 4 calls run (3 + 1); the other two of round two are refused. All six are audited.
 	if n := e.count(`SELECT count(*) FROM activity`); n != 6 {
@@ -511,7 +529,7 @@ func TestToolCallBudget(t *testing.T) {
 func TestTurnDeadline(t *testing.T) {
 	e := newEnv(t, func(int, llmReq) (int, []string) { return 200, sayThenHang("Starting to say something here. And then") },
 		envOpts{limits: Limits{TurnTimeout: 300 * time.Millisecond}})
-	e.agent.Say("c", "i", "go")
+	e.agent.Say("c", "i", "go", false)
 	ev := e.hub.waitTurnEnd(t, 1)
 	end := ofType[proto.TurnEnd](ev)[0]
 	errs := ofType[proto.Error](ev)
@@ -536,7 +554,7 @@ func TestSlowToolHitsItsTimeout(t *testing.T) {
 		}
 		return 200, say("That took too long, so I gave up on it.")
 	}, envOpts{tools: []Tool{slow}})
-	e.agent.Say("c", "i", "go")
+	e.agent.Say("c", "i", "go", false)
 	ev := e.hub.waitTurnEnd(t, 1)
 	if ofType[proto.TurnEnd](ev)[0].Status != "done" {
 		t.Fatalf("events: %s", describe(ev))
@@ -549,7 +567,7 @@ func TestSlowToolHitsItsTimeout(t *testing.T) {
 
 func TestNoAPIKey(t *testing.T) {
 	e := newEnv(t, func(int, llmReq) (int, []string) { t.Error("must not call the LLM"); return 500, nil }, envOpts{noKey: true})
-	e.agent.Say("c", "in-9", "hello")
+	e.agent.Say("c", "in-9", "hello", false)
 	ev := e.hub.snapshot()
 	errs := ofType[proto.Error](ev)
 	if len(ev) != 1 || len(errs) != 1 || errs[0].Code != "llm_unavailable" || errs[0].InputID != "in-9" || errs[0].Message == "" {
@@ -573,7 +591,7 @@ func TestLLMFailureSurfacesAsError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(strconv.Itoa(tt.status), func(t *testing.T) {
 			e := newEnv(t, func(int, llmReq) (int, []string) { return tt.status, nil }, envOpts{})
-			e.agent.Say("c", "i", "hello")
+			e.agent.Say("c", "i", "hello", false)
 			ev := e.hub.waitTurnEnd(t, 1)
 			errs := ofType[proto.Error](ev)
 			end := ofType[proto.TurnEnd](ev)[0]
@@ -589,7 +607,7 @@ func TestLLMFailureSurfacesAsError(t *testing.T) {
 
 func TestEmptyReplyIsAnError(t *testing.T) {
 	e := newEnv(t, func(int, llmReq) (int, []string) { return 200, say() }, envOpts{})
-	e.agent.Say("c", "i", "hello")
+	e.agent.Say("c", "i", "hello", false)
 	ev := e.hub.waitTurnEnd(t, 1)
 	errs := ofType[proto.Error](ev)
 	if len(errs) != 1 || errs[0].Code != proto.CodeEmptyReply {
@@ -602,7 +620,7 @@ func TestUnknownTagsAreNotSpoken(t *testing.T) {
 	e := newEnv(t, func(int, llmReq) (int, []string) {
 		return 200, say("{dance} Hello there, [shouts] my friend. [softly] Rest now.")
 	}, envOpts{synth: synth})
-	e.agent.Say("c", "i", "go")
+	e.agent.Say("c", "i", "go", false)
 	e.hub.waitTurnEnd(t, 1)
 	for _, s := range synth.spoken() {
 		if strings.Contains(s, "dance") || strings.Contains(s, "shouts") || strings.Contains(s, "{") {
@@ -632,7 +650,7 @@ func TestShutdownInterruptsTurn(t *testing.T) {
 	e := newEnv(t, func(int, llmReq) (int, []string) {
 		return 200, sayThenHang("A sentence that is done here. More to come")
 	}, envOpts{})
-	e.agent.Say("c", "i", "go")
+	e.agent.Say("c", "i", "go", false)
 	e.hub.waitFor(t, "segment", func(ev []any) bool { return len(ofType[proto.Segment](ev)) >= 1 })
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -654,7 +672,7 @@ func TestInterruptAfterTurnEndsTrimsSavedReply(t *testing.T) {
 	e := newEnv(t, func(int, llmReq) (int, []string) {
 		return 200, say("First sentence is right here. Second sentence is also here. Third sentence ends it.")
 	}, envOpts{})
-	e.agent.Say("c", "i", "tell me a story")
+	e.agent.Say("c", "i", "tell me a story", false)
 	e.hub.waitTurnEnd(t, 1)
 
 	e.agent.Interrupt("", 0)
@@ -689,7 +707,7 @@ func TestInterruptJustBeforeEndIsHonored(t *testing.T) {
 	testHookBeforeEnd = func(*turn) { e.agent.Interrupt("", 0) }
 	t.Cleanup(func() { testHookBeforeEnd = nil })
 
-	e.agent.Say("c", "i", "tell me a story")
+	e.agent.Say("c", "i", "tell me a story", false)
 	ev := e.hub.waitTurnEnd(t, 1)
 	end := ofType[proto.TurnEnd](ev)[0]
 	if end.Status != proto.StatusInterrupted || end.Text != "First sentence is right here." {
@@ -708,9 +726,9 @@ func TestInterruptForAnOlderTurnIsIgnored(t *testing.T) {
 		}
 		return 200, sayThenHang("The second reply has started. And it goes on")
 	}, envOpts{})
-	e.agent.Say("phone", "i1", "one")
+	e.agent.Say("phone", "i1", "one", false)
 	first := ofType[proto.TurnEnd](e.hub.waitTurnEnd(t, 1))[0].TurnID
-	e.agent.Say("desktop", "i2", "two")
+	e.agent.Say("desktop", "i2", "two", false)
 	e.hub.waitFor(t, "second reply", func(ev []any) bool { return len(ofType[proto.Segment](ev)) >= 2 })
 
 	e.agent.Interrupt(first, -1) // the phone's interrupt, arriving late
@@ -731,7 +749,7 @@ func TestHush(t *testing.T) {
 		e := newEnv(t, func(int, llmReq) (int, []string) {
 			return 200, sayThenHang("First sentence is right here. Second sentence is also here. And then")
 		}, envOpts{})
-		e.agent.Say("c", "i", "go")
+		e.agent.Say("c", "i", "go", false)
 		e.hub.waitFor(t, "two segments", func(ev []any) bool { return len(ofType[proto.Segment](ev)) >= 2 })
 		e.agent.Hush()
 		end := ofType[proto.TurnEnd](e.hub.waitTurnEnd(t, 1))[0]
@@ -743,7 +761,7 @@ func TestHush(t *testing.T) {
 		e := newEnv(t, func(int, llmReq) (int, []string) {
 			return 200, say("All of it was generated. Some may still be playing.")
 		}, envOpts{})
-		e.agent.Say("c", "i", "go")
+		e.agent.Say("c", "i", "go", false)
 		e.hub.waitTurnEnd(t, 1)
 		e.agent.Hush()
 		e.agent.Hush()
@@ -770,11 +788,11 @@ func TestTrimFinishesBeforeTheNextTurnStarts(t *testing.T) {
 		}
 		return 200, say("The next reply.")
 	}, envOpts{})
-	e.agent.Say("c", "i1", "one")
+	e.agent.Say("c", "i1", "one", false)
 	e.hub.waitTurnEnd(t, 1)
 
 	testHookDuringTrim = func() {
-		go e.agent.Say("c", "i2", "two") // must block until the trim is done
+		go e.agent.Say("c", "i2", "two", false) // must block until the trim is done
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Cleanup(func() { testHookDuringTrim = nil })

@@ -36,7 +36,7 @@ client whose input started a turn (`origin` matches its `client_id`) plays the a
   "seq": 0,                         // 0, 1, 2… within the turn, in playback order
   "text": "Morning, Rika.",         // display text: tags removed
   "duration": 1.42,                 // seconds; estimated from reading speed when there's no audio
-  "audio_b64": "…",                 // null without TTS
+  "audio_b64": "…",                 // null without TTS or in a quiet turn
   "audio_format": "mp3",            // null without TTS
   "words": [{ "text": "Morning,", "start": 0.0, "end": 0.41 }],   // null without TTS
   "gestures": [{ "name": "waving", "at": 0.0 }],                   // seconds into this segment
@@ -52,9 +52,9 @@ from the audio's loudness.
 
 | type | fields | meaning |
 |---|---|---|
-| `say` | `id`, `text` | Typed input. |
+| `say` | `id`, `text`, `quiet?` | Typed input. `quiet: true` means this device has her voice off: the turn is answered without speech (segments carry no audio, timed at reading speed). |
 | `ptt_start` | `id`, `sample_rate` (16000) | Push-to-talk started. Binary frames follow: little-endian signed 16-bit mono PCM. She stops talking at once on every device (the current turn ends as `interrupted`, keeping what was delivered). |
-| `ptt_end` | `id` | Released. The server transcribes, sends `transcript`, then starts a turn. |
+| `ptt_end` | `id`, `quiet?` | Released. The server transcribes, sends `transcript`, then starts a turn (`quiet` as for `say`). |
 | `ptt_cancel` | `id` | Discard the audio. |
 | `interrupt` | `heard_seq` (last segment seq the user heard at least partly, or -1), `turn_id` (the turn `heard_seq` describes) | Stop that turn. The server keeps segments up to `heard_seq` in history, and ignores an interrupt for a turn that is no longer the current one. |
 

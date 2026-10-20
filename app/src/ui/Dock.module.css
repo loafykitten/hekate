@@ -57,6 +57,11 @@
   translate: 0 -50%;
 }
 
+.voiceRow .sideButton[data-side="start"] {
+  right: calc(100% + var(--space-4));
+  left: auto;
+}
+
 .sideButton,
 .send {
   /* Solid enough that her legs behind the dock don't show through. */

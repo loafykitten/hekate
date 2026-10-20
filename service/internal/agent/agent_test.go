@@ -881,40 +881,71 @@ func TestAnOpenerMakesTheFirstCall(t *testing.T) {
 	}
 }
 
-// Someone starting to talk on another device stops a finished briefing that
-// may still be playing; it's freed only if it can't have finished yet.
-func TestHushFreesABriefingStillPlaying(t *testing.T) {
+// A finished briefing may still be playing. Stopping it then (an interrupt,
+// even during its last sentence; talking or typing on any device) frees the
+// day; the same after it can have finished playing doesn't.
+func TestStoppingABriefingStillPlayingFreesTheDay(t *testing.T) {
 	brief := Tool{Name: "brief", Description: "The day", Effect: EffectRead, Schema: json.RawMessage(`{"type":"object","properties":{}}`),
 		Run: func(context.Context, json.RawMessage) (Result, error) { return Result{Content: "Rain."}, nil }}
 	settled := make(chan bool, 4)
-	opener := func(context.Context, string) (Opening, bool) {
-		return Opening{Tool: "brief", Settle: func(given bool) { settled <- given }}, true
+	opener := func(_ context.Context, text string) (Opening, bool) {
+		return Opening{Tool: "brief", Settle: func(given bool) { settled <- given }}, strings.Contains(text, "good morning")
 	}
 	e := newEnv(t, func(int, llmReq) (int, []string) {
 		return 200, say("Morning, Rika. It's raining, so take the umbrella.")
 	}, envOpts{tools: []Tool{brief}, opener: opener})
+	ends := 0
+	briefed := func(playedOut bool) {
+		t.Helper()
+		ends++
+		e.agent.Say("c", "b"+strconv.Itoa(ends), "good morning", false)
+		e.hub.waitTurnEnd(t, ends)
+		if !<-settled {
+			t.Fatal("a briefing given in full was settled as not given")
+		}
+		if playedOut {
+			e.agent.mu.Lock()
+			cur := e.agent.cur
+			e.agent.mu.Unlock()
+			cur.endMu.Lock()
+			cur.fin.plays = time.Now().Add(-time.Second) // long since heard
+			cur.endMu.Unlock()
+		}
+	}
+	freed := func(how string, want bool) {
+		t.Helper()
+		select {
+		case given := <-settled:
+			if !want || given {
+				t.Errorf("%s: settled again (%v)", how, given)
+			}
+		default:
+			if want {
+				t.Errorf("%s: the day wasn't freed", how)
+			}
+		}
+	}
 
-	e.agent.Say("c", "i", "good morning", false)
-	e.hub.waitTurnEnd(t, 1)
-	<-settled
+	briefed(false)
 	e.agent.Hush() // read aloud, it takes seconds: still playing
-	if given := <-settled; given {
-		t.Error("a briefing hushed while it plays stayed settled as given")
-	}
+	ends++         // announced as interrupted
+	freed("talking on another device", true)
 
-	e.agent.Say("c", "j", "good morning", false)
-	e.hub.waitTurnEnd(t, 3)
-	<-settled
-	e.agent.mu.Lock()
-	cur := e.agent.cur
-	e.agent.mu.Unlock()
-	cur.endMu.Lock()
-	cur.fin.plays = time.Now().Add(-time.Second) // long since heard
-	cur.endMu.Unlock()
+	briefed(false)
+	e.agent.Interrupt("", 1) // during the last sentence: nothing to trim
+	freed("an interrupt in the last sentence", true)
+
+	briefed(false)
+	e.agent.Say("c2", "x", "what's for lunch?", false) // typed on another device
+	ends++
+	e.hub.waitTurnEnd(t, ends)
+	freed("typing on another device", true)
+
+	briefed(true)
 	e.agent.Hush()
-	select {
-	case given := <-settled:
-		t.Errorf("a briefing hushed after it played was settled again (%v)", given)
-	default:
-	}
+	ends++
+	e.agent.Say("c", "y", "thanks", false)
+	ends++
+	e.hub.waitTurnEnd(t, ends)
+	freed("input after it played", false)
 }

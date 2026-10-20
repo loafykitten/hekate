@@ -408,8 +408,8 @@ input) each local day that contains "good morning" (any case) opens its turn wit
 catch-up. The tool gathers the weather at home, the calendar for the next 24 hours, tasks due today
 or late, reminders in the next 24 hours, mail that needs the owner and follow-ups due today, and
 shows up to three cards (`activity` and `card` as for any tool). The day counts once that reply
-was given in full: not failed or interrupted, nor stopped by input from another device while it
-could still be playing. Later greetings that day are just greetings. She
+was given in full: not failed, and not stopped while it could still be playing (an `interrupt`, or
+new input on any device). Later greetings that day are just greetings. She
 can call the tool herself any time she's asked for the briefing or what's on today.
 
 ```jsonc

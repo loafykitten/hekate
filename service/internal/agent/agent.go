@@ -70,7 +70,8 @@ type Options struct {
 
 // Opening is the call a turn starts with. Settle, if set, is told at the end
 // of the turn whether the reply was given in full (not cut short or failed),
-// and told again (false) if the owner later stops its playback partway.
+// and told again (false) if its playback is stopped partway afterwards: an
+// interrupt, or new input on any device while it could still be playing.
 type Opening struct {
 	Tool   string
 	Settle func(given bool)
@@ -136,6 +137,17 @@ type finished struct {
 	model  string
 	usage  proto.TurnUsage
 	at     time.Time
+}
+
+// stopped tells the opener that the reply was stopped partway after it was
+// generated. Unless the client said so (sure), that's assumed only while it
+// could still be playing.
+func (f *finished) stopped(sure bool) {
+	if f.settle == nil || (!sure && !time.Now().Before(f.plays)) {
+		return
+	}
+	f.settle(false)
+	f.settle = nil
 }
 
 // lateInterruptWindow bounds how long after a turn ends an interrupt can still
@@ -271,6 +283,11 @@ func (a *Agent) start(t *turn) {
 	prev := a.cur
 	if prev != nil {
 		prev.interrupt(prev.delivered())
+		prev.endMu.Lock()
+		if prev.fin != nil {
+			prev.fin.stopped(false) // its playback stops for this one
+		}
+		prev.endMu.Unlock()
 	}
 	a.cur = t
 	a.wg.Add(1)
@@ -299,6 +316,7 @@ func (a *Agent) Interrupt(turnID string, heardSeq int) {
 		t.interrupt(heardSeq)
 		return
 	}
+	t.fin.stopped(heardSeq < t.fin.kept)
 	if heardSeq >= t.fin.kept || time.Since(t.fin.at) > lateInterruptWindow {
 		return
 	}
@@ -340,9 +358,7 @@ func (a *Agent) Hush() {
 		t.interrupt(t.delivered())
 	case !f.hushed && time.Since(f.at) <= lateInterruptWindow:
 		f.hushed = true
-		if f.settle != nil && time.Now().Before(f.plays) {
-			f.settle(false) // most likely stopped partway
-		}
+		f.stopped(false)
 		_, text := collectMessages(t.id, f.rounds, f.segs, f.kept)
 		a.hub.Broadcast(proto.NewTurnEnd(t.id, proto.StatusInterrupted, text, f.model, f.usage))
 	}
@@ -369,9 +385,6 @@ func (a *Agent) trimFinished(t *turn, heard int) {
 		a.log.Error("cannot mark turn interrupted", "turn_id", t.id, "error", err)
 	}
 	f.kept, f.hushed = heard, true
-	if f.settle != nil {
-		f.settle(false) // cut short after all
-	}
 	a.hub.Broadcast(proto.NewTurnEnd(t.id, proto.StatusInterrupted, text, f.model, f.usage))
 	a.log.Info("trimmed finished turn", "turn_id", t.id, "kept", heard+1)
 }

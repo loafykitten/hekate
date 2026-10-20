@@ -34,9 +34,11 @@ const (
 	// and not once it's older than a day.
 	mailWait   = 20 * time.Minute
 	mailMaxAge = 24 * time.Hour
-	keepNudges = 30 * 24 * time.Hour
-	maxLines   = 4
-	maxLine    = 140
+	// What was nudged is remembered a year, so nothing still due comes round again.
+	keepNudges   = 365 * 24 * time.Hour
+	maxFollowUps = 100
+	maxLines     = 4
+	maxLine      = 140
 )
 
 // What the heartbeat reads; the feature services satisfy these.
@@ -108,10 +110,11 @@ func (s *Service) Heartbeat(ctx context.Context) (string, error) {
 	}
 	summary := "Nothing worth a nudge"
 	if len(fresh) > 0 {
-		if err := s.deliver(ctx, now, fresh); err != nil {
+		shownCount, err := s.deliver(ctx, now, fresh)
+		if err != nil {
 			return "", err
 		}
-		summary = fmt.Sprintf("Nudged about %d thing(s)", len(fresh))
+		summary = fmt.Sprintf("Nudged about %d thing(s)", shownCount)
 	}
 	if len(failed) > 0 {
 		summary += fmt.Sprintf(" (couldn't check %s)", strings.Join(failed, ", "))
@@ -188,7 +191,8 @@ func (s *Service) followUpNudges(ctx context.Context, now time.Time) ([]nudge, e
 	if s.followUps == nil {
 		return nil, nil
 	}
-	due, err := s.followUps.FollowUpsDue(ctx, now, 5)
+	// Plenty: ones already nudged are dropped afterwards, and mustn't crowd out the rest.
+	due, err := s.followUps.FollowUpsDue(ctx, now, maxFollowUps)
 	if err != nil {
 		return nil, err
 	}
@@ -220,9 +224,10 @@ func (s *Service) unsent(ctx context.Context, all []nudge) ([]nudge, error) {
 	return out, nil
 }
 
-// deliver sends one notice for the nudges and records them so none repeats.
-func (s *Service) deliver(ctx context.Context, now time.Time, list []nudge) error {
-	title, body := compose(list)
+// deliver sends one notice for the nudges and records the ones it names, so
+// none repeats; it returns how many it named.
+func (s *Service) deliver(ctx context.Context, now time.Time, list []nudge) (int, error) {
+	title, body, shown := compose(list)
 	id := "nudge-" + now.UTC().Format("20060102T150405")
 	s.events.Notify(proto.NewNotify(id, proto.NotifyKindNudge, title, body, nil))
 	if s.pusher != nil {
@@ -232,62 +237,83 @@ func (s *Service) deliver(ctx context.Context, now time.Time, list []nudge) erro
 		}
 	}
 	db := s.st.DB()
-	for _, n := range list {
+	for _, n := range shown {
 		if _, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO nudges (key, sent_at) VALUES (?, ?)`, n.key, stamp(now)); err != nil {
-			return fmt.Errorf("record a nudge: %w", err)
+			return 0, fmt.Errorf("record a nudge: %w", err)
 		}
 	}
 	if _, err := db.ExecContext(ctx, `DELETE FROM nudges WHERE sent_at < ?`, stamp(now.Add(-keepNudges))); err != nil {
 		s.log.Warn("cannot prune old nudges", "error", err)
 	}
-	return nil
+	return len(shown), nil
 }
 
 // compose turns nudges into a notice: overdue tasks and waiting mail are
-// grouped into a line each, everything else gets its own; at most maxLines.
-func compose(list []nudge) (string, string) {
-	var lines []string
+// grouped into a line each (naming up to three), everything else gets its own
+// line, at most maxLines. It returns the nudges the notice names; the rest stay
+// pending for a later heartbeat.
+func compose(list []nudge) (title, body string, shown []nudge) {
+	type line struct {
+		text  string
+		named []nudge
+	}
+	var lines []line
 	group := func(kind, one, many string) {
-		var items []string
+		var items []nudge
 		for _, n := range list {
 			if n.kind == kind {
-				items = append(items, n.line)
+				items = append(items, n)
 			}
 		}
 		switch len(items) {
 		case 0:
 		case 1:
-			lines = append(lines, one+items[0])
+			lines = append(lines, line{one + items[0].line, items})
 		default:
-			shown := items[:min(len(items), 3)]
-			line := fmt.Sprintf(many, len(items)) + strings.Join(shown, "; ")
-			if len(items) > len(shown) {
-				line += fmt.Sprintf(" and %d more", len(items)-len(shown))
+			named := items[:min(len(items), 3)]
+			texts := make([]string, len(named))
+			for i, n := range named {
+				texts[i] = n.line
 			}
-			lines = append(lines, clip(line, maxLine*2))
+			text := fmt.Sprintf(many, len(items)) + strings.Join(texts, "; ")
+			if len(items) > len(named) {
+				text += fmt.Sprintf(" and %d more", len(items)-len(named))
+			}
+			lines = append(lines, line{clip(text, maxLine*2), named})
 		}
 	}
 	for _, n := range list {
 		if n.kind == "event" {
-			lines = append(lines, n.line)
+			lines = append(lines, line{n.line, []nudge{n}})
 		}
 	}
 	group("task", "Overdue: ", "%d overdue: ")
 	group("mail", "Needs a reply or a look: ", "%d emails need you: ")
 	for _, n := range list {
 		if n.kind == "follow_up" {
-			lines = append(lines, "On my mind: "+n.line)
+			lines = append(lines, line{"On my mind: " + n.line, []nudge{n}})
 		}
 	}
+	more := 0
 	if len(lines) > maxLines {
-		extra := len(lines) - maxLines + 1
-		lines = append(lines[:maxLines-1], fmt.Sprintf("and %d more", extra))
+		for _, l := range lines[maxLines-1:] {
+			more += len(l.named)
+		}
+		lines = lines[:maxLines-1]
 	}
-	title := "A few things"
+	texts := make([]string, 0, len(lines)+1)
+	for _, l := range lines {
+		texts = append(texts, l.text)
+		shown = append(shown, l.named...)
+	}
+	if more > 0 {
+		texts = append(texts, fmt.Sprintf("and %d more", more))
+	}
+	title = "A few things"
 	if len(list) == 1 {
 		title = list[0].title
 	}
-	return title, strings.Join(lines, "\n")
+	return title, strings.Join(texts, "\n"), shown
 }
 
 // stamp formats an instant for storage: UTC, fixed width, so strings sort.

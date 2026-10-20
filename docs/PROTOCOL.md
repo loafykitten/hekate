@@ -397,8 +397,9 @@ The heartbeat runs every 30 minutes during waking hours. It looks for an event w
 to starting in 10 to 75 minutes, tasks overdue by an hour (or from an earlier day), unread mail
 that needs a reply or matters and has waited 20 minutes (under a day old), and follow-ups that
 are due, then sends one `notify` (kind `nudge`) and a push about whatever it hasn't mentioned
-before. Nothing is ever nudged twice. Renamon can change these settings with `routine_settings`
-when the owner asks.
+before. A notice names at most a few things; the rest come with the next heartbeat. Nothing is
+nudged twice (what was sent is remembered for a year). Renamon can change these settings with
+`routine_settings` when the owner asks.
 
 ```jsonc
 // RoutineSettings

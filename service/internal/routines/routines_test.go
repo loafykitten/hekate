@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -47,9 +48,17 @@ func (f *fakeMail) Summary(context.Context, int) (mail.Summary, error) {
 	return mail.Summary{Attention: f.attention}, nil
 }
 
-type fakeFollowUps struct{ due []memory.Memory }
+type fakeFollowUps struct {
+	due         []memory.Memory
+	respectSent bool // honor the limit like the real query: oldest first
+	limits      []int
+}
 
-func (f *fakeFollowUps) FollowUpsDue(context.Context, time.Time, int) ([]memory.Memory, error) {
+func (f *fakeFollowUps) FollowUpsDue(_ context.Context, _ time.Time, limit int) ([]memory.Memory, error) {
+	f.limits = append(f.limits, limit)
+	if f.respectSent && limit < len(f.due) {
+		return f.due[:limit], nil
+	}
 	return f.due, nil
 }
 
@@ -220,9 +229,9 @@ func TestComposeCapsLines(t *testing.T) {
 	for _, s := range []string{"a", "b", "c", "d", "e"} {
 		list = append(list, nudge{key: s, kind: "follow_up", title: "t", line: s})
 	}
-	title, body := compose(list)
-	if title != "A few things" || body != "On my mind: a\nOn my mind: b\nOn my mind: c\nand 2 more" {
-		t.Errorf("%q %q", title, body)
+	title, body, shown := compose(list)
+	if title != "A few things" || body != "On my mind: a\nOn my mind: b\nOn my mind: c\nand 2 more" || len(shown) != 3 {
+		t.Errorf("%q %q %d", title, body, len(shown))
 	}
 }
 
@@ -252,5 +261,31 @@ func TestSettingsREST(t *testing.T) {
 	_ = res.Body.Close()
 	if st.WakingStart != "07:30" || !st.Heartbeat {
 		t.Errorf("patched = %+v", st)
+	}
+}
+
+func TestNudgesLeftOutComeNextTime(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	for i := range 7 {
+		f.followUps.due = append(f.followUps.due, memory.Memory{ID: strconv.Itoa(i + 1), Content: "Ask about thing " + strconv.Itoa(i+1)})
+	}
+	f.followUps.respectSent = true
+	if summary, err := f.svc.Heartbeat(ctx); err != nil || summary != "Nudged about 3 thing(s)" {
+		t.Fatalf("first: %q %v", summary, err)
+	}
+	f.now = f.now.Add(30 * time.Minute)
+	if summary, err := f.svc.Heartbeat(ctx); err != nil || summary != "Nudged about 4 thing(s)" {
+		t.Fatalf("second: %q %v", summary, err)
+	}
+	if got := f.rec.notices[1].Body; !strings.Contains(got, "thing 4") || !strings.Contains(got, "thing 7") || strings.Contains(got, "thing 1") {
+		t.Errorf("second notice = %q", got)
+	}
+	f.now = f.now.Add(30 * time.Minute)
+	if summary, _ := f.svc.Heartbeat(ctx); summary != "Nothing worth a nudge" {
+		t.Errorf("third: %q", summary)
+	}
+	if f.followUps.limits[0] < 50 {
+		t.Errorf("follow-ups fetched %d at a time: already-nudged ones would crowd out the rest", f.followUps.limits[0])
 	}
 }

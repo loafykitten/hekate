@@ -407,7 +407,11 @@ func (s *Service) today(ctx context.Context) (Briefing, string, string, error) {
 }
 
 // BriefingWaiting reports whether today's briefing was written and hasn't been played yet.
+// Switched off, it isn't offered even if one was written earlier today.
 func (s *Service) BriefingWaiting(ctx context.Context) bool {
+	if st, err := s.Settings(ctx); err != nil || !st.Briefing {
+		return false
+	}
 	b, _, _, err := s.today(ctx)
 	return err == nil && b.DeliveredAt == nil
 }
@@ -420,6 +424,12 @@ func (s *Service) BriefingWaiting(ctx context.Context) bool {
 func (s *Service) PlayBriefing(ctx context.Context, origin, inputID string, quiet, replay bool) error {
 	if s.performer == nil {
 		return errors.New("routines: no performer connected")
+	}
+	if !replay {
+		// Switched off since it was written: only the owner asking plays it.
+		if st, err := s.Settings(ctx); err != nil || !st.Briefing {
+			return ErrNoBriefing
+		}
 	}
 	b, raw, model, err := s.today(ctx)
 	if err != nil {

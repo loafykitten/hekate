@@ -82,6 +82,22 @@ describe("SegmentPlayer", () => {
     expect(texts.at(-1)!.shown).toBe("Quiet now.");
   });
 
+  it("shows a segment as text when her voice is muted while its audio decodes", async () => {
+    const { player, speech, texts, advance } = setup();
+    let finish: (b: AudioBuffer) => void = () => {};
+    speech.decode = () => new Promise<AudioBuffer>((resolve) => (finish = resolve));
+    player.enqueue(segment({ audio_b64: audio(1), text: "Hush now.", duration: 1 }));
+    await vi.advanceTimersByTimeAsync(0);
+    speech.muted = true;
+    finish({ duration: 1 } as AudioBuffer);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(speech.queued).toEqual([]);
+    advance(1.5);
+    expect(texts.at(-1)!.shown).toBe("Hush now.");
+    advance(3);
+    expect(player.busy).toBe(false);
+  });
+
   it("plays audio segments back to back in order with a gap, and reveals by the word timings", async () => {
     const { player, speech, texts, advance } = setup();
     player.enqueue(segment({ seq: 0, audio_b64: audio(1), text: "One two.", words: [{ text: "One", start: 0, end: 0.4 }, { text: "two.", start: 0.6, end: 1 }] }));

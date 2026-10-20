@@ -85,7 +85,7 @@ func TestBriefingIsWrittenPushedAndPlayed(t *testing.T) {
 		t.Error("waiting before it was written")
 	}
 	summary, err := f.svc.WriteBriefing(ctx)
-	if err != nil || summary != "Wrote the briefing for 2026-10-20 with 4 card(s)" {
+	if err != nil || summary != "Wrote the briefing for 2026-10-20 with 3 card(s)" {
 		t.Fatalf("write: %q %v", summary, err)
 	}
 	req := model.asked[0]
@@ -122,7 +122,7 @@ func TestBriefingIsWrittenPushedAndPlayed(t *testing.T) {
 		kinds = append(kinds, c.Kind)
 	}
 	if got.origin != "c1" || got.id != "b1" || !got.quiet || got.script.Text != model.reply || got.script.Model != "flex-1" ||
-		strings.Join(kinds, ",") != "weather,tasks,reminders,mail" || !strings.Contains(got.script.Cue, "gave Rika the morning briefing") {
+		strings.Join(kinds, ",") != "weather,mail,tasks" || !strings.Contains(got.script.Cue, "gave Rika the morning briefing") {
 		t.Errorf("performed = %+v (cards %v)", got, kinds)
 	}
 	if f.svc.BriefingWaiting(ctx) {

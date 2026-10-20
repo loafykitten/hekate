@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -265,7 +266,22 @@ func (s *Service) gatherDay(ctx context.Context, now time.Time) (string, []proto
 			b.WriteString("\n")
 		}
 	}
-	return b.String(), cards
+	return b.String(), pickCards(cards)
+}
+
+// briefingCards is how many cards go with the briefing: what the app shows at once.
+const briefingCards = 3
+
+// cardPriority orders a briefing's cards by what matters most on a morning.
+var cardPriority = map[string]int{"events": 0, "tasks": 1, "mail": 2, "weather": 3, "reminders": 4}
+
+// pickCards keeps the most useful few, most important last: the app shows the
+// newest card on top.
+func pickCards(cards []proto.Card) []proto.Card {
+	slices.SortStableFunc(cards, func(a, b proto.Card) int { return cardPriority[a.Kind] - cardPriority[b.Kind] })
+	cards = cards[:min(len(cards), briefingCards)]
+	slices.Reverse(cards)
+	return cards
 }
 
 // cardOf builds the events card when the calendar can (the real service).

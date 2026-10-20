@@ -405,6 +405,15 @@ describe("Conversation: morning briefing", () => {
     expect(t.socket.json.at(-1)).toMatchObject({ type: "briefing", replay: true });
   });
 
+  it("drops a tap made while loading once the owner says something else", async () => {
+    const t = setup({ ready: { ...READY, briefing: true } });
+    t.conversation.playBriefing();
+    t.conversation.sendText("actually, what's the weather?");
+    t.conversation.attachStage({ speech: new FakeSpeech(), bubble: undefined, character: undefined } as never);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(t.types()).not.toContain("briefing");
+  });
+
   it("asks for another tap when a tap made while loading can't start audio", async () => {
     const t = setup({ ready: { ...READY, briefing: true } });
     t.conversation.playBriefing();

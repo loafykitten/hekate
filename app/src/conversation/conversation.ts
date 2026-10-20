@@ -154,6 +154,7 @@ export class Conversation {
   private briefingWaiting = false;
   private offeringBriefing = false;
   private deferredBriefing?: boolean; // tapped before she loaded: the replay flag to send
+  private inputGen = 0; // bumps with each new input, so a deferred briefing never cuts in after it
   private readonly deck = new CardDeck(() => this.emit());
   private notices: Notice[] = [];
   private noticeTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -295,7 +296,9 @@ export class Conversation {
   // A tap on the briefing came while she loaded. The tap is over now, so start it only if it can be
   // heard (or her voice is off); otherwise offer it again for another tap.
   private async playDeferred(replay: boolean) {
+    const gen = this.inputGen;
     const audible = !this.voice || (await Promise.race([this.stage!.speech.unlock(), wait(UNLOCK_WAIT_MS, false)]));
+    if (gen !== this.inputGen) return; // the owner said or asked something else meanwhile
     if (audible) {
       this.playBriefing(replay);
       return;
@@ -372,6 +375,7 @@ export class Conversation {
       this.toast("error", "Not connected to Hekate yet.", "offline-send");
       return false;
     }
+    this.newInput();
     this.interruptIfBusy();
     const id = this.client.say(trimmed, !this.voice);
     if (!id) return false;
@@ -399,6 +403,7 @@ export class Conversation {
       this.toast("error", "Voice input isn't available right now. You can still type.", "stt-off");
       return;
     }
+    this.newInput();
     this.interruptIfBusy();
     const id = this.client.pttStart();
     if (!id) return;
@@ -490,6 +495,12 @@ export class Conversation {
     this.spoke = false;
     this.running.clear();
     return true;
+  }
+
+  // Newer input supersedes a briefing tapped while she was loading.
+  private newInput() {
+    this.inputGen++;
+    this.deferredBriefing = undefined;
   }
 
   private unlockAudio() {

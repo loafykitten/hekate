@@ -260,6 +260,18 @@ func (s *Service) Undo(ctx context.Context, changeID int64) (Change, error) {
 		if c.Before == nil || c.After == nil {
 			return Change{}, httpx.Conflict("there's no earlier version to go back to")
 		}
+		if c.mergedFrom != "" {
+			// This memory was itself merged on into another: undo that first,
+			// or the other would keep the merged words untracked.
+			var one int
+			err := s.db.QueryRowContext(ctx, `SELECT 1 FROM memory_merges WHERE source_id = ?`, mid).Scan(&one)
+			if err == nil {
+				return Change{}, httpx.Conflict("this memory was merged into another since; undo that merge first")
+			}
+			if !errors.Is(err, sql.ErrNoRows) {
+				return Change{}, fmt.Errorf("check later merges: %w", err)
+			}
+		}
 		b := c.Before
 		follow := ""
 		if b.FollowUpAt != nil {

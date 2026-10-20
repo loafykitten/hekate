@@ -102,6 +102,18 @@ func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (
 	update := func(id int64, patch memory.Patch, reason string, mergedFrom []int64) error {
 		before := latest[id]
 		link := func(tx *sql.Tx) error {
+			// The sources must still say what she read: an edit made while she
+			// thought would otherwise be merged in its old form.
+			for _, src := range mergedFrom {
+				var content string
+				err := tx.QueryRowContext(ctx, `SELECT content FROM memories WHERE id = ? AND deleted_at IS NULL`, src).Scan(&content)
+				if errors.Is(err, sql.ErrNoRows) || (err == nil && content != latest[src].Content) {
+					return memory.ErrChanged
+				}
+				if err != nil {
+					return fmt.Errorf("check a merge source: %w", err)
+				}
+			}
 			for _, src := range mergedFrom {
 				if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO memory_merges (source_id, into_id) VALUES (?, ?)`, src, id); err != nil {
 					return fmt.Errorf("record a merge: %w", err)

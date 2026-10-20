@@ -838,3 +838,60 @@ func TestUndoWorksForARememberedAgainMemory(t *testing.T) {
 		t.Errorf("undo: %v", err)
 	}
 }
+
+func TestAMergeChecksItsSourcesAsTheyAreNow(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	dest := f.remember("person", "Mika is Rika's sister")
+	src := f.remember("fact", "Mika works nights")
+	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "hi", "hello")
+	model := &editingModel{fakeModel: &fakeModel{reply: `{"update": [{"id": ` + strconv.FormatInt(dest, 10) + `,
+		"content": "Mika is Rika's sister and works nights", "merged_from": [` + strconv.FormatInt(src, 10) + `], "reason": "merge"}],
+		"retire": [{"id": ` + strconv.FormatInt(src, 10) + `, "reason": "merged"}], "diary": "d"}`}}
+	model.during = func() {
+		days := "Mika works days"
+		if _, err := f.mem.Update(ctx, src, memory.Patch{Content: &days}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.svc.llm = model
+	if _, err := f.svc.Reflect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := f.mem.Get(ctx, dest); m.Content != "Mika is Rika's sister" {
+		t.Errorf("merged an out-of-date source: %+v", m)
+	}
+	if m, err := f.mem.Get(ctx, src); err != nil || m.Content != "Mika works days" {
+		t.Errorf("source = %+v %v", m, err)
+	}
+}
+
+func TestAChainedMergeIsUndoneFromTheEnd(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	a := f.remember("fact", "A fact")
+	b := f.remember("fact", "B fact")
+	c := f.remember("fact", "C fact")
+	merge := func(dest, src int64, content string) {
+		f.say(f.now.Add(-time.Hour), "hi", "hello")
+		f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(dest, 10) + `, "content": "` + content + `", "merged_from": [` + strconv.FormatInt(src, 10) + `], "reason": "merge"}], "diary": "d"}`
+		if _, err := f.svc.Reflect(ctx); err != nil {
+			t.Fatal(err)
+		}
+		f.now = f.now.Add(24 * time.Hour)
+	}
+	merge(a, b, "A fact and B fact")
+	merge(c, a, "C fact, A fact and B fact")
+	days, _ := f.svc.Journal(ctx, 0)
+	first := days[1].Reflections[0].Changes[0]
+	var he *httpx.Error
+	if _, err := f.svc.Undo(ctx, mustID(t, first.ID)); !errors.As(err, &he) || he.Status != http.StatusConflict {
+		t.Errorf("undoing the earlier merge first: %v", err)
+	}
+	if _, err := f.svc.Undo(ctx, mustID(t, days[0].Reflections[0].Changes[0].ID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Undo(ctx, mustID(t, first.ID)); err != nil {
+		t.Errorf("undoing from the end: %v", err)
+	}
+}

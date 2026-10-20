@@ -153,8 +153,7 @@ Answer with one JSON object and nothing else:
 {"save": [{"kind": "fact|preference|person|event|follow_up", "content": "...", "importance": 3, "follow_up_at": "YYYY-MM-DD or YYYY-MM-DDTHH:MM, optional", "reason": "..."}],
  "update": [{"id": 12, "content": "optional", "kind": "optional", "importance": 4, "follow_up_at": "optional; empty string clears it", "merged_from": [7], "reason": "..."}],
  "retire": [{"id": 7, "reason": "..."}],
- "diary": "...",
- "summary": "one short line on what you changed"}`
+ "diary": "..."}`
 
 // input lays out what the reflection reads, inside nonce-delimited markers.
 func (s *Service) input(in *input) string {

@@ -259,15 +259,16 @@ func (s *Service) Undo(ctx context.Context, changeID int64) (Change, error) {
 			return Change{}, httpx.Conflict("there's no earlier version to go back to")
 		}
 		if c.mergedFrom != "" {
-			// This memory was itself merged on into another: undo that first,
-			// or the other would keep the merged words untracked.
+			// A merge is undone from the end: later changes to this memory, and
+			// a merge of it into another, may carry the merged words on.
 			var one int
-			err := s.db.QueryRowContext(ctx, `SELECT 1 FROM memory_merges WHERE source_id = ?`, mid).Scan(&one)
+			err := s.db.QueryRowContext(ctx, `SELECT 1 FROM memory_merges WHERE source_id = ?
+				UNION ALL SELECT 1 FROM reflection_changes WHERE memory_id = ? AND id > ? AND undone_at IS NULL LIMIT 1`, mid, mid, changeID).Scan(&one)
 			if err == nil {
-				return Change{}, httpx.Conflict("this memory was merged into another since; undo that merge first")
+				return Change{}, httpx.Conflict("later changes build on this merge; undo those first")
 			}
 			if !errors.Is(err, sql.ErrNoRows) {
-				return Change{}, fmt.Errorf("check later merges: %w", err)
+				return Change{}, fmt.Errorf("check later changes: %w", err)
 			}
 		}
 		b := c.Before

@@ -33,8 +33,8 @@ const (
 // Once changes start, cancellation waits until they're done.
 func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (string, error) {
 	ctx = context.WithoutCancel(ctx)
-	res, err := s.db.ExecContext(ctx, `INSERT INTO reflections (day, window_start, window_end, summary, created_at) VALUES (?, ?, ?, ?, ?)`,
-		in.day, stamp(in.start), stamp(in.end), p.Summary, stamp(s.now()))
+	res, err := s.db.ExecContext(ctx, `INSERT INTO reflections (day, window_start, window_end, created_at) VALUES (?, ?, ?, ?)`,
+		in.day, stamp(in.start), stamp(in.end), stamp(s.now()))
 	if err != nil {
 		return "", fmt.Errorf("record the reflection: %w", err)
 	}
@@ -240,11 +240,9 @@ func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (
 	if held > 0 {
 		summary += fmt.Sprintf(" (%d retirements held back: an update didn't happen)", held)
 	}
-	stored := p.Summary
-	if stored == "" {
-		stored = summary
-	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE reflections SET summary = ?, finished_at = ? WHERE id = ?`, stored, stamp(s.now()), rid); err != nil {
+	// The stored summary is only counts: the model's own words could repeat a
+	// fact that is forgotten later.
+	if _, err := s.db.ExecContext(ctx, `UPDATE reflections SET summary = ?, finished_at = ? WHERE id = ?`, summary, stamp(s.now()), rid); err != nil {
 		return "", fmt.Errorf("finish the reflection: %w", err)
 	}
 	s.events.Invalidate(DomainJournal)

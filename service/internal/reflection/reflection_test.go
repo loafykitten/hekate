@@ -895,3 +895,37 @@ func TestAChainedMergeIsUndoneFromTheEnd(t *testing.T) {
 		t.Errorf("undoing from the end: %v", err)
 	}
 }
+
+func TestAnEarlierMergeWaitsForLaterChanges(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	a := f.remember("fact", "A fact")
+	b := f.remember("fact", "B fact")
+	for range 2 {
+		f.say(f.now.Add(-time.Hour), "hi", "hello")
+		f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(a, 10) + `, "content": "A fact and B fact", "merged_from": [` + strconv.FormatInt(b, 10) + `], "reason": "merge"}], "diary": "d"}`
+		if _, err := f.svc.Reflect(ctx); err != nil {
+			t.Fatal(err)
+		}
+		f.now = f.now.Add(24 * time.Hour)
+	}
+	days, _ := f.svc.Journal(ctx, 0)
+	var he *httpx.Error
+	if _, err := f.svc.Undo(ctx, mustID(t, days[1].Reflections[0].Changes[0].ID)); !errors.As(err, &he) || he.Status != http.StatusConflict {
+		t.Errorf("undoing the first merge while the second stands: %v", err)
+	}
+}
+
+func TestTheStoredSummaryHoldsNoWordsOfHers(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "hi", "hello")
+	f.model.reply = `{"save": [{"kind": "fact", "content": "Owes Mika fifty dollars"}], "diary": "d", "summary": "Saved that Rika owes Mika fifty dollars"}`
+	if _, err := f.svc.Reflect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	days, _ := f.svc.Journal(ctx, 0)
+	if s := days[0].Reflections[0].Summary; strings.Contains(s, "Mika") || !strings.HasPrefix(s, "Saved 1") {
+		t.Errorf("summary = %q", s)
+	}
+}

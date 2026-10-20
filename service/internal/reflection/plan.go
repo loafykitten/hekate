@@ -11,11 +11,10 @@ import (
 // plan is what the model decided. Fields are pointers where "not given" and
 // "empty" mean different things.
 type plan struct {
-	Save    []saveOp   `json:"save"`
-	Update  []updateOp `json:"update"`
-	Retire  []retireOp `json:"retire"`
-	Diary   string     `json:"diary"`
-	Summary string     `json:"summary"`
+	Save   []saveOp   `json:"save"`
+	Update []updateOp `json:"update"`
+	Retire []retireOp `json:"retire"`
+	Diary  string     `json:"diary"`
 
 	// updatesCut is set when the plan had more updates than are applied:
 	// one of the dropped ones may be a merge's destination.
@@ -82,7 +81,6 @@ func parsePlan(text string) (plan, error) {
 		return plan{}, errors.New("the model wrote no diary entry")
 	}
 	p.Diary = clip(p.Diary, maxDiary)
-	p.Summary = clip(oneLine(p.Summary), 200)
 	p.Save = p.Save[:min(len(p.Save), maxSaves)]
 	if len(p.Update) > maxUpdates {
 		p.Update, p.updatesCut = p.Update[:maxUpdates], true

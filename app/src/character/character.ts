@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { TailMotion } from "./tail";
 
 export interface MorphWeight {
   name: string;
@@ -66,6 +67,7 @@ function toonify(mesh: THREE.Mesh, outline: CharacterRig["outline"]) {
 }
 
 const _q = new THREE.Quaternion();
+const _dq = new THREE.Quaternion();
 
 // Crossfade lengths (seconds), eased. Gestures start and end in a different stance than a calm
 // idle (e.g. hands clasped vs. at the sides), so these are long enough to read as a deliberate
@@ -148,6 +150,11 @@ export class Character {
   private bones = new Map<string, THREE.Bone>();
   private idleName?: string;
   private headLayer = 1; // procedural head motion scale; backs off during nods and shakes
+  private readonly tailMotion: TailMotion;
+  // The bone the tail hangs from, and its world rotation last frame.
+  private readonly tailParent: THREE.Object3D | undefined;
+  private readonly tailParentQ = new THREE.Quaternion();
+  private tailPrimed = false; // tailParentQ is read on the first frame, once a clip has posed her
 
   private constructor(root: THREE.Object3D, animations: THREE.AnimationClip[], readonly rig: CharacterRig) {
     this.root = root;
@@ -186,6 +193,8 @@ export class Character {
     };
     const p = rig.procedural;
     [rig.headBone, p.spine, ...p.tail, ...p.ears].forEach(drive);
+    this.tailMotion = new TailMotion(p.tail.length);
+    this.tailParent = (p.tail[0] && bones.get(p.tail[0])?.parent) || undefined;
 
     this.bones = bones;
     this.idleName = rig.clips.idle;
@@ -434,12 +443,26 @@ export class Character {
     const talking = this.mouthOpen;
 
     this.layer(p.spine, [["pitch", 0.025 * breathe]]);
-    // Same overall curl however many bones the tail has.
-    const tailAmp = 0.48 / Math.max(1, p.tail.length);
-    const tailPhase = 2.4 / Math.max(1, p.tail.length);
-    p.tail.forEach((n, i) => this.layer(n, [["yaw", tailAmp * Math.sin(t * 1.1 - i * tailPhase)]]));
-
     this.engaged += ((this.speaking ? 1 : 0) - this.engaged) * (1 - Math.exp(-4 * dt));
+
+    // The tail lags behind whatever the body did this frame (the clip, or the stage turning her).
+    let baseTurn = 0;
+    let baseTip = 0;
+    if (this.tailParent) {
+      this.tailParent.updateWorldMatrix(true, false);
+      this.tailParent.getWorldQuaternion(_q);
+      if (this.tailPrimed) {
+        _dq.copy(_q).multiply(this.tailParentQ.invert());
+        if (_dq.w < 0) _dq.set(-_dq.x, -_dq.y, -_dq.z, -_dq.w); // the short way round
+        // Small rotations: the vector part is about half the angle times the axis.
+        baseTurn = 2 * _dq.y;
+        baseTip = 2 * _dq.x;
+      }
+      this.tailParentQ.copy(_q);
+      this.tailPrimed = true;
+    }
+    const tail = this.tailMotion.update({ dt, liveliness: this.engaged, baseTurn, baseTip });
+    p.tail.forEach((n, i) => this.layer(n, [["pitch", tail[i].pitch], ["yaw", tail[i].yaw]]));
 
     for (const w of this.rig.mouth) this.setMorph(w.name, w.weight * talking);
     // A slight chin lift while speaking reads as engagement.

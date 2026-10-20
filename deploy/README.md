@@ -5,6 +5,8 @@ How the pieces fit is in `docs/DEVELOPMENT.md` ("Deploys"). This is the one-time
 1. Pick a stack directory on the server (the examples use `/srv/hekate`) and copy into it:
    `compose.example.yaml` → `compose.yaml`, `hekate.env.example` → `hekate.env` (chmod 600),
    `radicale/config.example` → `radicale/config`, the `deployer/` folder and `hekatectl`.
+   Optionally `deployer.env.example` → `deployer.env` (chmod 600) for Telegram alerts on failed
+   deploys and an outside health ping (see below).
 2. Create the bind-mounted directories yourself, owned by the user the service runs as (`user:`
    in compose, 1000:1000 in the example) and by you, the operator. Otherwise Docker creates them
    as root and the service can't write its database or the deployer its log:
@@ -18,6 +20,13 @@ How the pieces fit is in `docs/DEVELOPMENT.md` ("Deploys"). This is the one-time
 4. Add the routes from `Caddyfile.example` to your reverse proxy and reload it.
 5. `docker compose up -d`. The deployer from then on tracks `ghcr.io/<owner>/hekate:main`.
 6. Check with `./hekatectl status`.
+
+Alerts from outside: Hekate can't tell anyone it's down. Create a check at healthchecks.io (or
+any dead-man's-switch service) with a 1-minute period and a few minutes' grace, connect its
+Telegram integration, and put the ping URL in `deployer.env` as `HEALTHCHECK_URL`. The deployer
+pings it each round while Hekate is healthy, so silence (Hekate down, the homelab off, the network
+out) becomes a message. After changing `deployer/` or `deployer.env`:
+`docker compose up -d --build deployer`.
 
 Calendar clients: add a CalDAV account with server `https://dav.<your domain>/`, the user and
 password from step 3. iOS/macOS: Settings → Calendar → Accounts → Other → CalDAV. Android: DAVx5.

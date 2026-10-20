@@ -290,3 +290,29 @@ func TestInvalidMail(t *testing.T) {
 		})
 	}
 }
+
+func TestTelegram(t *testing.T) {
+	env := func(kv ...string) func(string) string {
+		m := map[string]string{}
+		for i := 0; i+1 < len(kv); i += 2 {
+			m[kv[i]] = kv[i+1]
+		}
+		return func(k string) string { return m[k] }
+	}
+	cfg, err := LoadFrom(env("HEKATE_TELEGRAM_BOT_TOKEN", "123:abc", "HEKATE_TELEGRAM_CHAT_ID", "8191"))
+	if err != nil || cfg.TelegramBotToken.Reveal() != "123:abc" || cfg.TelegramChatID != 8191 {
+		t.Fatalf("cfg = %+v, %v", cfg, err)
+	}
+	if cfg, err := LoadFrom(env()); err != nil || cfg.TelegramBotToken != "" || cfg.TelegramChatID != 0 {
+		t.Errorf("unset = %+v, %v", cfg, err)
+	}
+	for name, e := range map[string]func(string) string{
+		"token only": env("HEKATE_TELEGRAM_BOT_TOKEN", "123:abc"),
+		"chat only":  env("HEKATE_TELEGRAM_CHAT_ID", "8191"),
+		"bad chat":   env("HEKATE_TELEGRAM_BOT_TOKEN", "123:abc", "HEKATE_TELEGRAM_CHAT_ID", "me"),
+	} {
+		if _, err := LoadFrom(e); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

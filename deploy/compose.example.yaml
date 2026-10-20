@@ -37,6 +37,9 @@ services:
     container_name: hekate-deployer
     restart: unless-stopped
     network_mode: container:tailscale-sidecar   # to reach hekate's loopback /healthz
+    env_file:                                   # Telegram alerts and the health ping (deployer.env.example)
+      - path: deployer.env
+        required: false
     environment:
       STACK_DIR: /srv/hekate                    # must equal the host path mounted below
     volumes:

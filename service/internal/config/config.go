@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -73,6 +74,11 @@ type Config struct {
 
 	Units       string // "imperial" or "metric", for weather
 	PushSubject string // VAPID subject: a mailto: or https: URL identifying the sender
+
+	// Telegram: the backup channel when web push reaches no device. Both empty
+	// means it's off.
+	TelegramBotToken Secret
+	TelegramChatID   int64
 }
 
 // MailAccount is one IMAP mailbox, from HEKATE_MAIL_<n>_* (n = 1..9).
@@ -136,6 +142,18 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 	cfg.PushSubject = str("HEKATE_PUSH_SUBJECT", "mailto:hekate@example.com")
 
 	var errs []error
+
+	cfg.TelegramBotToken = Secret(str("HEKATE_TELEGRAM_BOT_TOKEN", ""))
+	if v := str("HEKATE_TELEGRAM_CHAT_ID", ""); v != "" {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("HEKATE_TELEGRAM_CHAT_ID: %q is not a chat id", v))
+		}
+		cfg.TelegramChatID = id
+	}
+	if (cfg.TelegramBotToken == "") != (cfg.TelegramChatID == 0) {
+		errs = append(errs, errors.New("HEKATE_TELEGRAM_BOT_TOKEN and HEKATE_TELEGRAM_CHAT_ID go together: set both or neither"))
+	}
 
 	accounts, aerrs := loadMailAccounts(str)
 	cfg.MailAccounts = accounts
@@ -240,6 +258,7 @@ func (c Config) LogValue() slog.Value {
 		slog.String("model_background", c.ModelBackground.String()),
 		slog.String("model_bulk", c.ModelBulk.String()),
 		slog.Bool("tts_configured", c.ElevenLabsAPIKey != ""),
+		slog.Bool("telegram_configured", c.TelegramBotToken != ""),
 		slog.String("elevenlabs_voice_id", c.ElevenLabsVoiceID),
 		slog.String("elevenlabs_model", c.ElevenLabsModel),
 		slog.Bool("stt", c.STT),

@@ -30,6 +30,7 @@ import (
 	"github.com/loafykitten/hekate/service/internal/server"
 	"github.com/loafykitten/hekate/service/internal/store"
 	"github.com/loafykitten/hekate/service/internal/tasks"
+	"github.com/loafykitten/hekate/service/internal/telegram"
 	"github.com/loafykitten/hekate/service/internal/voice"
 	"github.com/loafykitten/hekate/service/internal/voice/elevenlabs"
 	"github.com/loafykitten/hekate/service/internal/voice/parakeet"
@@ -105,7 +106,11 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("build push: %w", err)
 	}
-	remSvc, err := reminders.New(reminders.Options{Store: db, Location: cfg.Location, Events: hub, Push: pushSvc, Logger: logger.Logger})
+	// Telegram is the backup channel: a notification that web push can't get to
+	// any device goes there instead. Its approval buttons are wired up below.
+	tg := telegram.New(telegram.Options{Token: cfg.TelegramBotToken.Reveal(), ChatID: cfg.TelegramChatID, Store: db, Logger: logger.Logger})
+	notifier := tg.Fallback(pushSvc)
+	remSvc, err := reminders.New(reminders.Options{Store: db, Location: cfg.Location, Events: hub, Push: notifier, Logger: logger.Logger})
 	if err != nil {
 		return fmt.Errorf("build reminders: %w", err)
 	}
@@ -116,10 +121,11 @@ func run() error {
 
 	// Actions that wait for the owner's say-so. Features register their kinds
 	// on approvalSvc before the server starts.
-	approvalSvc, err := approvals.New(approvals.Options{Store: db, Location: cfg.Location, Events: hub, Broadcast: hub, Push: pushSvc, Logger: logger.Logger})
+	approvalSvc, err := approvals.New(approvals.Options{Store: db, Location: cfg.Location, Events: hub, Broadcast: hub, Push: notifier, Logger: logger.Logger})
 	if err != nil {
 		return fmt.Errorf("build approvals: %w", err)
 	}
+	tg.SetDecider(approvalSvc)
 
 	toolList := slices.Concat(taskSvc.Tools(), remSvc.Tools(), memSvc.Tools())
 	sources := []agent.Source{
@@ -166,7 +172,7 @@ func run() error {
 
 	// Changes she proposes to Hekate itself; the owner approves them and builds
 	// them with Claude Code.
-	changeSvc, err := changes.New(changes.Options{Store: db, Approvals: approvalSvc, Location: cfg.Location, Events: hub, Push: pushSvc, Logger: logger.Logger})
+	changeSvc, err := changes.New(changes.Options{Store: db, Approvals: approvalSvc, Location: cfg.Location, Events: hub, Push: notifier, Logger: logger.Logger})
 	if err != nil {
 		return fmt.Errorf("build changes: %w", err)
 	}
@@ -204,6 +210,7 @@ func run() error {
 	background.Go(func() { remSvc.Run(ctx) })
 	background.Go(func() { approvalSvc.Run(ctx) })
 	background.Go(func() { mailSvc.Run(ctx) })
+	background.Go(func() { tg.Run(ctx) })
 
 	srv := server.New(server.Options{
 		Logger:       logger.Logger,

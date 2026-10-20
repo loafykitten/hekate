@@ -60,8 +60,11 @@ case "$1 $2" in
   "pr close")
     [[ -e "$fake/close-fails" ]] && { echo "gh: close failed" >&2; exit 1; }
     set_state "$3" CLOSED
-    # As the real gh does when a worktree holds the branch: closed, but it exits non-zero.
-    if [[ -e "$fake/close-delete-fails" ]]; then echo "failed to delete local branch" >&2; exit 1; fi ;;
+    # As the real gh does: the local branch goes first, and when a worktree holds it that fails,
+    # leaving the remote branch in place; otherwise the remote branch is deleted too.
+    if [[ -e "$fake/close-delete-fails" ]]; then echo "failed to delete local branch" >&2; exit 1; fi
+    head="$(jq -r --argjson n "$3" '.[] | select(.number == $n) | .headRefName' "$fake/prs.json")"
+    git push --quiet origin --delete "$head" 2>/dev/null || true ;;
   "pr checks") exit 0 ;;
   "pr merge")
     sha="${*: -1}"
@@ -93,7 +96,7 @@ printf '%s' "\$prompt" >"\$fake/\$name.prompt"
 # Only the JSON answer goes to stdout, as with the real claude.
 case "\$kind" in
   build)
-    echo "change \$CHANGE_ID" >"change-\$CHANGE_ID.txt" && git add . && git commit --quiet -m build && git push --quiet origin "HEAD:change/\$CHANGE_ID"
+    { echo "change \$CHANGE_ID \$RANDOM" >"change-\$CHANGE_ID.txt" && git add . && git commit --quiet -m build && git push --quiet origin "HEAD:change/\$CHANGE_ID"; } >&2 || exit 1
     [[ -e "\$fake/conflict" ]] && "$tmp/bin/move-main" "change-\$CHANGE_ID.txt" "main's version"
     [[ -e "\$fake/move-clean" ]] && "$tmp/bin/move-main" "elsewhere-\$CHANGE_ID.txt" "unrelated" ;;
   sync)
@@ -220,6 +223,18 @@ echo '{"verdict":"reject","summary":"Out of scope."}' >"$fake/check.json"
 touch "$fake/close-delete-fails"
 tick; expect "$id" rejected CLOSED
 [[ "$(field "$id" result)" == "Out of scope." ]] || fail "result $(field "$id" result)"
+
+scenario="...and a retry after that rebuilds and pushes the branch afresh"
+api POST "/api/changes/$id/retry" >/dev/null
+rm -f "$fake/sessions.log" "$fake/close-delete-fails"
+echo '{"verdict":"approve","summary":"Shipped."}' >"$fake/check.json"
+build_opens "$id" $((200 + id))
+tick
+if [[ "$(field "$id" status)" == merged ]]; then
+  echo "ok: $scenario"
+else
+  fail "after the retry: $(api GET "/api/changes/$id" | jq -c '{status, result}')"
+fi
 
 scenario="rejected, the PR won't close: stays working"
 id="$(queue)"; build_opens "$id"

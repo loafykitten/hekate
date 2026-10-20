@@ -26,13 +26,20 @@ for stale in $(jq -r '.changes[].id' <<<"$working"); do
     log "change $stale: cut off, but GitHub can't confirm its PR is closed; trying again next time"
     exit 0 # no new work until it's settled
   fi
+  pending="$state/runs/$stale/outcome.json" # what the run meant to report, if it got that far
   if [[ -n "$merged" ]]; then
     log "change $stale: was cut off after merging"
     "$worker_dir/report.sh" finish "$stale" merged "Merged; the worker was interrupted before it could confirm the deploy." --pr "$merged" || exit 0
+  elif [[ -f "$pending" ]]; then
+    log "change $stale: reporting the outcome its run couldn't"
+    links=()
+    while IFS= read -r l; do links+=("$l"); done < <(jq -r '.links[]' "$pending")
+    "$worker_dir/report.sh" finish "$stale" "$(jq -r .outcome "$pending")" "$(jq -r .result "$pending")" ${links[@]+"${links[@]}"} || exit 0
   else
     log "change $stale: was cut off, marking it failed"
     "$worker_dir/report.sh" finish "$stale" failed "The worker was interrupted (the machine restarted or the run crashed)." || exit 0
   fi
+  rm -f "$pending"
   git -C "$repo" worktree remove --force "$state/worktrees/change-$stale" 2>/dev/null || true
   git -C "$repo" branch -D "change/$stale" >/dev/null 2>&1 || true
 done

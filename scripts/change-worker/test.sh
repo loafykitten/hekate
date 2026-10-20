@@ -57,7 +57,11 @@ echo "gh $*" >>"$fake/gh.log"
 set_state() { jq --argjson n "$1" --arg s "$2" 'map(if .number == $n then .state = $s else . end)' "$fake/prs.json" >"$fake/prs.tmp" && mv "$fake/prs.tmp" "$fake/prs.json"; }
 case "$1 $2" in
   "pr list") jq --arg h "$4" '[.[] | select(.headRefName == $h) | {number, state, url}]' "$fake/prs.json" ;;
-  "pr close") [[ -e "$fake/close-fails" ]] && { echo "gh: close failed" >&2; exit 1; }; set_state "$3" CLOSED ;;
+  "pr close")
+    [[ -e "$fake/close-fails" ]] && { echo "gh: close failed" >&2; exit 1; }
+    set_state "$3" CLOSED
+    # As the real gh does when a worktree holds the branch: closed, but it exits non-zero.
+    if [[ -e "$fake/close-delete-fails" ]]; then echo "failed to delete local branch" >&2; exit 1; fi ;;
   "pr checks") exit 0 ;;
   "pr merge")
     sha="${*: -1}"
@@ -208,14 +212,22 @@ else
   fail "the build prompt lacks the last attempt"
 fi
 
+scenario="the PR closes but gh can't delete the local branch: still recorded at once"
+id="$(queue)"; build_opens "$id"
+echo '{"verdict":"reject","summary":"Out of scope."}' >"$fake/check.json"
+touch "$fake/close-delete-fails"
+tick; expect "$id" rejected CLOSED
+[[ "$(field "$id" result)" == "Out of scope." ]] || fail "result $(field "$id" result)"
+
 scenario="rejected, the PR won't close: stays working"
 id="$(queue)"; build_opens "$id"
 echo '{"verdict":"reject","summary":"Out of scope."}' >"$fake/check.json"
 touch "$fake/close-fails"
 tick; expect "$id" working OPEN
-scenario="...and the next tick settles it once closing works"
+scenario="...and the next tick settles it with the run's own outcome"
 rm "$fake/close-fails"
-tick; expect "$id" failed CLOSED
+tick; expect "$id" rejected CLOSED
+[[ "$(field "$id" result)" == "Out of scope." ]] || fail "result $(field "$id" result)"
 
 scenario="build crashes with GitHub down: stays working"
 id="$(queue)"; touch "$fake/build.fail" "$fake/gh-down"

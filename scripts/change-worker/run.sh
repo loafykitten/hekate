@@ -37,6 +37,10 @@ trap on_exit EXIT
 finish() {
   local outcome="$1" result="$2" merged
   shift 2
+  # Kept until it's reported, so watch.sh can report it if this run can't (see settle there).
+  # (Links go in one per line: jq would read "--issue" given as an argument as its own option.)
+  jq -n --arg outcome "$outcome" --arg result "$result" --argjson links "$(if [[ $# -gt 0 ]]; then printf '%s\n' "$@" | jq -R . | jq -s .; else echo '[]'; fi)" \
+    '{outcome: $outcome, result: $result, links: $links}' >"$run/outcome.json"
   if [[ "$outcome" != merged ]]; then
     if ! merged="$(settle_prs "$branch")"; then
       log "change $id: cannot confirm its PR is closed; leaving it for watch.sh"
@@ -49,6 +53,7 @@ finish() {
     fi
   fi
   "$report" finish "$id" "$outcome" "$result" "$@"
+  rm -f "$run/outcome.json"
   finished=1
   log "change $id: finished $outcome"
 }

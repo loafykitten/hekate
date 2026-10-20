@@ -33,9 +33,10 @@ settle_prs() {
   local branch="$1" prs n
   prs="$(cd "$repo" && gh pr list --head "$branch" --state all --json number,state,url)" || return 1
   for n in $(jq -r '.[] | select(.state == "OPEN") | .number' <<<"$prs"); do
-    # A fixed comment: the PR is public, and the reason may not be.
+    # A fixed comment: the PR is public, and the reason may not be. The exit status isn't trusted
+    # either way: gh can close the PR and then fail to delete a local branch a worktree holds.
     (cd "$repo" && gh pr close "$n" --delete-branch \
-      --comment "Closed by the change worker without merging; the outcome is recorded in Hekate.") >&2 || return 1
+      --comment "Closed by the change worker without merging; the outcome is recorded in Hekate.") >&2 || true
   done
   prs="$(cd "$repo" && gh pr list --head "$branch" --state all --json number,state,url)" || return 1
   jq -e 'all(.[]; .state != "OPEN")' <<<"$prs" >/dev/null || return 1

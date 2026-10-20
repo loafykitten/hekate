@@ -39,12 +39,23 @@ type spelled struct {
 }
 
 // spell reads a word's letters as English sounds, by rule of thumb: good
-// enough for a mouth, not a pronunciation.
-func spell(word []rune) []spelled {
+// enough for a mouth, not a pronunciation. ok is false when the word holds
+// something the rules can't read (a digit, a letter from another alphabet):
+// how it's spoken can't be guessed from its letters.
+func spell(word []rune) (out []spelled, ok bool) {
 	lower := []rune(strings.ToLower(string(word)))
-	var out []spelled
+	last := len(lower) - 1 // the last letter, past any punctuation
+	for last >= 0 && !unicode.IsLetter(lower[last]) {
+		if unicode.IsDigit(lower[last]) {
+			return nil, false
+		}
+		last--
+	}
 	for i := 0; i < len(lower); {
 		r := lower[i]
+		if unicode.IsDigit(r) {
+			return nil, false
+		}
 		if !unicode.IsLetter(r) {
 			i++
 			continue
@@ -58,13 +69,13 @@ func spell(word []rune) []spelled {
 				continue
 			}
 		}
-		v, ok := letters[r]
+		v, known := letters[r]
 		switch {
-		case !ok:
-			v = "" // a letter from another alphabet: hold the shape
+		case !known:
+			return nil, false
 		case r == 'c' && i+1 < len(lower) && strings.ContainsRune("eiy", lower[i+1]):
 			v = "SS" // a soft c, as in "nice"
-		case r == 'e' && i == len(lower)-1 && i >= 3 && !isVowel(lower[i-1]):
+		case r == 'e' && i == last && i >= 3 && !isVowel(lower[i-1]):
 			v = "" // a silent final e, as in "take" (but not "the" or "she")
 		}
 		if v != "" {
@@ -72,7 +83,7 @@ func spell(word []rune) []spelled {
 		}
 		i++
 	}
-	return out
+	return out, true
 }
 
 func isVowel(r rune) bool { return strings.ContainsRune("aeiouy", r) }
@@ -80,7 +91,9 @@ func isVowel(r rune) bool { return strings.ContainsRune("aeiouy", r) }
 // visemes lays the display text's sounds on the speech's timeline: each starts
 // with the first character spelling it, and the mouth closes in the pauses
 // between words and at the end. at(i) and end(i) are the timings of display
-// rune i.
+// rune i. A line with a word the rules can't read gets no shapes at all, so
+// the mouth follows loudness for the whole line rather than staying shut
+// while that word is said.
 func visemes(display []rune, at, end func(int) float64) []Viseme {
 	out := []Viseme{}
 	add := func(v string, t float64) {
@@ -98,7 +111,10 @@ func visemes(display []rune, at, end func(int) float64) []Viseme {
 	}
 	lastEnd := -1.0
 	for _, w := range splitWords(display) {
-		sounds := spell(display[w.a:w.b])
+		sounds, ok := spell(display[w.a:w.b])
+		if !ok {
+			return []Viseme{}
+		}
 		if len(sounds) == 0 {
 			continue
 		}

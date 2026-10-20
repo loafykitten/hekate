@@ -53,7 +53,8 @@ such as "th" or "ee") is mapped to one of the 15 Oculus viseme classes (`sil`, `
 `DD`, `kk`, `CH`, `SS`, `nn`, `RR`, `aa`, `E`, `I`, `O`, `U`) at the time that letter is spoken,
 with `sil` in pauses over 80 ms between words and at the end. The rules are English rules of
 thumb, good enough for a mouth. When the alignment doesn't match the text (the provider
-normalised it), the list is empty. The client maps each class to morphs through the manifest's
+normalised it), or a word's sound can't be read from its letters (digits, letters outside
+English), the list is empty. The client maps each class to morphs through the manifest's
 `lipsync.viseme_based`, eases from one shape into the next, and lets loudness scale how fully a
 shape is made; with no visemes the mouth follows loudness alone.
 

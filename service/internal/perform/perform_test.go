@@ -382,20 +382,28 @@ func TestSpell(t *testing.T) {
 		{"Rika.", "RR I kk aa"},
 		{"the", "TH E"},      // a final e after th... is still spoken: "th" isn't a consonant letter here
 		{"take", "DD aa kk"}, // silent final e
-		{"nice", "nn I SS"},  // soft c
+		{"take.", "DD aa kk"},
+		{"phone,", "FF O nn"},
+		{"nice", "nn I SS"}, // soft c
 		{"cheese", "CH I SS"},
 		{"phone", "FF O nn"},
 		{"quick", "kk I kk"},
-		{"high", "I"},         // h is breath, gh silent
-		{"Ñandú", "aa nn DD"}, // letters it doesn't know hold the shape before
-		{"3:15", ""},
+		{"high", "I"}, // h is breath, gh silent
+		{"...", ""},   // punctuation alone says nothing
 	} {
+		sounds, ok := spell([]rune(tt.word))
 		var got []string
-		for _, s := range spell([]rune(tt.word)) {
+		for _, s := range sounds {
 			got = append(got, s.v)
 		}
-		if strings.Join(got, " ") != tt.want {
-			t.Errorf("spell(%q) = %q, want %q", tt.word, strings.Join(got, " "), tt.want)
+		if !ok || strings.Join(got, " ") != tt.want {
+			t.Errorf("spell(%q) = %q %v, want %q", tt.word, strings.Join(got, " "), ok, tt.want)
+		}
+	}
+	// Words whose sound can't be read from their letters.
+	for _, word := range []string{"3:15", "2nd", "Ñandú", "café"} {
+		if _, ok := spell([]rune(word)); ok {
+			t.Errorf("spell(%q) claims to know how it sounds", word)
 		}
 	}
 }
@@ -419,6 +427,12 @@ func TestBuildVisemes(t *testing.T) {
 	want := "I@0.1 sil@0.3 RR@0.6 I@0.7 kk@0.8 aa@0.9 sil@1.1"
 	if strings.Join(got, " ") != want {
 		t.Errorf("visemes = %q\nwant      %q", strings.Join(got, " "), want)
+	}
+
+	// A line with a word the rules can't read gets no shapes: loudness drives
+	// the mouth for all of it, rather than it staying shut through "3:15".
+	if seg := Build(0, Parse("It is 3:15.", vocab), speechFor("It is 3:15.", 0, 0, 0.1)); seg.Visemes == nil || len(seg.Visemes) != 0 {
+		t.Errorf("a line with a number has visemes %+v", seg.Visemes)
 	}
 
 	// Without usable timing the mouth follows loudness: an empty list.

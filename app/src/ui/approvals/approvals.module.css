@@ -79,3 +79,41 @@
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
+
+.detail[data-clamped] {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  line-clamp: 5;
+}
+
+.more {
+  align-self: flex-start;
+  margin: calc(-1 * var(--space-1)) 0 0;
+  padding: var(--space-1) 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+
+.deny {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.reason {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 0.875rem;
+  font-style: italic;
+  line-height: 1.45;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}

@@ -1,6 +1,7 @@
 import {
   asApproval,
   asApprovalRule,
+  asChangeRequest,
   asCoreEntry,
   asEvent,
   asMailBody,
@@ -17,6 +18,7 @@ import {
   list,
   type Approval,
   type ApprovalRule,
+  type ChangeRequest,
   type CalendarEvent,
   type CoreEntry,
   type MailBody,
@@ -195,6 +197,12 @@ export const memoryApi = {
   removeCore: async (key: string) => void (await request("DELETE", `/memory/core/${encodeURIComponent(key)}`)),
 };
 
+// --- changes -------------------------------------------------------------------------------
+
+export const changesApi = {
+  list: async (signal?: AbortSignal): Promise<ChangeRequest[]> => many(await request("GET", "/changes", { signal }), "changes", asChangeRequest),
+};
+
 // --- weather -------------------------------------------------------------------------------
 
 // Null when the service doesn't know where she is (404): not an error, just nothing to show.
@@ -254,6 +262,13 @@ export const mailApi = {
 
 export type ApprovalDecision = "once" | "always" | "deny";
 
+export const MAX_DENY_NOTE = 500;
+
+export function decideBody(decision: ApprovalDecision, note?: string): { decision: ApprovalDecision; note?: string } {
+  const text = decision === "deny" ? note?.trim().slice(0, MAX_DENY_NOTE) : undefined;
+  return text ? { decision, note: text } : { decision };
+}
+
 export const approvalsApi = {
   list: async (status: "pending" | "recent", signal?: AbortSignal): Promise<Approval[]> =>
     many(await request("GET", "/approvals", { query: { status }, signal }), "approvals", asApproval),
@@ -265,8 +280,9 @@ export const approvalsApi = {
     }
     return null;
   },
-  decide: async (id: string, decision: ApprovalDecision) =>
-    one(await request("POST", `/approvals/${encodeURIComponent(id)}/decide`, { body: { decision } }), asApproval),
+  // `note` is the owner's reason for a denial; it is only sent with "deny", and only when there is one.
+  decide: async (id: string, decision: ApprovalDecision, note?: string) =>
+    one(await request("POST", `/approvals/${encodeURIComponent(id)}/decide`, { body: decideBody(decision, note) }), asApproval),
   rules: async (signal?: AbortSignal): Promise<ApprovalRule[]> =>
     many(await request("GET", "/approvals/rules", { signal }), "rules", asApprovalRule),
   removeRule: async (id: string) => void (await request("DELETE", `/approvals/rules/${encodeURIComponent(id)}`)),

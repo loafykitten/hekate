@@ -142,6 +142,20 @@ export function Switch({ label, checked, onChange, className }: { label: string;
   );
 }
 
+// A whole row that toggles: whatever it holds (a title and a line of detail) on the left, the
+// switch on the right. The row's text names the switch.
+export function SwitchRow({ checked, onChange, className, children }: { checked: boolean; onChange: (v: boolean) => void; className?: string; children: ReactNode }) {
+  return (
+    <label className={[styles.switchRow, className].filter(Boolean).join(" ")}>
+      {children}
+      <span className={styles.switch}>
+        <input type="checkbox" role="switch" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+        <span className={styles.track} aria-hidden="true" />
+      </span>
+    </label>
+  );
+}
+
 // Round check target used by task rows and cards.
 export function CheckCircle({ checked, label, onChange, disabled }: { checked: boolean; label: string; onChange: (checked: boolean) => void; disabled?: boolean }) {
   return (

@@ -108,12 +108,16 @@ describe("ConversationClient", () => {
     client.pttEnd(pttId!);
     client.pttCancel("zzz");
     client.interrupt(2);
+    const quietSay = client.say("shh", true);
+    client.pttEnd("q", true);
     expect(socket.json).toEqual([
       { type: "say", id: sayId, text: "hi there" },
       { type: "ptt_start", id: pttId, sample_rate: 16000 },
       { type: "ptt_end", id: pttId },
       { type: "ptt_cancel", id: "zzz" },
       { type: "interrupt", heard_seq: 2 },
+      { type: "say", id: quietSay, text: "shh", quiet: true },
+      { type: "ptt_end", id: "q", quiet: true },
     ]);
     expect(socket.sent[2]).toBe(chunk); // audio goes out as a binary frame, between start and end
   });

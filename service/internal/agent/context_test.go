@@ -45,7 +45,7 @@ func TestContextSourcesFillTheNowBlock(t *testing.T) {
 		{"Broken", fakeSource(func(context.Context, time.Time) (string, error) { return "never shown", errors.New("boom") })},
 		{"What you know about {{tamer}}", query},
 	}})
-	e.agent.Say("c", "i", "what is up")
+	e.agent.Say("c", "i", "what is up", false)
 	e.hub.waitTurnEnd(t, 1)
 
 	p := systemPrompt(t, e)
@@ -75,7 +75,7 @@ func TestSlowContextSourceIsLeftOut(t *testing.T) {
 		{"Fast", fakeSource(func(context.Context, time.Time) (string, error) { return "quick", nil })},
 	}})
 	began := time.Now()
-	e.agent.Say("c", "i", "hello")
+	e.agent.Say("c", "i", "hello", false)
 	e.hub.waitTurnEnd(t, 1)
 
 	if took := time.Since(began); took > 4*time.Second {
@@ -91,7 +91,7 @@ func TestPanickingContextSourceIsContained(t *testing.T) {
 	e := newEnv(t, func(int, llmReq) (int, []string) { return 200, say("Hi.") }, envOpts{sources: []Source{
 		{"Bad", fakeSource(func(context.Context, time.Time) (string, error) { panic("oops") })},
 	}})
-	e.agent.Say("c", "i", "hello")
+	e.agent.Say("c", "i", "hello", false)
 	e.hub.waitTurnEnd(t, 1)
 	if strings.Contains(systemPrompt(t, e), "### Bad") {
 		t.Error("panicking source leaked into the prompt")

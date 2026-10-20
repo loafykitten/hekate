@@ -64,7 +64,7 @@ func (a *Agent) runTurn(t *turn, prev *turn) {
 
 	r := &turnRun{a: a, t: t, start: time.Now(), model: a.chat, lastUsed: a.chat.Name,
 		log: a.log.With("turn_id", t.id)}
-	r.log.Info("turn start", "origin", t.origin, "chars", len(t.userText))
+	r.log.Info("turn start", "origin", t.origin, "chars", len(t.userText), "quiet", t.quiet)
 
 	if err := r.begin(); err != nil {
 		r.log.Error("cannot start turn", "error", err)
@@ -73,7 +73,11 @@ func (a *Agent) runTurn(t *turn, prev *turn) {
 	}
 	a.hub.Broadcast(proto.NewTurnStart(t.id, t.inputID, t.origin, t.userText))
 
-	r.pipe = newPipeline(ctx, a.synth, a.vocabulary(), r.emitSegment, r.log)
+	synth := a.synth
+	if t.quiet {
+		synth = nil
+	}
+	r.pipe = newPipeline(ctx, synth, a.vocabulary(), r.emitSegment, r.log)
 	t.pipe.Store(r.pipe)
 
 	loopErr := r.loop(ctx)

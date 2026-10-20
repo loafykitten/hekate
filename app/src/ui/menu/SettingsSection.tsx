@@ -14,7 +14,7 @@ import { useApprovalRules, useDeleteApprovalRule } from "../../data/hooks";
 import { pushApi } from "../../data/rest";
 import { useConversation, useConversationState } from "../ConversationContext";
 import { useConnection } from "../health";
-import { Button, ConfirmButton, SectionTitle, StateMessage } from "../kit/kit";
+import { Button, ConfirmButton, SectionTitle, StateMessage, SwitchRow } from "../kit/kit";
 import { useMenuActive } from "./MenuContext";
 import styles from "./sections.module.css";
 import rowStyles from "../rows/rows.module.css";
@@ -184,7 +184,8 @@ function StandingPermissions() {
 }
 
 function Voice() {
-  const { capabilities, connection } = useConversationState();
+  const conversation = useConversation();
+  const { capabilities, connection, voice } = useConversationState();
   const row = (title: string, detail: string, on: boolean | undefined) => (
     <div className={styles.settingRow}>
       <div className={styles.settingLabel}>
@@ -198,6 +199,12 @@ function Voice() {
     <section>
       <SectionTitle>Voice</SectionTitle>
       <div className={styles.group}>
+        <SwitchRow className={styles.settingRow} checked={voice} onChange={(on) => conversation.setVoice(on)}>
+          <span className={styles.settingLabel}>
+            <strong>Speak out loud</strong>
+            <span>On this device. Off, she answers in the speech bubble with her gestures, and nothing plays. Handy in public.</span>
+          </span>
+        </SwitchRow>
         {row("Listening", "Tap or click the mic button to talk, and again when you're done. Needs speech recognition on the homelab.", capabilities?.stt)}
         {row("Her voice", "Without it she answers in the speech bubble only.", capabilities?.tts)}
       </div>

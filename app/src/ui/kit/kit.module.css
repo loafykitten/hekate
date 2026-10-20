@@ -210,6 +210,11 @@
   user-select: none;
 }
 
+.switchRow {
+  cursor: pointer;
+  user-select: none;
+}
+
 .switch input {
   position: absolute;
   inset: 0;

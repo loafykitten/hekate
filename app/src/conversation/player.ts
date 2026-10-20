@@ -149,10 +149,12 @@ export class SegmentPlayer {
   }
 
   private async decode(segment: Segment): Promise<AudioBuffer | undefined> {
-    if (!segment.audio_b64 || !this.host.speech.running) return undefined;
+    const { speech } = this.host;
+    if (!segment.audio_b64 || !speech.running || speech.muted) return undefined;
     try {
       const bytes = base64ToBytes(segment.audio_b64);
-      return await this.host.speech.decode(bytes.buffer as ArrayBuffer);
+      const buffer = await speech.decode(bytes.buffer as ArrayBuffer);
+      return speech.muted ? undefined : buffer; // muted while it decoded: show it as text
     } catch (e) {
       console.warn("segment audio could not be decoded; showing it as text", e);
       return undefined;

@@ -16,7 +16,8 @@
     "verify:blend": "node scripts/verify/blend-stress.mjs",
     "verify:strip": "node scripts/verify/transition-strip.mjs",
     "verify:loop": "node scripts/verify/frame-loop.mjs",
-    "verify:tail": "node scripts/verify/tail.mjs"
+    "verify:tail": "node scripts/verify/tail.mjs",
+    "verify:voice": "node scripts/verify/voice.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.104.4",

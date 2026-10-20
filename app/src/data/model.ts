@@ -187,11 +187,11 @@ export interface ChangeRequest {
   status: ChangeStatus;
   approval_id: string | null;
   feedback: string | null; // the owner's note when denied
-  stage: string; // the worker's latest step, e.g. "Building"
+  stage: string; // the latest step while it's built, e.g. "Building"
   issue_url: string | null;
   pr_url: string | null;
   result: string | null; // once finished: what happened
-  attempts: number; // times the worker has taken it
+  attempts: number; // times it has been taken up
   previous_result: string | null; // after a retry: how the last attempt ended
   previous_pr_url: string | null;
   created_at: string;
@@ -414,7 +414,7 @@ export function asApproval(v: unknown): Approval | undefined {
   };
 }
 
-// Only links to GitHub are ever shown for a change (the worker files the issue and PR there).
+// Only links to GitHub are ever shown for a change (its issue and PR live there).
 export function githubUrl(v: unknown): string | null {
   return isStr(v) && v.startsWith("https://github.com/") ? v : null;
 }

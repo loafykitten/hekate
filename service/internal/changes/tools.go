@@ -17,8 +17,8 @@ func (s *Service) proposeTool() agent.Tool {
 	return agent.Tool{
 		Name: "propose_change",
 		Description: "Propose a change to Hekate itself: a feature you want, a bug you hit, or something that would work better. " +
-			"The owner approves or denies it; once approved, Claude Code builds it, opens a pull request on the public " +
-			"repository and merges it after review, and you see the progress here. Propose only what is relevant to how " +
+			"The owner approves or denies it; once approved, it goes on their list to build with Claude Code, and you see " +
+			"how it's going here. Changes are built in a public repository, so propose only what is relevant to how " +
 			"Hekate works, written for a stranger reading a public issue: no personal context, nothing remotely NSFW, and " +
 			"nothing that identifies the owner beyond their name and pronouns (no addresses, accounts, senders, places, " +
 			"health, money or schedules; say \"a bank's marketing mail\", not which bank). " +
@@ -46,7 +46,7 @@ func (s *Service) proposeTool() agent.Tool {
 				return agent.Result{}, err
 			}
 			return agent.Result{
-				Content: fmt.Sprintf("Proposed as change %s. The owner decides on the card; if they allow it, Claude Code builds it.", c.ID),
+				Content: fmt.Sprintf("Proposed as change %s. The owner decides on the card; if they allow it, it goes on their list to build.", c.ID),
 				Card:    approvalCard(a),
 			}, nil
 		},

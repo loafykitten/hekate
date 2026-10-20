@@ -9,7 +9,7 @@ const STATUS: Record<ChangeStatus, { label: string; tone: ChangeTone }> = {
   proposed: { label: "Proposed", tone: undefined },
   denied: { label: "Denied", tone: undefined },
   expired: { label: "Expired", tone: undefined },
-  queued: { label: "Queued", tone: "accent" },
+  queued: { label: "Approved", tone: "accent" },
   working: { label: "Working", tone: "accent" },
   merged: { label: "Merged", tone: "ok" },
   rejected: { label: "Rejected", tone: "danger" },
@@ -25,17 +25,17 @@ export function changeKindLabel(kind: string): string {
   return spaced ? spaced.charAt(0).toUpperCase() + spaced.slice(1) : "Change";
 }
 
-// The line under the title: the worker's step while it works, the outcome once it's over, the
+// The line under the title: the current step while it's being built, the outcome once it's over, the
 // owner's reason when it was denied.
-// A change the worker failed or turned down can go back to the queue. (A proposal whose approval
-// itself failed reads "failed" too, but the worker never had it.)
+// A change that failed or was turned down can go back on the list. (A proposal whose approval
+// itself failed reads "failed" too, but nobody ever took it up.)
 export function canRetry(c: ChangeRequest): boolean {
   return (c.status === "failed" || c.status === "rejected") && c.attempts > 0;
 }
 
 export function changeSummary(c: ChangeRequest): string {
   if (c.status === "working") return c.stage;
-  if (c.status === "queued" && c.attempts > 0) return `Trying again (attempt ${c.attempts + 1})`;
+  if (c.status === "queued" && c.attempts > 0) return "Back on the list";
   if (c.status === "denied") return c.feedback ?? "";
   if (c.status === "merged" || c.status === "rejected" || c.status === "failed") return c.result ?? c.stage;
   return "";

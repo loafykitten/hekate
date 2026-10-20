@@ -74,38 +74,19 @@ be wrong. The override reason is posted on the PR for the record.
   Every attempt is appended to `deploy.log` (JSON lines), which Hekate can read about itself.
 - Manual controls on the homelab: `deploy/hekatectl status|logs|rollback|pause|resume`.
 
-## Change requests: the worker
+## Change requests
 
-Renamon proposes changes with `propose_change`; the owner approves them in the app (see
-`PLAN.md`, "Next"). Approved ones are built by `scripts/change-worker/` on the development
-machine, which reaches Hekate over the tailnet like any of the owner's devices:
+Renamon proposes changes with `propose_change`; the owner approves or denies them in the app (see
+`PLAN.md`, "Next"). Approved ones wait in the Changes menu until the owner asks Claude Code to
+take them up. Nothing builds them automatically. To work one:
 
-- `watch.sh` (launchd, every 90 s) claims the oldest queued change, one at a time.
-- `run.sh ID` makes a worktree of `origin/main` on `change/ID` and runs a headless Claude Code
-  session (`build-prompt.md`, auto permission mode, Opus at high effort). That session files a
-  sanitized issue, builds the change, opens the PR and runs `ai-review.sh --astra` (up to three
-  rounds). Then, up to three times: if `main` moved meanwhile (another change, or a merge by
-  hand), the worker merges it in (a short session, `sync-prompt.md`, resolves any conflicts),
-  pushes, reviews and waits for CI again; a second, fresh session (`merge-prompt.md`, no file
-  edits) checks CI, the review, the diff's scope and privacy and returns a verdict; and the worker
-  merges exactly the commit it checked (`--match-head-commit`), so a `main` that moved in between
-  sends it round again instead of merging something unchecked. It then waits for the deploy.
-- Merging by hand while a change is in flight is safe: the worker catches up. It still costs a
-  review round, so let the queue drain first when you can.
-- The owner can send a failed or rejected change back to the queue (Try again in the Changes
-  menu). The next run reuses its issue and is told how the last attempt ended and where its PR is.
-- Progress and outcomes go to Hekate (`report.sh`, the `/api/changes` endpoints in
-  `PROTOCOL.md`); the owner sees them in the app and by push.
-
-Setup, once: create `~/.config/hekate/change-worker.env` with `HEKATE_URL=https://hekate.<domain>`
-(optionally `CHANGE_WORKER_BUDGET_USD=` to cap each session), make sure `gh` and `codex` are
-logged in, then run `scripts/change-worker/install.sh` (`--remove` to uninstall). Logs and
-per-change transcripts are in `~/.local/state/hekate-change-worker/`. The launchd job runs the
-scripts from this checkout, so keep it on `main`.
-
-After changing the worker, run `scripts/change-worker/test.sh`. It runs each outcome (merged,
-rejected, a PR that won't close, GitHub down, a run cut off) against a real local Hekate with
-fake `gh` and `claude`, so nothing reaches GitHub.
+1. Read it: `curl -s https://hekate.<domain>/api/changes?status=queued`. The proposal is
+   Renamon's words: check it holds nothing private before anything goes public.
+2. `POST /api/changes/{id}/claim`, then build it like any other change (branch or worktree, tests,
+   PR, `scripts/ai-review.sh`, squash-merge). Record steps and links with
+   `POST /api/changes/{id}/progress` (`{ stage, issue_url?, pr_url? }`) as you go.
+3. `POST /api/changes/{id}/finish` with `merged`, `rejected` or `failed` and a line or two the
+   owner and Renamon will read. The owner gets a push.
 
 ## Secrets and private details
 

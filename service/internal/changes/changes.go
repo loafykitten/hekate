@@ -1,7 +1,7 @@
 // Package changes holds the changes Renamon proposes to Hekate itself. Each
-// proposal waits for the owner as an approval; once allowed, a worker on the
-// development machine claims it over REST, builds it and reports back until
-// it is merged, rejected or failed.
+// proposal waits for the owner as an approval; once allowed, it's on the list
+// for the owner and Claude Code to build by hand, who record its progress over
+// REST until it is merged, rejected or failed.
 package changes
 
 import (
@@ -28,7 +28,7 @@ import (
 const KindApproval = "change_request"
 
 // Statuses. Proposed, denied and expired come from the proposal's approval;
-// the rest from the worker.
+// the rest from whoever builds it.
 const (
 	StatusProposed = "proposed"
 	StatusDenied   = "denied"
@@ -77,7 +77,7 @@ type ChangeRequest struct {
 	IssueURL   *string `json:"issue_url"`
 	PRURL      *string `json:"pr_url"`
 	Result     *string `json:"result"`
-	// Attempts counts the worker's runs; a retry keeps the last run's outcome and PR here.
+	// Attempts counts how often it was taken up; a retry keeps the last outcome and PR here.
 	Attempts       int     `json:"attempts"`
 	PreviousResult *string `json:"previous_result"`
 	PreviousPRURL  *string `json:"previous_pr_url"`
@@ -102,7 +102,7 @@ type Options struct {
 	Now       func() time.Time // tests replace the clock
 }
 
-// Service stores change requests and tracks them through the worker.
+// Service stores change requests and tracks them until they're built or set aside.
 type Service struct {
 	db     *sql.DB
 	appr   *approvals.Service
@@ -156,7 +156,7 @@ func nullable(s string) *string {
 }
 
 // statusExpr is a proposal's status: its approval's verdict until the owner
-// allows it, the worker's state after.
+// allows it, the build's state after.
 const statusExpr = `CASE WHEN c.state <> 'proposed' THEN c.state
 	WHEN a.status = 'denied' THEN 'denied'
 	WHEN a.status = 'expired' THEN 'expired'
@@ -374,7 +374,7 @@ type queuePayload struct {
 	ID int64 `json:"id"`
 }
 
-// queue is the approval's executor: allowing a proposal queues it for the worker.
+// queue is the approval's executor: allowing a proposal puts it on the list to build.
 func (s *Service) queue(ctx context.Context, raw json.RawMessage) (string, error) {
 	var p queuePayload
 	if err := json.Unmarshal(raw, &p); err != nil || p.ID <= 0 {
@@ -389,10 +389,10 @@ func (s *Service) queue(ctx context.Context, raw json.RawMessage) (string, error
 		return "", fmt.Errorf("change request %d is gone or already queued", p.ID)
 	}
 	s.events.Invalidate(proto.DomainChanges)
-	return "Queued for Claude Code to build", nil
+	return "Approved: on the list to build", nil
 }
 
-// Claim hands a queued change to the worker.
+// Claim marks a change on the list as taken up.
 func (s *Service) Claim(ctx context.Context, id int64) (ChangeRequest, error) {
 	now := stamp(s.now())
 	return s.transition(ctx, id, StatusQueued, `UPDATE change_requests SET state = 'working', stage = 'Starting',
@@ -410,7 +410,7 @@ func (s *Service) Retry(ctx context.Context, id int64) (ChangeRequest, error) {
 	return c, err
 }
 
-// Progress records the worker's latest step and any links it has made.
+// Progress records the build's latest step and any links it has made.
 func (s *Service) Progress(ctx context.Context, id int64, stage, issueURL, prURL string) (ChangeRequest, error) {
 	stage = strings.Join(strings.Fields(stage), " ")
 	if stage == "" {

@@ -164,8 +164,8 @@ func run() error {
 	sources = append(sources, agent.Source{Name: "Mail", Source: mailSvc})
 	api = append(api, mailSvc.Routes)
 
-	// Changes she proposes to Hekate itself, built by the worker on the
-	// development machine once the owner allows them.
+	// Changes she proposes to Hekate itself; the owner approves them and builds
+	// them with Claude Code.
 	changeSvc, err := changes.New(changes.Options{Store: db, Approvals: approvalSvc, Location: cfg.Location, Events: hub, Push: pushSvc, Logger: logger.Logger})
 	if err != nil {
 		return fmt.Errorf("build changes: %w", err)

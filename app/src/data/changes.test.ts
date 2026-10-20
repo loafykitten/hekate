@@ -76,17 +76,17 @@ describe("change wording", () => {
 });
 
 describe("retrying", () => {
-  it("offers a retry only for what the worker failed or turned down", () => {
+  it("offers a retry only for what failed or was turned down", () => {
     expect(canRetry(make({ status: "failed", attempts: 1 }))).toBe(true);
     expect(canRetry(make({ status: "rejected", attempts: 2 }))).toBe(true);
-    // A proposal whose approval failed reads "failed" too, but the worker never had it.
+    // A proposal whose approval failed reads "failed" too, but nobody ever took it up.
     expect(canRetry(make({ status: "failed", attempts: 0 }))).toBe(false);
     expect(canRetry(make({ status: "merged", attempts: 1 }))).toBe(false);
     expect(canRetry(make({ status: "working", attempts: 1 }))).toBe(false);
   });
 
-  it("says a retried change is trying again", () => {
-    expect(changeSummary(make({ status: "queued", attempts: 1 }))).toBe("Trying again (attempt 2)");
+  it("says a retried change is back on the list", () => {
+    expect(changeSummary(make({ status: "queued", attempts: 1 }))).toBe("Back on the list");
     expect(changeSummary(make({ status: "queued", attempts: 0 }))).toBe("");
   });
 

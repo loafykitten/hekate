@@ -6,10 +6,23 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
+
+	"github.com/emersion/go-imap/v2"
+	"github.com/emersion/go-imap/v2/imapclient"
 
 	"github.com/loafykitten/hekate/service/internal/httpx"
+)
+
+const (
+	minRuleWords  = 3        // shortest subject or body words a rule takes, in characters
+	maxRuleWords  = 100      // longest
+	ruleBodyBatch = 20       // messages whose text the rules read at a time
+	ruleBodyBytes = 64 << 10 // how much of a message the body words are looked for in
 )
 
 // Rule is the API shape from PROTOCOL.md: a standing instruction the sweep
@@ -26,15 +39,20 @@ type Rule struct {
 }
 
 // RuleMatch says which mail a rule covers; every field that is set must match.
+// Subject and Body are words (a phrase) the subject or the body must contain.
 type RuleMatch struct {
 	From     *string `json:"from"`
 	Category *string `json:"category"`
+	Subject  *string `json:"subject"`
+	Body     *string `json:"body"`
 }
 
 // RuleSpec is what creates a rule: the approval payload and the tool arguments.
 type RuleSpec struct {
 	From     string `json:"from,omitempty"`
 	Category string `json:"category,omitempty"`
+	Subject  string `json:"subject,omitempty"`
+	Body     string `json:"body,omitempty"`
 	Action   string `json:"action"`
 	Folder   string `json:"folder,omitempty"`
 }
@@ -53,7 +71,14 @@ func (sp RuleSpec) normalize() (RuleSpec, error) {
 	sp.Action = strings.ToLower(strings.TrimSpace(sp.Action))
 	sp.Folder = strings.TrimSpace(sp.Folder)
 	if sp.From == "" && sp.Category == "" {
-		return sp, httpx.BadRequest("a rule needs a sender (from) or a category to match")
+		return sp, httpx.BadRequest("a rule needs a sender (from) or a category to match; subject and body words only narrow it")
+	}
+	var err error
+	if sp.Subject, err = ruleWords("subject", sp.Subject); err != nil {
+		return sp, err
+	}
+	if sp.Body, err = ruleWords("body", sp.Body); err != nil {
+		return sp, err
 	}
 	if sp.From != "" {
 		if err := checkSender(sp.From); err != nil {
@@ -81,6 +106,26 @@ func (sp RuleSpec) normalize() (RuleSpec, error) {
 	return sp, nil
 }
 
+// ruleWords cleans the words a rule wants in the subject or body: one
+// lowercased line, as foldWords makes the text it is looked for in.
+func ruleWords(field, s string) (string, error) {
+	w := foldWords(s)
+	if w == "" {
+		return "", nil
+	}
+	if strings.ContainsFunc(w, unicode.IsControl) {
+		return "", httpx.BadRequest("%s words must be plain text", field)
+	}
+	if n := utf8.RuneCountInString(w); n < minRuleWords || n > maxRuleWords {
+		return "", httpx.BadRequest("%s words must be %d to %d characters", field, minRuleWords, maxRuleWords)
+	}
+	return w, nil
+}
+
+// foldWords lowercases text and collapses its whitespace, so words match
+// whatever their case and line breaks.
+func foldWords(s string) string { return strings.ToLower(strings.Join(strings.Fields(s), " ")) }
+
 // checkSender accepts an address or "@domain".
 func checkSender(from string) error {
 	if strings.ContainsAny(from, " \t\r\n<>,;\"'") {
@@ -96,7 +141,8 @@ func checkSender(from string) error {
 	return nil
 }
 
-// label words the rule for the owner, e.g. "Archive newsletter mail from example.com".
+// label words the rule for the owner, e.g. "Archive newsletter mail from
+// example.com" or `Trash mail from example.com with "upgrade" in the subject`.
 func (sp RuleSpec) label() string {
 	verb := map[string]string{ActionArchive: "Archive", ActionTrash: "Trash", ActionMarkRead: "Mark as read", ActionMove: "Move"}[sp.Action]
 	what := "mail"
@@ -107,6 +153,16 @@ func (sp RuleSpec) label() string {
 	if sp.From != "" {
 		l += " from " + strings.TrimPrefix(sp.From, "@")
 	}
+	var words []string
+	if sp.Subject != "" {
+		words = append(words, `"`+sp.Subject+`" in the subject`)
+	}
+	if sp.Body != "" {
+		words = append(words, `"`+sp.Body+`" in the body`)
+	}
+	if len(words) > 0 {
+		l += " with " + strings.Join(words, " and ")
+	}
 	if sp.Action == ActionMove {
 		l += " to " + sp.Folder
 	}
@@ -116,13 +172,13 @@ func (sp RuleSpec) label() string {
 // senderLabel words a sender key for approval titles: "example.com" or "a@example.com".
 func senderLabel(key string) string { return strings.TrimPrefix(key, "@") }
 
-const ruleCols = `id, match_from, match_category, action, folder, label, hits, last_hit_at, created_at`
+const ruleCols = `id, match_from, match_category, match_subject, match_body, action, folder, label, hits, last_hit_at, created_at`
 
 func scanRule(sc scanner) (Rule, error) {
 	var r Rule
 	var id int64
-	var from, cat, folder, last sql.NullString
-	if err := sc.Scan(&id, &from, &cat, &r.Action, &folder, &r.Label, &r.Hits, &last, &r.CreatedAt); err != nil {
+	var from, cat, subject, body, folder, last sql.NullString
+	if err := sc.Scan(&id, &from, &cat, &subject, &body, &r.Action, &folder, &r.Label, &r.Hits, &last, &r.CreatedAt); err != nil {
 		return r, err //nolint:wrapcheck // callers add context
 	}
 	r.ID = strconv.FormatInt(id, 10)
@@ -131,6 +187,12 @@ func scanRule(sc scanner) (Rule, error) {
 	}
 	if cat.Valid {
 		r.Match.Category = &cat.String
+	}
+	if subject.Valid {
+		r.Match.Subject = &subject.String
+	}
+	if body.Valid {
+		r.Match.Body = &body.String
 	}
 	if folder.Valid {
 		r.Folder = &folder.String
@@ -169,15 +231,17 @@ func (s *Service) CreateRule(ctx context.Context, spec RuleSpec) (Rule, error) {
 		return Rule{}, err
 	}
 	row := s.db.QueryRowContext(ctx, `SELECT `+ruleCols+` FROM mail_rules
-		WHERE COALESCE(match_from, '') = ? AND COALESCE(match_category, '') = ? AND action = ? AND COALESCE(folder, '') = ?`,
-		sp.From, sp.Category, sp.Action, sp.Folder)
+		WHERE COALESCE(match_from, '') = ? AND COALESCE(match_category, '') = ? AND COALESCE(match_subject, '') = ?
+		AND COALESCE(match_body, '') = ? AND action = ? AND COALESCE(folder, '') = ?`,
+		sp.From, sp.Category, sp.Subject, sp.Body, sp.Action, sp.Folder)
 	if existing, err := scanRow2(row); err == nil {
 		return existing, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return Rule{}, fmt.Errorf("create mail rule: %w", err)
 	}
-	res, err := s.db.ExecContext(ctx, `INSERT INTO mail_rules (match_from, match_category, action, folder, label, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)`, nullable(sp.From), nullable(sp.Category), sp.Action, nullable(sp.Folder), sp.label(), stamp(s.now()))
+	res, err := s.db.ExecContext(ctx, `INSERT INTO mail_rules (match_from, match_category, match_subject, match_body, action, folder, label, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, nullable(sp.From), nullable(sp.Category), nullable(sp.Subject), nullable(sp.Body),
+		sp.Action, nullable(sp.Folder), sp.label(), stamp(s.now()))
 	if err != nil {
 		return Rule{}, fmt.Errorf("create mail rule: %w", err)
 	}
@@ -205,16 +269,23 @@ func (s *Service) DeleteRule(ctx context.Context, id int64) error {
 	return nil
 }
 
-// matches reports whether rule applies to a message: every set field must match.
-func (r Rule) matches(m row) bool {
+// matchesHeaders reports whether every field of the rule but its body words
+// matches a message.
+func (r Rule) matchesHeaders(m row) bool {
 	if r.Match.Category != nil && (!m.Category.Valid || m.Category.String != *r.Match.Category) {
 		return false
 	}
 	if r.Match.From != nil && !senderMatches(*r.Match.From, m.FromAddr) {
 		return false
 	}
+	if r.Match.Subject != nil && !strings.Contains(foldWords(m.Subject), *r.Match.Subject) {
+		return false
+	}
 	return true
 }
+
+// needsBody reports whether the rule has to read a message's text to decide.
+func (r Rule) needsBody(m row) bool { return r.Match.Body != nil && r.matchesHeaders(m) }
 
 // senderMatches compares a rule's from (an address or "@domain") with an
 // address. A domain covers its subdomains.
@@ -234,7 +305,8 @@ func senderMatches(from, addr string) bool {
 // applyRules runs the rules over the account's inbox mail they have not seen.
 // A message is ready once it is classified, or classification has given up on
 // it, or it is too old to classify, or there is no model; rules that need a
-// category wait for it. Each hit is recorded.
+// category wait for it, and rules with body words read the text of the mail
+// that matches them on everything else. Each hit is recorded.
 func (s *Service) applyRules(ctx context.Context, a *account) (int, error) {
 	rules, err := s.Rules(ctx)
 	if err != nil {
@@ -266,23 +338,37 @@ func (s *Service) applyRules(ctx context.Context, a *account) (int, error) {
 	hits := map[int64][]int64{} // rule id -> message ids
 	var ruleOrder []int
 	var settled []int64 // messages no rule needs to look at again
-	for _, m := range ready {
-		matched := -1
-		for i, r := range rules {
-			if r.matches(m) {
+	for batch := range slices.Chunk(ready, ruleBodyBatch) {
+		bodies := s.ruleBodies(ctx, a, batch, rules)
+	messages:
+		for _, m := range batch {
+			matched := -1
+			for i, r := range rules {
+				if !r.matchesHeaders(m) {
+					continue
+				}
+				if r.Match.Body != nil {
+					text, ok := bodies[m.ID]
+					if !ok {
+						continue messages // unreadable now: left for the next sweep
+					}
+					if !strings.Contains(text, *r.Match.Body) {
+						continue
+					}
+				}
 				matched = i
 				break
 			}
+			if matched < 0 {
+				settled = append(settled, m.ID)
+				continue
+			}
+			rid, _ := strconv.ParseInt(rules[matched].ID, 10, 64)
+			if _, ok := hits[rid]; !ok {
+				ruleOrder = append(ruleOrder, matched)
+			}
+			hits[rid] = append(hits[rid], m.ID)
 		}
-		if matched < 0 {
-			settled = append(settled, m.ID)
-			continue
-		}
-		rid, _ := strconv.ParseInt(rules[matched].ID, 10, 64)
-		if _, ok := hits[rid]; !ok {
-			ruleOrder = append(ruleOrder, matched)
-		}
-		hits[rid] = append(hits[rid], m.ID)
 	}
 	if err := s.settle(ctx, settled); err != nil {
 		return 0, err
@@ -320,6 +406,50 @@ func (s *Service) applyRules(ctx context.Context, a *account) (int, error) {
 		applied += n
 	}
 	return applied, nil
+}
+
+// ruleBodies reads the text of the messages in batch that a rule with body
+// words matches on everything else, folded by foldWords. The text lives in
+// memory for this sweep and is never stored. A message missing from the result
+// could not be read now; the rules try it again next sweep.
+func (s *Service) ruleBodies(ctx context.Context, a *account, batch []row, rules []Rule) map[int64]string {
+	byValidity := map[uint32][]row{}
+	for _, m := range batch {
+		if slices.ContainsFunc(rules, func(r Rule) bool { return r.needsBody(m) }) {
+			byValidity[m.Validity] = append(byValidity[m.Validity], m)
+		}
+	}
+	out := map[int64]string{}
+	for validity, ms := range byValidity {
+		uids := make([]imap.UID, len(ms))
+		for i, m := range ms {
+			uids[i] = imap.UID(m.UID)
+		}
+		var raws map[imap.UID][]byte
+		err := s.run(ctx, a, func(c *imapclient.Client) error {
+			var err error
+			raws, err = fetchRaw(c, inbox, validity, uids, ruleBodyBytes)
+			return err
+		})
+		if err != nil {
+			if !errors.Is(err, ErrGone) && ctx.Err() == nil {
+				s.log.Warn("cannot read mail for a rule", "account", a.cfg.Name, "error", err)
+			}
+			continue
+		}
+		for _, m := range ms {
+			raw := raws[imap.UID(m.UID)]
+			if len(raw) == 0 {
+				continue // gone from the server: the next sync notices
+			}
+			text, err := bodyText(raw)
+			if err != nil {
+				text = "" // no readable text holds no words
+			}
+			out[m.ID] = foldWords(text)
+		}
+	}
+	return out
 }
 
 // ruleExists reports whether a rule is still in force. A failed lookup counts

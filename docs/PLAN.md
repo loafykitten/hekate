@@ -246,13 +246,25 @@ Telegram backup channel and a voice-off toggle. Next: M5 (polish).
 | **M4 Proactive** ✅ | Briefing, heartbeat, follow-ups, reflection + diary, self-inspection, ideas | She greets you with your day and reflects nightly |
 | **M5 Polish** | Viseme lip sync from TTS timings, expression map, offline shell, UX passes | — |
 
-### M5 as built
+### M5 as built (2026-10-20)
 
 - **Viseme lip sync**: the service turns the voice's per-character timing into timed mouth shapes
   (`perform/visemes.go`; viseme classes, English letter rules); the app maps them to the rig's
   morphs from the manifest and scales them by loudness (`character/lips.ts`). Lines without
   usable timing, and a voice that's off, fall back to the loudness-driven mouth.
   `npm run verify:lipsync` checks it on the real character.
+- **Offline shell**: after one online visit the app opens with the service out of reach: the shell
+  and the character come from the service worker's cache (a first visit asks for the character
+  again once the worker controls the page, so it is cached), the pill says Offline, and the menu
+  shows the last-known data with an "Offline · as of <time>" note in the header. The service
+  worker still never caches `/api/*`. The menu's read queries are kept in localStorage by TanStack
+  Query's persister (`app/src/data/persist.ts`): successful reads of the menu domains only, for up
+  to a week from when they were fetched, under a buster that is a hash of `app/src/data/` (a
+  schema change drops the old copy). Nothing is stored while a change is in flight, so an
+  unconfirmed one is never kept. Never stored: a single mail message with its body, single
+  approvals, searches, the health poll, the conversation socket. Storage that is blocked or full
+  just means no cache. Actions that need the service say "Hekate isn't reachable."
+  `npm run verify:offline` covers it.
 
 ### M4 as built (2026-10-20)
 
@@ -275,19 +287,6 @@ Telegram backup channel and a voice-off toggle. Next: M5 (polish).
   full, so a failed or interrupted one is tried again on the next good morning. She can also call
   the tool whenever asked.
 - Not built: the optional evening check-in.
-
-### M5 as built (2026-10-20)
-
-- **Offline shell**: after one online visit the app opens with the service out of reach: the shell
-  and the character come from the service worker's cache (a first visit asks for the character
-  again once the worker controls the page, so it is cached), the pill says Offline, and the menu
-  shows the last-known data with an "Offline · as of <time>" note in the header. The service
-  worker still never caches `/api/*`. The menu's read queries are kept in localStorage by TanStack
-  Query's persister (`app/src/data/persist.ts`): successful reads of the menu domains only, for up
-  to a week, under a buster that is a hash of `app/src/data/` (a schema change drops the old copy).
-  Never stored: a single mail message with its body, single approvals, searches, the health poll,
-  the conversation socket. Storage that is blocked or full just means no cache. Actions that need
-  the service say "Hekate isn't reachable." `npm run verify:offline` covers it.
 
 ### Next: change requests, Telegram, voice off
 

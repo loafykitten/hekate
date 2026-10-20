@@ -733,3 +733,56 @@ func TestForgottenWordsAreNotSavedAgain(t *testing.T) {
 		t.Errorf("an explicit save: %v %v", existed, err)
 	}
 }
+
+func TestUndoingAMergeUnlinksIt(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	dest := f.remember("person", "Mika is Rika's sister")
+	src := f.remember("fact", "Mika works nights")
+	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "hi", "hello")
+	f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(dest, 10) + `, "content": "Mika is Rika's sister and works nights",
+		"merged_from": [` + strconv.FormatInt(src, 10) + `], "reason": "merge"}],
+		"retire": [{"id": ` + strconv.FormatInt(src, 10) + `, "reason": "merged"}], "diary": "d"}`
+	if _, err := f.svc.Reflect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	days, _ := f.svc.Journal(ctx, 0)
+	for _, c := range days[0].Reflections[0].Changes {
+		if _, err := f.svc.Undo(ctx, mustID(t, c.ID)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	days, _ = f.svc.Journal(ctx, 0)
+	if c := days[0].Reflections[0].Changes[0]; c.After != nil {
+		t.Errorf("the undone merge still holds the merged words: %+v", c.After)
+	}
+	if _, err := f.mem.Forget(ctx, src); err != nil {
+		t.Fatal(err)
+	}
+	if m, err := f.mem.Get(ctx, dest); err != nil || m.Content != "Mika is Rika's sister" {
+		t.Errorf("forgetting the unmerged source took the other memory too: %+v %v", m, err)
+	}
+}
+
+func TestForgettingBlocksEarlierWordingsToo(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	a := f.remember("fact", "Owes Mika fifty dollars")
+	keep := f.remember("fact", "Likes tea")
+	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "hi", "hello")
+	f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(a, 10) + `, "content": "Owes Mika money", "reason": "x"}], "diary": "d"}`
+	if _, err := f.svc.Reflect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.mem.Forget(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.mem.Insert(ctx, memory.NewMemory{Kind: "fact", Content: "Owes Mika fifty dollars"}, nil); !errors.Is(err, memory.ErrForgotten) {
+		t.Errorf("insert of the earlier wording: %v", err)
+	}
+	k, _ := f.mem.Get(ctx, keep)
+	content := "owes mika fifty dollars"
+	if _, err := f.mem.UpdateIfUnchanged(ctx, keep, k, memory.Patch{Content: &content}, nil); !errors.Is(err, memory.ErrForgotten) {
+		t.Errorf("rewriting into the earlier wording: %v", err)
+	}
+}

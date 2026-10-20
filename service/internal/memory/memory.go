@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -532,7 +533,18 @@ func (s *Service) Forget(ctx context.Context, id int64) (Memory, error) {
 			return fmt.Errorf("find memory %d's merges: %w", id, err)
 		}
 		now := stamp(s.now())
+		fingerprint := func(content string) error {
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO memory_forgotten (fingerprint, forgotten_at) VALUES (?, ?)`, Fingerprint(content), now); err != nil {
+				return fmt.Errorf("forget memory %d: %w", id, err)
+			}
+			return nil
+		}
 		for _, g := range group {
+			// Earlier wordings reflection kept go too: fingerprint them before
+			// the trigger deletes those copies.
+			if err := s.fingerprintHistory(ctx, tx, g, fingerprint); err != nil {
+				return err
+			}
 			var content string
 			if err := tx.QueryRowContext(ctx, `SELECT content FROM memories WHERE id = ?`, g).Scan(&content); err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
@@ -540,8 +552,8 @@ func (s *Service) Forget(ctx context.Context, id int64) (Memory, error) {
 				}
 				return fmt.Errorf("forget memory %d: %w", g, err)
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO memory_forgotten (fingerprint, forgotten_at) VALUES (?, ?)`, Fingerprint(content), now); err != nil {
-				return fmt.Errorf("forget memory %d: %w", g, err)
+			if err := fingerprint(content); err != nil {
+				return err
 			}
 			if _, err := tx.ExecContext(ctx, `DELETE FROM memories WHERE id = ?`, g); err != nil {
 				return fmt.Errorf("forget memory %d: %w", g, err)
@@ -556,6 +568,38 @@ func (s *Service) Forget(ctx context.Context, id int64) (Memory, error) {
 	// The journal's copies of it went too (a trigger deletes them).
 	s.events.Invalidate(proto.DomainMemory, domainJournal)
 	return m, nil
+}
+
+// fingerprintHistory passes every wording reflection recorded for memory id.
+func (s *Service) fingerprintHistory(ctx context.Context, tx *sql.Tx, id int64, fn func(string) error) error {
+	rows, err := tx.QueryContext(ctx, `SELECT before, after FROM reflection_changes WHERE memory_id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("read memory %d's history: %w", id, err)
+	}
+	var contents []string
+	for rows.Next() {
+		var before, after string
+		if err := rows.Scan(&before, &after); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("read memory %d's history: %w", id, err)
+		}
+		for _, raw := range []string{before, after} {
+			var m Memory
+			if raw != "" && json.Unmarshal([]byte(raw), &m) == nil && m.Content != "" {
+				contents = append(contents, m.Content)
+			}
+		}
+	}
+	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read memory %d's history: %w", id, err)
+	}
+	for _, c := range contents {
+		if err := fn(c); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Retire hides a memory without deleting it, so the change can be undone

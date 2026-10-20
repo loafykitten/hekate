@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/loafykitten/hekate/service/internal/httpx"
 	"github.com/loafykitten/hekate/service/internal/memory"
@@ -34,6 +35,8 @@ type Change struct {
 	After    *memory.Memory `json:"after"`  // null for retire
 	Reason   string         `json:"reason"`
 	UndoneAt *string        `json:"undone_at"`
+
+	mergedFrom string // update: the ids merged in, comma-separated
 }
 
 // Reflection is one night's reflection and what it changed.
@@ -149,9 +152,9 @@ func (s *Service) reflections(ctx context.Context, day string) ([]Reflection, er
 
 // The two ways changes are looked up.
 const (
-	changesOfReflection = `SELECT id, action, memory_id, before, after, reason, undone_at FROM reflection_changes
+	changesOfReflection = `SELECT id, action, memory_id, before, after, reason, undone_at, merged_from FROM reflection_changes
 		WHERE reflection_id = ? ORDER BY id`
-	changeByID = `SELECT id, action, memory_id, before, after, reason, undone_at FROM reflection_changes WHERE id = ?`
+	changeByID = `SELECT id, action, memory_id, before, after, reason, undone_at, merged_from FROM reflection_changes WHERE id = ?`
 )
 
 func (s *Service) changes(ctx context.Context, query string, arg any) ([]Change, error) {
@@ -166,7 +169,7 @@ func (s *Service) changes(ctx context.Context, query string, arg any) ([]Change,
 		var id, mid int64
 		var before, after string
 		var undone sql.NullString
-		if err := rows.Scan(&id, &c.Action, &mid, &before, &after, &c.Reason, &undone); err != nil {
+		if err := rows.Scan(&id, &c.Action, &mid, &before, &after, &c.Reason, &undone, &c.mergedFrom); err != nil {
 			return nil, fmt.Errorf("list reflection changes: %w", err)
 		}
 		c.ID, c.MemoryID = fmt.Sprint(id), fmt.Sprint(mid)
@@ -217,6 +220,18 @@ func (s *Service) Undo(ctx context.Context, changeID int64) (Change, error) {
 		}
 		if n, _ := res.RowsAffected(); n == 0 {
 			return httpx.Conflict("that change was already undone")
+		}
+		// An undone merge holds only its own words again: it's no longer
+		// linked to what it merged, and the record drops the merged text.
+		if c.mergedFrom != "" {
+			for _, src := range strings.Split(c.mergedFrom, ",") {
+				if _, err := tx.ExecContext(ctx, `DELETE FROM memory_merges WHERE source_id = ? AND into_id = ?`, src, mid); err != nil {
+					return fmt.Errorf("undo a merge: %w", err)
+				}
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE reflection_changes SET after = '' WHERE id = ?`, changeID); err != nil {
+				return fmt.Errorf("undo a merge: %w", err)
+			}
 		}
 		return nil
 	}

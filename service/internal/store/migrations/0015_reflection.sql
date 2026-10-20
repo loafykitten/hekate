@@ -19,6 +19,7 @@ CREATE TABLE reflection_changes (
     before        TEXT NOT NULL DEFAULT '', -- the memory as JSON before the change; '' for save
     after         TEXT NOT NULL DEFAULT '', -- and after it; '' for retire
     reason        TEXT NOT NULL DEFAULT '',
+    merged_from   TEXT NOT NULL DEFAULT '', -- update: the memory ids it merged in, comma-separated
     undone_at     TEXT
 );
 CREATE INDEX reflection_changes_reflection ON reflection_changes(reflection_id);

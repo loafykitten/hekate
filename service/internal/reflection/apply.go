@@ -44,7 +44,7 @@ func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (
 	}
 	var saved, updated, retired, refused, stale, held, forgottenHeld int
 	updateFailed := p.updatesCut // an update in the plan didn't happen
-	recorder := func(action, reason string, also ...func(*sql.Tx) error) memory.Recorder {
+	recorder := func(action, reason, mergedFrom string, also ...func(*sql.Tx) error) memory.Recorder {
 		return func(ctx context.Context, tx *sql.Tx, before, after *memory.Memory) error {
 			for _, f := range also {
 				if err := f(tx); err != nil {
@@ -64,8 +64,8 @@ func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (
 				raw, _ := json.Marshal(after)
 				a, id = string(raw), after.ID
 			}
-			_, err := tx.ExecContext(ctx, `INSERT INTO reflection_changes (reflection_id, action, memory_id, before, after, reason)
-				VALUES (?, ?, ?, ?, ?, ?)`, rid, action, id, b, a, clip(oneLine(reason), maxReason))
+			_, err := tx.ExecContext(ctx, `INSERT INTO reflection_changes (reflection_id, action, memory_id, before, after, reason, merged_from)
+				VALUES (?, ?, ?, ?, ?, ?, ?)`, rid, action, id, b, a, clip(oneLine(reason), maxReason), mergedFrom)
 			if err != nil {
 				return fmt.Errorf("record a reflection change: %w", err)
 			}
@@ -109,7 +109,11 @@ func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (
 			}
 			return nil
 		}
-		after, err := s.mem.UpdateIfUnchanged(ctx, id, before, patch, recorder(ActionUpdate, reason, link))
+		ids := make([]string, len(mergedFrom))
+		for i, src := range mergedFrom {
+			ids[i] = strconv.FormatInt(src, 10)
+		}
+		after, err := s.mem.UpdateIfUnchanged(ctx, id, before, patch, recorder(ActionUpdate, reason, strings.Join(ids, ","), link))
 		if err != nil {
 			updateFailed = true
 			return failed(ActionUpdate, id, err)
@@ -151,7 +155,7 @@ func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (
 			held++ // it may be half of a merge whose other half didn't happen
 			continue
 		}
-		if _, err := s.mem.RetireIfUnchanged(ctx, id, before, recorder(ActionRetire, r.Reason)); err != nil {
+		if _, err := s.mem.RetireIfUnchanged(ctx, id, before, recorder(ActionRetire, r.Reason, "")); err != nil {
 			if err := failed(ActionRetire, id, err); err != nil {
 				return "", err
 			}
@@ -179,7 +183,7 @@ func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (
 			continue
 		}
 		m, err := s.mem.Insert(ctx, memory.NewMemory{Kind: sv.Kind, Content: sv.Content, Importance: sv.Importance, FollowUpAt: sv.FollowUpAt},
-			recorder(ActionSave, sv.Reason))
+			recorder(ActionSave, sv.Reason, ""))
 		if err != nil {
 			if err := failed(ActionSave, 0, err); err != nil {
 				return "", err

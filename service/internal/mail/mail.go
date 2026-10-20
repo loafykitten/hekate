@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/loafykitten/hekate/service/internal/approvals"
@@ -177,6 +178,10 @@ type Service struct {
 	dial     func(ctx context.Context, a config.MailAccount) (net.Conn, error)
 	// opTimeout bounds each IMAP call; tests shorten it.
 	opTimeout time.Duration
+	// rulesMu orders rule changes against rule actions: a sweep holds it for
+	// reading from its last check of a rule until the action is done, and
+	// changing or deleting a rule takes it for writing.
+	rulesMu sync.RWMutex
 }
 
 // New builds a Service. Call Run to start the sweep. It registers the approval

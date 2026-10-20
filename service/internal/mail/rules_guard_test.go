@@ -2,6 +2,7 @@ package mail
 
 import (
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -105,5 +106,53 @@ func TestExceptionAddedWhileQueuedProtectsMail(t *testing.T) {
 	}
 	if r, _ := f.svc.rowByID(ctx, f.id("Your transaction")); r.RulesApplied {
 		t.Error("spared mail was settled before the other rules saw it")
+	}
+}
+
+// A rule change approved while the rule's action is under way (checked, but
+// not yet done on the server) waits for that action rather than racing it.
+func TestRuleChangeWaitsForAnActionUnderWay(t *testing.T) {
+	var stall atomic.Bool
+	f := newFixture(t, func(o *fixtureOpts) { o.noModel, o.stall, o.noMove = true, &stall, true }) // the wrapper hides MOVE
+	ctx := t.Context()
+	if _, err := f.svc.CreateRule(ctx, RuleSpec{From: "@shop.example.net", Action: "mark_read"}); err != nil {
+		t.Fatal(err)
+	}
+	f.deliver("INBOX", mailSpec{subject: "Your transaction", from: "Shop <deals@shop.example.net>"})
+	a := f.svc.byName["personal"]
+	if _, err := f.svc.syncInbox(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+
+	stall.Store(true) // the action passes its check, then hangs selecting the inbox to mark it
+	t.Cleanup(func() { stall.Store(false) })
+	swept := make(chan struct{})
+	go func() {
+		defer close(swept)
+		if _, err := f.svc.applyRules(ctx, a); err != nil {
+			t.Error(err)
+		}
+	}()
+	time.Sleep(200 * time.Millisecond)
+	changed := make(chan struct{})
+	go func() {
+		defer close(changed)
+		if _, err := f.svc.CreateRule(ctx, RuleSpec{From: "@shop.example.net", Action: "mark_read", Except: []ExceptSpec{{Subject: "transaction"}}}); err != nil {
+			t.Error(err)
+		}
+	}()
+	select {
+	case <-changed:
+		t.Fatal("the rule changed while its action was under way")
+	case <-time.After(200 * time.Millisecond):
+	}
+	stall.Store(false)
+	<-swept
+	<-changed
+	if m := f.bySubject("Your transaction"); m.Unread {
+		t.Errorf("message = %+v, want the action that was under way finished", m)
+	}
+	if rules, _ := f.svc.Rules(ctx); len(rules) != 1 || len(rules[0].Except) != 1 {
+		t.Errorf("rules = %+v", rules)
 	}
 }

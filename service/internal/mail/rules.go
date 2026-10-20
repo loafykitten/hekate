@@ -289,6 +289,8 @@ func (s *Service) putRule(ctx context.Context, spec RuleSpec) (Rule, bool, error
 		return Rule{}, false, err
 	}
 	except := exceptJSON(sp.Except)
+	s.rulesMu.Lock()
+	defer s.rulesMu.Unlock()
 	existing, err := s.sameRule(ctx, sp)
 	switch {
 	case err == nil:
@@ -363,11 +365,15 @@ func scanRow2(row *sql.Row) (Rule, error) { return scanRule(row) }
 
 // DeleteRule removes a rule. Mail it already handled stays handled.
 func (s *Service) DeleteRule(ctx context.Context, id int64) error {
+	s.rulesMu.Lock()
 	res, err := s.db.ExecContext(ctx, `DELETE FROM mail_rules WHERE id = ?`, id)
 	if err != nil {
+		s.rulesMu.Unlock()
 		return fmt.Errorf("delete mail rule: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	n, _ := res.RowsAffected()
+	s.rulesMu.Unlock()
+	if n == 0 {
 		return httpx.NotFound("no mail rule %d", id)
 	}
 	s.changed()
@@ -494,9 +500,21 @@ func (s *Service) applyRules(ctx context.Context, a *account) (int, error) {
 		}
 		// Checked again under the account's lock, right before acting: the owner
 		// may have deleted the rule, changed its exceptions, or filed the mail,
-		// while this waited.
-		live := func(m row) bool { return unruledInbox(m) && s.ruleStillMatches(ctx, rid, m) }
+		// while this waited. From that check until the action is done, rule
+		// changes wait (rulesMu), so an exception approved meanwhile can't be
+		// overtaken by an action that checked before it.
+		held := false
+		live := func(m row) bool {
+			if !held {
+				s.rulesMu.RLock()
+				held = true
+			}
+			return unruledInbox(m) && s.ruleStillMatches(ctx, rid, m)
+		}
 		out, err := s.perform(ctx, r.Action, folder, ids, live)
+		if held {
+			s.rulesMu.RUnlock()
+		}
 		if err != nil {
 			// Left unsettled: tried again next sweep, once the cause is fixed.
 			s.log.Warn("mail rule failed", "account", a.cfg.Name, "rule", r.ID, "error", err)

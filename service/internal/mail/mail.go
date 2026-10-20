@@ -59,10 +59,11 @@ func validCategory(c string) bool {
 
 // Rule actions.
 const (
-	ActionArchive  = "archive"
-	ActionTrash    = "trash"
-	ActionMarkRead = "mark_read"
-	ActionMove     = "move"
+	ActionArchive     = "archive"
+	ActionTrash       = "trash"
+	ActionMarkRead    = "mark_read"
+	ActionMove        = "move"
+	ActionUnsubscribe = "unsubscribe" // one-click (RFC 8058); files nothing, so other rules still apply
 )
 
 // Approval kinds this package registers.
@@ -89,6 +90,7 @@ const (
 	maxBodyRunes     = 8000                // body text handed out
 	excerptRunes     = 300                 // card excerpt
 	retainGone       = 60 * 24 * time.Hour // how long rows for mail that left the inbox are kept
+	unsubEvery       = 7 * 24 * time.Hour  // an unsubscribe rule asks a sender's list at most this often
 	opTimeout        = 60 * time.Second    // every IMAP operation
 	probeTimeout     = 10 * time.Second    // the check on an idle connection
 	loginTimeout     = 30 * time.Second
@@ -153,6 +155,9 @@ type Options struct {
 	// HTTPClient overrides the client used for one-click unsubscribe (tests).
 	// The default refuses private and internal addresses.
 	HTTPClient *http.Client
+	// LookupTXT answers the DNS lookups that check DKIM signatures; nil uses
+	// net.LookupTXT (tests).
+	LookupTXT func(domain string) ([]string, error)
 	// Dial overrides how IMAP connections are made (tests). The default dials
 	// the account's host with TLS.
 	Dial func(ctx context.Context, a config.MailAccount) (net.Conn, error)
@@ -160,21 +165,22 @@ type Options struct {
 
 // Service owns the mail accounts, the cache and the sweep.
 type Service struct {
-	db       *sql.DB
-	store    *store.Store
-	accounts []*account
-	byName   map[string]*account
-	llm      Chat
-	model    config.Model
-	appr     Approvals
-	owner    string
-	loc      *time.Location
-	interval time.Duration
-	log      *slog.Logger
-	onChange func(string)
-	now      func() time.Time
-	http     *http.Client
-	dial     func(ctx context.Context, a config.MailAccount) (net.Conn, error)
+	db        *sql.DB
+	store     *store.Store
+	accounts  []*account
+	byName    map[string]*account
+	llm       Chat
+	model     config.Model
+	appr      Approvals
+	owner     string
+	loc       *time.Location
+	interval  time.Duration
+	log       *slog.Logger
+	onChange  func(string)
+	now       func() time.Time
+	http      *http.Client
+	dial      func(ctx context.Context, a config.MailAccount) (net.Conn, error)
+	lookupTXT func(domain string) ([]string, error)
 	// opTimeout bounds each IMAP call; tests shorten it.
 	opTimeout time.Duration
 }
@@ -191,7 +197,7 @@ func New(o Options) (*Service, error) {
 	s := &Service{
 		db: o.Store.DB(), store: o.Store, llm: o.LLM, model: o.Model, appr: o.Approvals,
 		owner: o.OwnerName, loc: o.Location, interval: o.Interval, log: o.Logger, onChange: o.OnChange,
-		now: o.Now, http: o.HTTPClient, dial: o.Dial,
+		now: o.Now, http: o.HTTPClient, dial: o.Dial, lookupTXT: o.LookupTXT,
 		byName: map[string]*account{}, opTimeout: opTimeout,
 	}
 	if s.owner == "" {

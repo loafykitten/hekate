@@ -281,6 +281,8 @@ function actionLabel(rule: MailRule): string {
       return "Marks as read";
     case "move":
       return rule.folder ? `Moves to ${rule.folder}` : "Moves";
+    case "unsubscribe":
+      return "Unsubscribes";
     default:
       return rule.action;
   }

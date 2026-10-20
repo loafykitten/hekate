@@ -1,11 +1,17 @@
 package mail
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"mime"
+	"net/mail"
+	"net/textproto"
 	"slices"
 	"strconv"
 	"strings"
@@ -14,6 +20,7 @@ import (
 
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
+	"github.com/emersion/go-msgauth/dkim"
 
 	"github.com/loafykitten/hekate/service/internal/httpx"
 )
@@ -23,6 +30,7 @@ const (
 	maxRuleWords  = 100      // longest
 	ruleBodyBatch = 20       // messages whose text the rules read at a time
 	ruleBodyBytes = 64 << 10 // how much of a message the body words are looked for in
+	unsubRawBytes = 4 << 20  // how much of a message is read to check its signature; larger ones aren't unsubscribed
 	maxExceptions = 5        // per rule
 	// maxCachedSubject is how much of a subject the cache keeps; the sweep clips longer ones.
 	maxCachedSubject = 500
@@ -115,8 +123,25 @@ func (sp RuleSpec) normalize() (RuleSpec, error) {
 		if strings.EqualFold(sp.Folder, inbox) {
 			return sp, httpx.BadRequest("moving mail to the inbox is not a rule")
 		}
+	case ActionUnsubscribe:
+		if sp.Folder != "" {
+			return sp, httpx.BadRequest("folder only goes with the move action")
+		}
+		// It acts unattended, so it decides only on what the sender's signature
+		// vouches for: the sender and the subject. A category is the classifier's
+		// reading of parts of the mail anyone can change, and body words would
+		// need the whole body vouched for too.
+		if sp.From == "" {
+			return sp, httpx.BadRequest("an unsubscribe rule needs a sender (from)")
+		}
+		if sp.Category != "" || slices.ContainsFunc(sp.Except, func(e RuleException) bool { return e.Category != "" }) {
+			return sp, httpx.BadRequest("an unsubscribe rule can't use categories, in its match or its exceptions: only the sender and subject words")
+		}
+		if sp.Body != "" {
+			return sp, httpx.BadRequest("an unsubscribe rule can't match body words")
+		}
 	default:
-		return sp, httpx.BadRequest("action must be archive, trash, mark_read or move")
+		return sp, httpx.BadRequest("action must be archive, trash, mark_read, move or unsubscribe")
 	}
 	return sp, nil
 }
@@ -202,16 +227,22 @@ func checkSender(from string) error {
 }
 
 // label words the rule for the owner, e.g. "Archive newsletter mail from
-// example.com" or `Trash mail from example.com with "upgrade" in the subject`.
+// example.com", `Trash mail from example.com with "upgrade" in the subject` or
+// "Unsubscribe from example.com".
 func (sp RuleSpec) label() string {
-	verb := map[string]string{ActionArchive: "Archive", ActionTrash: "Trash", ActionMarkRead: "Mark as read", ActionMove: "Move"}[sp.Action]
-	what := "mail"
-	if sp.Category != "" {
-		what = strings.ReplaceAll(sp.Category, "_", " ") + " mail"
-	}
-	l := verb + " " + what
-	if sp.From != "" {
-		l += " from " + strings.TrimPrefix(sp.From, "@")
+	var l string
+	if sp.Action == ActionUnsubscribe {
+		l = "Unsubscribe from " + strings.TrimPrefix(sp.From, "@")
+	} else {
+		verb := map[string]string{ActionArchive: "Archive", ActionTrash: "Trash", ActionMarkRead: "Mark as read", ActionMove: "Move"}[sp.Action]
+		what := "mail"
+		if sp.Category != "" {
+			what = strings.ReplaceAll(sp.Category, "_", " ") + " mail"
+		}
+		l = verb + " " + what
+		if sp.From != "" {
+			l += " from " + strings.TrimPrefix(sp.From, "@")
+		}
 	}
 	var words []string
 	if sp.Subject != "" {
@@ -478,7 +509,9 @@ func senderMatches(from, addr string) bool {
 // A message is ready once it is classified, or classification has given up on
 // it, or it is too old to classify, or there is no model; rules that need a
 // category wait for it, and rules with body words read the text of the mail
-// that matches them on everything else. Each hit is recorded.
+// that matches them on everything else. The first filing rule that matches a
+// message takes it; unsubscribe rules file nothing, so they run afterwards on
+// the mail the filing rules settled. Each hit is recorded.
 func (s *Service) applyRules(ctx context.Context, a *account) (int, error) {
 	rules, err := s.Rules(ctx)
 	if err != nil {
@@ -509,14 +542,16 @@ func (s *Service) applyRules(ctx context.Context, a *account) (int, error) {
 
 	hits := map[int64][]int64{} // rule id -> message ids
 	var ruleOrder []int
-	var settled []int64 // messages no rule needs to look at again
+	var settled []int64      // messages no rule needs to look at again
+	due := map[int64]int64{} // message id -> the unsubscribe rule due to act on it
 	for batch := range slices.Chunk(ready, ruleBodyBatch) {
 		bodies := s.ruleBodies(ctx, a, batch, rules)
+		maps.Copy(due, s.unsubDue(ctx, a, batch, rules))
 	messages:
 		for _, m := range batch {
 			matched := -1
 			for i, r := range rules {
-				if !r.matchesHeaders(m) || r.spares(m) {
+				if r.Action == ActionUnsubscribe || !r.matchesHeaders(m) || r.spares(m) {
 					continue // a spared message is this rule's to skip, without reading its body
 				}
 				if r.Match.Body != nil {
@@ -540,6 +575,12 @@ func (s *Service) applyRules(ctx context.Context, a *account) (int, error) {
 				ruleOrder = append(ruleOrder, matched)
 			}
 			hits[rid] = append(hits[rid], m.ID)
+		}
+	}
+	// Recorded before anything is settled, so an interrupted sweep still sends them.
+	for id, rid := range due {
+		if _, err := s.db.ExecContext(ctx, `UPDATE mail_messages SET unsub_rule = ? WHERE id = ? AND rules_applied = 0`, rid, id); err != nil {
+			return 0, fmt.Errorf("record a due unsubscribe: %w", err)
 		}
 	}
 	if err := s.settle(ctx, settled); err != nil {
@@ -577,7 +618,219 @@ func (s *Service) applyRules(ctx context.Context, a *account) (int, error) {
 		}
 		applied += n
 	}
-	return applied, nil
+	n, err := s.unsubscribeDue(ctx, a)
+	return applied + n, err
+}
+
+// unsubDue finds the messages in batch an unsubscribe rule should act on:
+// mail it matches that offers one-click unsubscribe with those headers signed
+// by the sender's own domain (RFC 8058, section 4). Anyone can put a sender's
+// address on a message and a URL of their choosing in its headers; only a valid
+// DKIM signature from that domain, covering them, shows the sender asked for
+// the request. Mail that isn't signed so, or can't be checked right now, is
+// left alone: the sender's next message tries again.
+func (s *Service) unsubDue(ctx context.Context, a *account, batch []row, rules []Rule) map[int64]int64 {
+	ruleFor := map[int64]int64{}
+	byValidity := map[uint32][]row{}
+	for _, m := range batch {
+		if !m.canUnsubscribe() {
+			continue
+		}
+		i := slices.IndexFunc(rules, func(r Rule) bool { return r.Action == ActionUnsubscribe && r.matchesHeaders(m) && !r.spares(m) })
+		if i < 0 {
+			continue
+		}
+		ruleFor[m.ID], _ = strconv.ParseInt(rules[i].ID, 10, 64)
+		byValidity[m.Validity] = append(byValidity[m.Validity], m)
+	}
+	due := map[int64]int64{}
+	for validity, ms := range byValidity {
+		uids := make([]imap.UID, len(ms))
+		for i, m := range ms {
+			uids[i] = imap.UID(m.UID)
+		}
+		var raws map[imap.UID][]byte
+		err := s.run(ctx, a, func(c *imapclient.Client) error {
+			var err error
+			raws, err = fetchRaw(c, inbox, validity, uids, unsubRawBytes)
+			return err
+		})
+		if err != nil {
+			if !errors.Is(err, ErrGone) && ctx.Err() == nil {
+				s.log.Warn("cannot read mail to check its unsubscribe signature", "account", a.cfg.Name, "error", err)
+			}
+			continue
+		}
+		for _, m := range ms {
+			if raw := raws[imap.UID(m.UID)]; s.signedUnsubscribe(raw, m.FromAddr) && cacheMatches(raw, m) {
+				due[m.ID] = ruleFor[m.ID]
+			} else {
+				s.log.Info("unsubscribe rule left unsigned mail alone", "account", a.cfg.Name, "rule", ruleFor[m.ID], "message", m.ID)
+			}
+		}
+	}
+	return due
+}
+
+// signedUnsubscribe reports whether raw carries a valid DKIM signature by the
+// sender's domain (or a parent of it) that covers From, Subject,
+// List-Unsubscribe and List-Unsubscribe-Post.
+func (s *Service) signedUnsubscribe(raw []byte, fromAddr string) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	at := strings.LastIndex(fromAddr, "@")
+	if at < 0 {
+		return false
+	}
+	sender := strings.ToLower(fromAddr[at+1:])
+	// A signature covers the last copy of each header it lists, while the cache
+	// read the first: with a second copy added on top, the signed one wouldn't be
+	// the one used. So each of these must appear exactly once. Subject is among
+	// them because the rule's words and exceptions (and the category, read from
+	// it) decide whether to act.
+	h, err := textproto.NewReader(bufio.NewReader(bytes.NewReader(raw))).ReadMIMEHeader()
+	if err != nil {
+		return false
+	}
+	for _, k := range []string{"From", "Subject", "List-Unsubscribe", "List-Unsubscribe-Post"} {
+		if len(h.Values(k)) != 1 {
+			return false
+		}
+	}
+	vs, err := dkim.VerifyWithOptions(bytes.NewReader(raw), &dkim.VerifyOptions{LookupTXT: s.lookupTXT, MaxVerifications: 5})
+	if err != nil && !errors.Is(err, dkim.ErrTooManySignatures) {
+		return false
+	}
+	for _, v := range vs {
+		if v.Err != nil {
+			continue
+		}
+		d := strings.ToLower(v.Domain)
+		if sender != d && !strings.HasSuffix(sender, "."+d) {
+			continue
+		}
+		signed := map[string]bool{}
+		for _, k := range v.HeaderKeys {
+			signed[strings.ToLower(k)] = true
+		}
+		if signed["from"] && signed["subject"] && signed["list-unsubscribe"] && signed["list-unsubscribe-post"] {
+			return true
+		}
+	}
+	return false
+}
+
+// cacheMatches reports whether the cached sender, subject and unsubscribe link
+// are the ones in raw, the message whose signature was checked. The rule matched
+// and the request goes by the cache, so a row still holding another message's
+// headers (say, from before the server renumbered the mailbox) must not ride on
+// this message's signature.
+func cacheMatches(raw []byte, m row) bool {
+	hdr, err := textproto.NewReader(bufio.NewReader(bytes.NewReader(raw))).ReadMIMEHeader()
+	if err != nil {
+		return false
+	}
+	from, err := mail.ParseAddress(hdr.Get("From"))
+	if err != nil || !strings.EqualFold(from.Address, m.FromAddr) {
+		return false
+	}
+	subject, err := new(mime.WordDecoder).DecodeHeader(hdr.Get("Subject"))
+	if err != nil || oneLine(subject, maxCachedSubject) != m.Subject {
+		return false
+	}
+	var h fetchedHeader
+	applyListHeaders(&h, raw)
+	return h.unsubURL == m.UnsubURL && h.oneClick == m.HasPost
+}
+
+// unsubscribeDue sends the one-click unsubscribe request for the account's
+// settled mail an unsubscribe rule is due to act on. Each message gets one try:
+// the mark is cleared once it has been tried (a failure is logged, and the
+// sender's next message tries again), but survives a sweep cut short. A
+// sender's list asked within unsubEvery in this inbox is not asked again, so a
+// burst of mail sent before the request took effect doesn't become a burst of
+// requests.
+func (s *Service) unsubscribeDue(ctx context.Context, a *account) (int, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, unsub_rule FROM mail_messages
+		WHERE account = ? AND unsub_rule IS NOT NULL AND rules_applied = 1 ORDER BY id`, a.cfg.Name)
+	if err != nil {
+		return 0, fmt.Errorf("find due unsubscribes: %w", err)
+	}
+	type dueMsg struct{ id, rule int64 }
+	var list []dueMsg
+	for rows.Next() {
+		var d dueMsg
+		if err := rows.Scan(&d.id, &d.rule); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("find due unsubscribes: %w", err)
+		}
+		list = append(list, d)
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return 0, fmt.Errorf("find due unsubscribes: %w", err)
+	}
+	n := 0
+	for _, d := range list {
+		if ctx.Err() != nil {
+			return n, nil //nolint:nilerr // stopping: the rest stay due for the next sweep
+		}
+		ok, err := s.unsubscribeOne(ctx, d.id, d.rule)
+		if err != nil {
+			return n, err
+		}
+		if ctx.Err() != nil {
+			return n, nil //nolint:nilerr // cut short mid-request: it stays due and is tried again
+		}
+		if _, err := s.db.ExecContext(ctx, `UPDATE mail_messages SET unsub_rule = NULL WHERE id = ?`, d.id); err != nil {
+			return n, fmt.Errorf("clear a due unsubscribe: %w", err)
+		}
+		if ok {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// unsubscribeOne tries one due unsubscribe and records the rule's hit. It
+// reports whether the request went through.
+func (s *Service) unsubscribeOne(ctx context.Context, id, rid int64) (bool, error) {
+	if !s.ruleExists(ctx, rid) {
+		return false, nil
+	}
+	m, err := s.rowByID(ctx, id)
+	if err != nil || !m.canUnsubscribe() {
+		return false, nil //nolint:nilerr // gone, or unsubscribed by hand meanwhile: nothing to send
+	}
+	recent, err := s.unsubscribedLately(ctx, m)
+	if err != nil || recent {
+		return false, err
+	}
+	if err := s.Unsubscribe(ctx, id); err != nil {
+		s.log.Warn("mail rule could not unsubscribe", "account", m.Account, "rule", rid, "error", err)
+		return false, nil
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE mail_rules SET hits = hits + 1, last_hit_at = ? WHERE id = ?`, stamp(s.now()), rid); err != nil {
+		return true, fmt.Errorf("record mail rule hit: %w", err)
+	}
+	return true, nil
+}
+
+// unsubscribedLately reports whether mail from m's sender address was
+// unsubscribed from within unsubEvery, by a rule or by the owner, in the same
+// account: each inbox's subscription is its own. It goes by the address, which
+// the signature vouches for, not by List-Id, which it may not.
+func (s *Service) unsubscribedLately(ctx context.Context, m row) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM mail_messages
+		WHERE account = ? AND from_addr = ? AND unsubscribed_at >= ?`,
+		m.Account, m.FromAddr, stamp(s.now().Add(-unsubEvery))).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("check earlier unsubscribes: %w", err)
+	}
+	return n > 0, nil
 }
 
 // ruleBodies reads the text of the messages in batch that a rule with body

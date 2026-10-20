@@ -226,7 +226,7 @@ never stored.
     { "category": "receipt" },       // from?, category?, subject? (words, any case)
     { "subject": "transaction" }     // [] when there are none
   ],
-  "action": "trash",                 // archive | trash | mark_read | move
+  "action": "trash",                 // archive | trash | mark_read | move | unsubscribe
   "folder": null,                    // for move
   "label": "Trash mail from example.com with \"upgrade\" in the subject",
   "hits": 12, "last_hit_at": "…", "created_at": "…"
@@ -252,9 +252,20 @@ in place: a rule proposed with the same match and action but other exceptions re
 (keeping its hits and its place in the order), once the owner approves it.
 
 Rules look at each new inbox message once, after it's classified (without waiting when there's
-no model or classification gave up). The oldest rule that matches acts. For a rule with body words the sweep reads the first 64 KB of
+no model or classification gave up). The first archive, trash, mark_read or move rule that matches a message takes it. For a rule with body words the sweep reads the first 64 KB of
 the message from IMAP, only when everything else in the rule already matches, and keeps the text
 in memory for that check alone; mail it can't read right then waits for the next sweep.
+
+An `unsubscribe` rule always names a sender (`match.from`) and files nothing:
+when matching mail offers one-click unsubscribe, the sweep sends the RFC 8058 request (an HTTPS
+POST, never a link opened or a mail sent) once the other rules are done with the message, and the
+message stays wherever they left it. It only acts on mail whose unsubscribe headers the sender
+signed (RFC 8058 section 4): a valid DKIM signature by the sender's domain or a parent of it,
+covering `From`, `Subject`, `List-Unsubscribe` and `List-Unsubscribe-Post`, each present once. Anything else is left alone,
+since anyone can forge a From line. For the same reason it decides only on what the signature
+vouches for: the sender and subject words, in its match and its exceptions; categories and body
+words aren't allowed. Each message gets one try (a sweep cut short resumes it), and a sender
+address is asked at most once a week in each inbox. `hits` counts the requests that succeeded.
 
 A message keeps its `id` when it moves between folders. Mail that someone else moved or deleted
 is marked as having left the inbox (`folder: "other"`) and answers 404 to reads and actions; such

@@ -200,10 +200,13 @@ describe("mail and approval guards", () => {
   });
 
   it("reads rules, the summary and approval rules", () => {
-    const rule = { id: "4", match: { from: "@example.com", category: null, subject: "upgrade", body: null }, action: "trash", folder: null, label: 'Trash mail from example.com with "upgrade" in the subject', hits: 12, last_hit_at: null, created_at: "x" };
+    const rule = { id: "4", match: { from: "@example.com", category: null, subject: "upgrade", body: null }, except: [{ from: null, category: "receipt", subject: null }], action: "trash", folder: null, label: 'Trash mail from example.com with "upgrade" in the subject', hits: 12, last_hit_at: null, created_at: "x" };
     expect(asMailRule(rule)).toEqual(rule);
     // A rule from before subject and body words reads as having none.
     expect(asMailRule({ ...rule, match: { from: "@example.com", category: null } })?.match).toEqual({ from: "@example.com", category: null, subject: null, body: null });
+    // ...and one from before exceptions as sparing nothing; junk entries are dropped.
+    expect(asMailRule({ ...rule, except: undefined })?.except).toEqual([]);
+    expect(asMailRule({ ...rule, except: ["x", { subject: "transaction" }] })?.except).toEqual([{ from: null, category: null, subject: "transaction" }]);
     expect(asMailRule({ id: "4" })).toBeUndefined();
     expect(asMailSummary({ unread: { newsletter: 3, promo: 0, bad: "x" }, attention: [message] })).toEqual({ unread: { newsletter: 3 }, attention: [message] });
     expect(asMailSummary(null)).toEqual({ unread: {}, attention: [] });

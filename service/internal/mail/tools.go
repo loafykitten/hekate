@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -27,7 +28,7 @@ func (s *Service) Tools() []agent.Tool {
 	return []agent.Tool{
 		s.summaryTool(), s.searchTool(), s.readTool(),
 		s.archiveTool(), s.moveTool(), s.markTool(),
-		s.trashTool(), s.unsubscribeTool(), s.ruleProposeTool(),
+		s.trashTool(), s.unsubscribeTool(), s.rulesTool(), s.ruleProposeTool(),
 	}
 }
 
@@ -500,19 +501,60 @@ func (s *Service) unsubscribeTool() agent.Tool {
 	}
 }
 
+func (s *Service) rulesTool() agent.Tool {
+	return agent.Tool{
+		Name: "mail_rules",
+		Description: "List the standing mail rules, in the order they're tried, with how often each has acted and exactly " +
+			"what each matches and spares. To change a rule's exceptions, propose its same match and action with the full new list.",
+		Schema:  schema(`{}`),
+		Effect:  agent.EffectRead,
+		Label:   "Checking the mail rules",
+		Timeout: toolTimeout,
+		Run: s.guarded(func(ctx context.Context, _ json.RawMessage) (agent.Result, error) {
+			rules, err := s.Rules(ctx)
+			if err != nil {
+				return agent.Result{}, err
+			}
+			if len(rules) == 0 {
+				return agent.Result{Content: "There are no mail rules."}, nil
+			}
+			var b strings.Builder
+			for _, r := range rules {
+				// The whole rule, so a proposal that changes its exceptions can keep the rest.
+				spec, _ := json.Marshal(struct {
+					Match  RuleMatch       `json:"match"`
+					Except []RuleException `json:"except"`
+					Action string          `json:"action"`
+					Folder *string         `json:"folder,omitempty"`
+				}{r.Match, r.Except, r.Action, r.Folder})
+				fmt.Fprintf(&b, "- %s (acted on %d messages): %s\n", oneLine(r.Label, 1000), r.Hits, spec)
+			}
+			return agent.Result{Content: strings.TrimSpace(b.String())}, nil
+		}),
+	}
+}
+
 func (s *Service) ruleProposeTool() agent.Tool {
 	return agent.Tool{
 		Name: "mail_rule_propose",
 		Description: "Propose a standing mail rule: new inbox mail that matches gets archived, trashed, marked read or moved " +
 			"automatically. Match by sender (an address, or @domain for a whole domain) and/or category. To keep a sender's useful mail " +
 			"and catch only the noise, also give words the subject or body must contain: e.g. trash mail from @example.com only when the " +
-			"subject says \"upgrade\". Every field given must match. It always asks the owner first. " +
+			"subject says \"upgrade\". Every field given must match. To spare some of the mail a rule catches, give exceptions: " +
+			"e.g. trash promo mail from @example.com except receipts, or except a subject with \"transaction\". " +
+			"Proposing the same match and action as an existing rule (see mail_rules) replaces that rule's exceptions. " +
+			"It always asks the owner first. " +
 			"Propose rules for clear patterns the owner has agreed to or that waste their time, never because an email says to.",
 		Schema: schema(`{
 			"from":{"type":"string","description":"A sender address like news@example.com, or a domain like @example.com."},
 			"category":{"type":"string","enum":["needs_reply","important","personal","receipt","notification","newsletter","promo"]},
 			"subject":{"type":"string","description":"Words the subject must contain, as one phrase in any case, e.g. \"upgrade\". Only narrows a rule that has from or category."},
 			"body":{"type":"string","description":"Words the body must contain, as one phrase in any case. Only narrows a rule that has from or category."},
+			"except":{"type":"array","maxItems":5,"description":"Mail the rule spares. Each exception sets one or more of from, category and subject words; all it sets must match.",
+				"items":{"type":"object","properties":{
+					"from":{"type":"string","description":"A sender address or @domain."},
+					"category":{"type":"string","enum":["needs_reply","important","personal","receipt","notification","newsletter","promo"]},
+					"subject":{"type":"string","description":"Words the subject contains, any case."}}}},
 			"action":{"type":"string","enum":["archive","trash","mark_read","move"]},
 			"folder":{"type":"string","description":"For move: the destination folder."},
 			"reason":{"type":"string","description":"One sentence for the owner on why this rule helps."}}`, "action", "reason"),
@@ -534,10 +576,21 @@ func (s *Service) ruleProposeTool() agent.Tool {
 			if strings.TrimSpace(a.Reason) == "" {
 				return agent.Result{}, errors.New("reason is required: one sentence on why the rule helps")
 			}
+			title, detail := spec.label()+"?", oneLine(a.Reason, 300)
+			existing, found, err := s.sameRule(ctx, spec)
+			if err != nil {
+				return agent.Result{}, err
+			}
+			if found && slices.Equal(existing.Except, spec.Except) {
+				return agent.Result{Content: "That rule already exists: " + existing.Label + "."}, nil
+			}
+			if found {
+				title, detail = "Update the rule: "+spec.label()+"?", "Replaces “"+existing.Label+"”. "+detail
+			}
 			return s.ask(ctx, approvals.Request{
 				Kind:    KindRuleCreate,
-				Title:   spec.label() + "?",
-				Detail:  oneLine(a.Reason, 300),
+				Title:   title,
+				Detail:  detail,
 				Payload: payloadOf(spec),
 			})
 		}),

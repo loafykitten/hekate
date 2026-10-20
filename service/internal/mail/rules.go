@@ -671,8 +671,8 @@ func (s *Service) unsubDue(ctx context.Context, a *account, batch []row, rules [
 }
 
 // signedUnsubscribe reports whether raw carries a valid DKIM signature by the
-// sender's domain (or a parent of it) that covers From, List-Unsubscribe and
-// List-Unsubscribe-Post.
+// sender's domain (or a parent of it) that covers From, Subject,
+// List-Unsubscribe and List-Unsubscribe-Post.
 func (s *Service) signedUnsubscribe(raw []byte, fromAddr string) bool {
 	if len(raw) == 0 {
 		return false
@@ -684,12 +684,14 @@ func (s *Service) signedUnsubscribe(raw []byte, fromAddr string) bool {
 	sender := strings.ToLower(fromAddr[at+1:])
 	// A signature covers the last copy of each header it lists, while the cache
 	// read the first: with a second copy added on top, the signed one wouldn't be
-	// the one used. So each of these must appear exactly once.
+	// the one used. So each of these must appear exactly once. Subject is among
+	// them because the rule's words and exceptions (and the category, read from
+	// it) decide whether to act.
 	h, err := textproto.NewReader(bufio.NewReader(bytes.NewReader(raw))).ReadMIMEHeader()
 	if err != nil {
 		return false
 	}
-	for _, k := range []string{"From", "List-Unsubscribe", "List-Unsubscribe-Post"} {
+	for _, k := range []string{"From", "Subject", "List-Unsubscribe", "List-Unsubscribe-Post"} {
 		if len(h.Values(k)) != 1 {
 			return false
 		}
@@ -710,7 +712,7 @@ func (s *Service) signedUnsubscribe(raw []byte, fromAddr string) bool {
 		for _, k := range v.HeaderKeys {
 			signed[strings.ToLower(k)] = true
 		}
-		if signed["from"] && signed["list-unsubscribe"] && signed["list-unsubscribe-post"] {
+		if signed["from"] && signed["subject"] && signed["list-unsubscribe"] && signed["list-unsubscribe-post"] {
 			return true
 		}
 	}

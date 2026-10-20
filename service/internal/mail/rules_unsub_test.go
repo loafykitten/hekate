@@ -249,6 +249,9 @@ func TestUnsubscribeRuleNeedsTheSendersSignature(t *testing.T) {
 	// signature covers the bottom copy, the cache would read the top one.
 	f.deliver("INBOX", mailSpec{subject: "Replayed", from: "Shop <deals@shop.example.net>", dkim: "shop.example.net",
 		headers: listMail(srv.URL+"/u/signed", "f.shop.example.net"), forged: "List-Unsubscribe: <" + srv.URL + "/u/evil>\r\n"})
+	// The subject decides exceptions, so it must be signed, and only once.
+	f.deliver("INBOX", mailSpec{subject: "Deals", from: "Shop <deals@shop.example.net>", dkim: "shop.example.net",
+		dkimKeys: []string{"From", "List-Unsubscribe", "List-Unsubscribe-Post"}, headers: listMail(srv.URL+"/u/nosubject", "g.shop.example.net")})
 	// A sender on a subdomain, signed by the parent domain, is the sender's own.
 	f.deliver("INBOX", mailSpec{subject: "Genuine", from: "Shop <deals@mail.shop.example.net>", dkim: "shop.example.net",
 		headers: listMail(srv.URL+"/u/genuine", "e.shop.example.net")})
@@ -290,5 +293,22 @@ func TestUnsubscribeDueSurvivesAnInterruptedSweep(t *testing.T) {
 	_ = db.QueryRow(`SELECT count(*) FROM mail_messages WHERE unsub_rule IS NOT NULL`).Scan(&left)
 	if left != 0 {
 		t.Errorf("%d messages still marked due", left)
+	}
+}
+
+// A replayed signed message can't dodge an exception by putting another
+// subject on top.
+func TestUnsubscribeExceptionsCantBeDodgedByASecondSubject(t *testing.T) {
+	srv := newUnsubServer(t)
+	f := newFixture(t, func(o *fixtureOpts) { o.httpc = srv.Client() })
+	if _, err := f.svc.CreateRule(t.Context(), RuleSpec{From: "@shop.example.net", Action: "unsubscribe",
+		Except: []RuleException{{Subject: "your order"}}}); err != nil {
+		t.Fatal(err)
+	}
+	f.deliver("INBOX", mailSpec{subject: "About your order", from: "Shop <orders@shop.example.net>", dkim: "shop.example.net",
+		headers: listMail(srv.URL+"/u/orders", "orders.shop.example.net"), forged: "Subject: Big sale\r\n"})
+	f.sweep()
+	if got := srv.reqs(); len(got) != 0 {
+		t.Errorf("requests = %q, want none", got)
 	}
 }

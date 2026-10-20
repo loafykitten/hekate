@@ -261,7 +261,7 @@ when matching mail offers one-click unsubscribe, the sweep sends the RFC 8058 re
 POST, never a link opened or a mail sent) once the other rules are done with the message, and the
 message stays wherever they left it. It only acts on mail whose unsubscribe headers the sender
 signed (RFC 8058 section 4): a valid DKIM signature by the sender's domain or a parent of it,
-covering `From`, `List-Unsubscribe` and `List-Unsubscribe-Post`. Anything else is left alone,
+covering `From`, `Subject`, `List-Unsubscribe` and `List-Unsubscribe-Post`, each present once. Anything else is left alone,
 since anyone can forge a From line. Subject words and exceptions narrow it as for any rule; body
 words don't apply. Each message gets one try (a sweep cut short resumes it), and a sender's list
 is asked at most once a week in each inbox. `hits` counts the requests that succeeded.

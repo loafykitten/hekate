@@ -1,6 +1,7 @@
 package mail
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -157,5 +158,141 @@ func TestSenderMatches(t *testing.T) {
 	}
 	if !strings.HasPrefix(RuleSpec{From: "@example.com", Action: "trash"}.label(), "Trash") {
 		t.Error("label verb")
+	}
+}
+
+func TestRuleWordsValidationAndLabel(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	bad := []RuleSpec{
+		{Subject: "upgrade", Action: "trash"},                    // words alone don't make a rule
+		{Body: "upgrade", Action: "trash"},                       // nor body words
+		{From: "@example.org", Subject: "up", Action: "trash"},   // too short to mean anything
+		{From: "@example.org", Body: "a\x00bc", Action: "trash"}, // not plain text
+		{From: "@example.org", Subject: strings.Repeat("x", 101), Action: "trash"},
+	}
+	for _, sp := range bad {
+		if _, err := f.svc.CreateRule(ctx, sp); err == nil {
+			t.Errorf("accepted %+v", sp)
+		}
+	}
+	r, err := f.svc.CreateRule(ctx, RuleSpec{From: "@Example.org", Subject: "  Upgrade\tYour  Plan ", Action: "trash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *r.Match.Subject != "upgrade your plan" || r.Match.Body != nil || r.Label != `Trash mail from example.org with "upgrade your plan" in the subject` {
+		t.Errorf("rule = %+v", r)
+	}
+	again, _ := f.svc.CreateRule(ctx, RuleSpec{From: "@example.org", Subject: "upgrade your plan", Action: "trash"})
+	if again.ID != r.ID {
+		t.Error("an identical rule was created twice")
+	}
+	plain, _ := f.svc.CreateRule(ctx, RuleSpec{From: "@example.org", Action: "trash"})
+	if plain.ID == r.ID || plain.Match.Subject != nil {
+		t.Errorf("a rule without words was taken for one with them: %+v", plain)
+	}
+	both, _ := f.svc.CreateRule(ctx, RuleSpec{Category: "promo", Subject: "sale", Body: "limited time", Action: "move", Folder: "Deals"})
+	if both.Label != `Move promo mail with "sale" in the subject and "limited time" in the body to Deals` {
+		t.Errorf("label = %q", both.Label)
+	}
+}
+
+func TestRulesMatchSubjectAndBodyWords(t *testing.T) {
+	f := newFixture(t, func(o *fixtureOpts) { o.noModel = true })
+	ctx := t.Context()
+	for _, sp := range []RuleSpec{
+		{From: "@bank.example.net", Subject: "upgrade", Action: "trash"},
+		{From: "@bank.example.net", Body: "special offer", Action: "archive"},
+		{From: "news@example.org", Subject: "weekly", Body: "unsubscribe", Action: "mark_read"},
+	} {
+		if _, err := f.svc.CreateRule(ctx, sp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bank := "Bank <alerts@bank.example.net>"
+	f.deliver("INBOX", mailSpec{subject: "UPGRADE to premium today", from: bank})
+	f.deliver("INBOX", mailSpec{subject: "Your statement is ready", from: bank})
+	f.deliver("INBOX", mailSpec{subject: "News from us", from: bank, body: "A Special\r\nOffer, just for you."})
+	f.deliver("INBOX", mailSpec{subject: "Payment received", from: bank, body: "We received your payment."})
+	f.deliver("INBOX", mailSpec{subject: "Upgrade notice", from: "Other <a@other.example.net>"})
+	f.deliver("INBOX", mailSpec{subject: "The weekly", from: "News <news@example.org>", body: "Read on. Unsubscribe here."})
+	f.deliver("INBOX", mailSpec{subject: "The weekly, again", from: "News <news@example.org>", body: "No footer this time."})
+	f.deliver("INBOX", mailSpec{subject: "Monthly", from: "News <news@example.org>", body: "Unsubscribe here."})
+	f.sweep()
+
+	want := map[string]struct {
+		folder string
+		unread bool
+	}{
+		"UPGRADE to premium today": {"Trash", true},   // subject words, any case
+		"Your statement is ready":  {"INBOX", true},   // same sender, no words: kept
+		"News from us":             {"Archive", true}, // body words across a line break
+		"Payment received":         {"INBOX", true},
+		"Upgrade notice":           {"INBOX", true},  // the words, but another sender
+		"The weekly":               {"INBOX", false}, // subject and body both match
+		"The weekly, again":        {"INBOX", true},  // subject only: not enough
+		"Monthly":                  {"INBOX", true},  // body only: not enough
+	}
+	for subject, w := range want {
+		if m := f.bySubject(subject); m.Folder != w.folder || m.Unread != w.unread {
+			t.Errorf("%q: folder %s unread %v, want %s %v", subject, m.Folder, m.Unread, w.folder, w.unread)
+		}
+	}
+	rules, _ := f.svc.Rules(ctx)
+	for _, r := range rules {
+		if r.Hits != 1 {
+			t.Errorf("rule %q hits = %d, want 1", r.Label, r.Hits)
+		}
+	}
+}
+
+// Body words are only looked for once the rest of the rule matches, and mail
+// whose text can't be read now waits for the next sweep instead of being
+// counted as not matching.
+func TestBodyRuleWaitsForUnreadableMail(t *testing.T) {
+	f := newFixture(t, func(o *fixtureOpts) { o.noModel = true })
+	ctx := t.Context()
+	if _, err := f.svc.CreateRule(ctx, RuleSpec{From: "@shop.example.net", Body: "flash sale", Action: "trash"}); err != nil {
+		t.Fatal(err)
+	}
+	uid := f.deliver("INBOX", mailSpec{subject: "Vanishes", from: "Shop <deals@shop.example.net>", body: "Flash sale!"})
+	a := f.svc.byName["personal"]
+	if _, err := f.svc.syncInbox(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	f.expungeFrom("INBOX", uid) // another mail app deletes it before the rules run
+	if n, err := f.svc.applyRules(ctx, a); err != nil || n != 0 {
+		t.Fatalf("applyRules = %d, %v", n, err)
+	}
+	var applied bool
+	if err := f.svc.db.QueryRowContext(ctx, `SELECT rules_applied FROM mail_messages WHERE id = ?`, f.id("Vanishes")).Scan(&applied); err != nil {
+		t.Fatal(err)
+	}
+	if applied {
+		t.Error("unreadable mail was settled as not matching")
+	}
+	if got := f.serverUIDs("Trash"); len(got) != 0 {
+		t.Errorf("trash = %v", got)
+	}
+}
+
+func TestRuleProposeToolWords(t *testing.T) {
+	f := newFixture(t)
+	f.mustCall("mail_rule_propose", `{"from":"@example.net","subject":"Upgrade","action":"trash","reason":"Only the upsell mail."}`)
+	r := f.appr.requests()[0]
+	var spec RuleSpec
+	_ = json.Unmarshal(r.Payload, &spec)
+	if r.Title != `Trash mail from example.net with "upgrade" in the subject?` ||
+		spec != (RuleSpec{From: "@example.net", Subject: "upgrade", Action: "trash"}) {
+		t.Errorf("request %+v spec %+v", r, spec)
+	}
+	if _, err := f.appr.run(t.Context(), 0); err != nil {
+		t.Fatal(err)
+	}
+	if rules, _ := f.svc.Rules(t.Context()); len(rules) != 1 || rules[0].Match.Subject == nil || *rules[0].Match.Subject != "upgrade" {
+		t.Errorf("rules = %+v", rules)
+	}
+	if _, err := f.call("mail_rule_propose", `{"subject":"upgrade","action":"trash","reason":"x"}`); err == nil {
+		t.Error("a rule of words alone was proposed")
 	}
 }

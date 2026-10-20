@@ -3,6 +3,8 @@ import {
   asApprovalRule,
   asChangeRequest,
   asIdea,
+  asJournalDay,
+  asReflectionChange,
   asCoreEntry,
   asEvent,
   asMailBody,
@@ -22,6 +24,7 @@ import {
   type ChangeRequest,
   type Idea,
   type IdeaStatus,
+  type JournalDay,
   type CalendarEvent,
   type CoreEntry,
   type MailBody,
@@ -198,6 +201,13 @@ export const memoryApi = {
   putCore: async (key: string, value: string) =>
     one(await request("PUT", `/memory/core/${encodeURIComponent(key)}`, { body: { value } }), asCoreEntry),
   removeCore: async (key: string) => void (await request("DELETE", `/memory/core/${encodeURIComponent(key)}`)),
+};
+
+// --- journal -------------------------------------------------------------------------------
+
+export const journalApi = {
+  list: async (signal?: AbortSignal): Promise<JournalDay[]> => many(await request("GET", "/journal", { signal }), "days", asJournalDay),
+  undo: async (changeId: string) => one(await request("POST", `/reflections/changes/${encodeURIComponent(changeId)}/undo`), asReflectionChange),
 };
 
 // --- ideas ---------------------------------------------------------------------------------

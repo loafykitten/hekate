@@ -4,7 +4,10 @@ package memory
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -12,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -86,12 +90,15 @@ type Options struct {
 type Service struct {
 	// mu serializes read-modify-write changes (REST and her tools overlap), so a
 	// patch never writes back a stale copy of fields it didn't touch.
-	mu     sync.Mutex
-	db     *sql.DB
-	loc    *time.Location
-	events proto.Events
-	log    *slog.Logger
-	now    func() time.Time
+	mu sync.Mutex
+	db *sql.DB
+	// forgets counts memories forgotten for good, so work that read memories
+	// earlier can tell whether one has gone since (see Forgets).
+	forgets atomic.Int64
+	loc     *time.Location
+	events  proto.Events
+	log     *slog.Logger
+	now     func() time.Time
 }
 
 // New builds the service.
@@ -150,17 +157,11 @@ func (s *Service) display(stored string) string {
 
 func (s *Service) changed() { s.events.Invalidate(proto.DomainMemory) }
 
+// domainJournal is reflection's invalidate domain: its records hold copies of memories.
+const domainJournal = "journal"
+
 // Get returns one memory.
-func (s *Service) Get(ctx context.Context, id int64) (Memory, error) {
-	m, err := s.scan(s.db.QueryRowContext(ctx, `SELECT `+columns+` FROM memories WHERE id = ? AND deleted_at IS NULL`, id))
-	if errors.Is(err, sql.ErrNoRows) {
-		return Memory{}, httpx.NotFound("there is no memory with id %d", id)
-	}
-	if err != nil {
-		return Memory{}, fmt.Errorf("get memory %d: %w", id, err)
-	}
-	return m, nil
-}
+func (s *Service) Get(ctx context.Context, id int64) (Memory, error) { return s.get(ctx, s.db, id) }
 
 func checkKind(kind string) error {
 	if !slices.Contains(kinds, kind) {
@@ -254,6 +255,96 @@ func (s *Service) Save(ctx context.Context, n NewMemory) (m Memory, existed bool
 	return m, existed, err
 }
 
+// ErrChanged is returned by the IfUnchanged operations when the memory is no
+// longer what the caller last saw.
+var ErrChanged = errors.New("the memory changed since it was read")
+
+// Forgets is how many memories have been forgotten since the service started.
+// A Recorder (which runs under the service's lock) can compare it with an
+// earlier reading to refuse a change planned before a memory was forgotten.
+func (s *Service) Forgets() int64 { return s.forgets.Load() }
+
+// ErrForgotten is returned when reflection would save or write words the owner
+// had forgotten (see Fingerprint).
+var ErrForgotten = errors.New("the owner had that forgotten")
+
+// Fingerprint is a one-way digest of a memory's wording, case and spacing
+// aside. Forgetting keeps the fingerprints of what it deletes, never the text.
+func Fingerprint(content string) string {
+	norm := strings.ToLower(strings.Join(strings.Fields(content), " "))
+	norm = strings.TrimRight(norm, ".!?;: ")
+	sum := sha256.Sum256([]byte(norm))
+	return hex.EncodeToString(sum[:])
+}
+
+// wasForgotten reports whether content matches something forgotten.
+func wasForgotten(ctx context.Context, q rowQuerier, content string) (bool, error) {
+	var one int
+	err := q.QueryRowContext(ctx, `SELECT 1 FROM memory_forgotten WHERE fingerprint = ?`, Fingerprint(content)).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check forgotten memories: %w", err)
+	}
+	return true, nil
+}
+
+// ErrExists is returned by Insert when a live memory already holds that text.
+var ErrExists = errors.New("a memory with that text already exists")
+
+// Recorder runs inside the transaction of a memory change, under the service's
+// lock: what it writes commits with the change or not at all, and nothing (a
+// forget, another edit) can come between them. before is nil for a new memory,
+// after is nil for a retired one.
+type Recorder func(ctx context.Context, tx *sql.Tx, before, after *Memory) error
+
+// Unchanged reports whether two snapshots of a memory hold the same fields.
+// The update time isn't compared: a change that was undone leaves the memory
+// as it was, so an earlier change can be undone after it.
+func Unchanged(a, b Memory) bool {
+	fa, fb := "", ""
+	if a.FollowUpAt != nil {
+		fa = *a.FollowUpAt
+	}
+	if b.FollowUpAt != nil {
+		fb = *b.FollowUpAt
+	}
+	return a.ID == b.ID && a.Kind == b.Kind && a.Content == b.Content && a.Importance == b.Importance && fa == fb
+}
+
+type rowQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// get reads a live memory through db or a transaction.
+func (s *Service) get(ctx context.Context, q rowQuerier, id int64) (Memory, error) {
+	m, err := s.scan(q.QueryRowContext(ctx, `SELECT `+columns+` FROM memories WHERE id = ? AND deleted_at IS NULL`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Memory{}, httpx.NotFound("there is no memory with id %d", id)
+	}
+	if err != nil {
+		return Memory{}, fmt.Errorf("get memory %d: %w", id, err)
+	}
+	return m, nil
+}
+
+// inTx runs fn in a transaction, committing when it returns nil.
+func (s *Service) inTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
 // Update changes a memory.
 func (s *Service) Update(ctx context.Context, id int64, p Patch) (Memory, error) {
 	s.mu.Lock()
@@ -262,6 +353,45 @@ func (s *Service) Update(ctx context.Context, id int64, p Patch) (Memory, error)
 	if err != nil {
 		return Memory{}, err
 	}
+	return s.update(ctx, id, cur, p, nil)
+}
+
+// UpdateIfUnchanged changes a memory only if it is still the version seen;
+// otherwise it returns ErrChanged and changes nothing. New wording the owner
+// had forgotten is refused with ErrForgotten. rec, if set, records the change
+// in the same transaction. It's how reflection changes memories.
+func (s *Service) UpdateIfUnchanged(ctx context.Context, id int64, seen Memory, p Patch, rec Recorder) (Memory, error) {
+	return s.updateIfUnchanged(ctx, id, seen, p, rec, true)
+}
+
+// RevertIfUnchanged is UpdateIfUnchanged for putting back an earlier version
+// on the owner's request (an undo): the wording isn't checked against what was forgotten.
+func (s *Service) RevertIfUnchanged(ctx context.Context, id int64, seen Memory, p Patch, rec Recorder) (Memory, error) {
+	return s.updateIfUnchanged(ctx, id, seen, p, rec, false)
+}
+
+func (s *Service) updateIfUnchanged(ctx context.Context, id int64, seen Memory, p Patch, rec Recorder, checkForgotten bool) (Memory, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cur, err := s.Get(ctx, id)
+	if err != nil {
+		return Memory{}, err
+	}
+	if !Unchanged(cur, seen) {
+		return Memory{}, ErrChanged
+	}
+	if checkForgotten && p.Content != nil && Fingerprint(*p.Content) != Fingerprint(cur.Content) {
+		if gone, err := wasForgotten(ctx, s.db, *p.Content); err != nil {
+			return Memory{}, err
+		} else if gone {
+			return Memory{}, ErrForgotten
+		}
+	}
+	return s.update(ctx, id, cur, p, rec)
+}
+
+func (s *Service) update(ctx context.Context, id int64, cur Memory, p Patch, rec Recorder) (Memory, error) {
+	var err error
 	kind, content, importance := cur.Kind, cur.Content, cur.Importance
 	if p.Kind != nil {
 		if err := checkKind(*p.Kind); err != nil {
@@ -290,24 +420,265 @@ func (s *Service) Update(ctx context.Context, id int64, p Patch) (Memory, error)
 			return Memory{}, err
 		}
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE memories SET kind = ?, content = ?, importance = ?, follow_up_at = ?, updated_at = ?
-		WHERE id = ? AND deleted_at IS NULL`, kind, content, importance, followUp, stamp(s.now()), id); err != nil {
-		return Memory{}, fmt.Errorf("update memory %d: %w", id, err)
+	var after Memory
+	err = s.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE memories SET kind = ?, content = ?, importance = ?, follow_up_at = ?, updated_at = ?
+			WHERE id = ? AND deleted_at IS NULL`, kind, content, importance, followUp, stamp(s.now()), id); err != nil {
+			return fmt.Errorf("update memory %d: %w", id, err)
+		}
+		if after, err = s.get(ctx, tx, id); err != nil {
+			return err
+		}
+		if rec != nil {
+			return rec(ctx, tx, &cur, &after)
+		}
+		return nil
+	})
+	if err != nil {
+		return Memory{}, err
 	}
 	s.changed()
-	return s.Get(ctx, id)
+	return after, nil
 }
 
-// Forget deletes a memory for good, including its search index entry.
+// Insert saves a new memory, or returns ErrExists when a live one already
+// holds the same text (unlike Save, it never touches an existing memory), or
+// ErrForgotten when the owner had it forgotten. rec, if set, records it in the
+// same transaction.
+func (s *Service) Insert(ctx context.Context, n NewMemory, rec Recorder) (Memory, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := checkKind(n.Kind); err != nil {
+		return Memory{}, err
+	}
+	content, err := checkContent(n.Content)
+	if err != nil {
+		return Memory{}, err
+	}
+	importance := n.Importance
+	if importance == 0 {
+		importance = DefaultImportance
+	}
+	if err := checkImportance(importance); err != nil {
+		return Memory{}, err
+	}
+	followUp, err := s.followUp(n.FollowUpAt)
+	if err != nil {
+		return Memory{}, err
+	}
+	var m Memory
+	err = s.inTx(ctx, func(tx *sql.Tx) error {
+		var id int64
+		err := tx.QueryRowContext(ctx, `SELECT id FROM memories WHERE deleted_at IS NULL AND lower(content) = lower(?) LIMIT 1`, content).Scan(&id)
+		switch {
+		case err == nil:
+			return ErrExists
+		case !errors.Is(err, sql.ErrNoRows):
+			return fmt.Errorf("look for a duplicate memory: %w", err)
+		}
+		if gone, err := wasForgotten(ctx, tx, content); err != nil {
+			return err
+		} else if gone {
+			return ErrForgotten
+		}
+		now := stamp(s.now())
+		res, err := tx.ExecContext(ctx, `INSERT INTO memories (kind, content, importance, follow_up_at, source_turn_id, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`, n.Kind, content, importance, followUp, n.SourceTurn, now, now)
+		if err != nil {
+			return fmt.Errorf("insert memory: %w", err)
+		}
+		if id, err = res.LastInsertId(); err != nil {
+			return fmt.Errorf("insert memory: %w", err)
+		}
+		if m, err = s.get(ctx, tx, id); err != nil {
+			return err
+		}
+		if rec != nil {
+			return rec(ctx, tx, nil, &m)
+		}
+		return nil
+	})
+	if err != nil {
+		return Memory{}, err
+	}
+	s.changed()
+	return m, nil
+}
+
+// Forget deletes a memory for good, including its search index entry and the
+// copies reflection kept of it. A retired memory can be forgotten too. A memory
+// that reflection merged with others is forgotten with all of them: each holds
+// the others' words.
 func (s *Service) Forget(ctx context.Context, id int64) (Memory, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, err := s.scan(s.db.QueryRowContext(ctx, `SELECT `+columns+` FROM memories WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Memory{}, httpx.NotFound("there is no memory with id %d", id)
+	}
+	if err != nil {
+		return Memory{}, fmt.Errorf("get memory %d: %w", id, err)
+	}
+	err = s.inTx(ctx, func(tx *sql.Tx) error {
+		// The merge group: every memory linked to this one through merges, either way.
+		rows, err := tx.QueryContext(ctx, `WITH RECURSIVE grp(id) AS (
+				SELECT ?
+				UNION
+				SELECT CASE WHEN mm.source_id = grp.id THEN mm.into_id ELSE mm.source_id END
+				FROM memory_merges mm JOIN grp ON mm.source_id = grp.id OR mm.into_id = grp.id
+			) SELECT id FROM grp`, id)
+		if err != nil {
+			return fmt.Errorf("find memory %d's merges: %w", id, err)
+		}
+		var group []int64
+		for rows.Next() {
+			var g int64
+			if err := rows.Scan(&g); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("find memory %d's merges: %w", id, err)
+			}
+			group = append(group, g)
+		}
+		_ = rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("find memory %d's merges: %w", id, err)
+		}
+		now := stamp(s.now())
+		fingerprint := func(content string) error {
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO memory_forgotten (fingerprint, forgotten_at) VALUES (?, ?)`, Fingerprint(content), now); err != nil {
+				return fmt.Errorf("forget memory %d: %w", id, err)
+			}
+			return nil
+		}
+		for _, g := range group {
+			// Earlier wordings reflection kept go too: fingerprint them before
+			// the trigger deletes those copies.
+			if err := s.fingerprintHistory(ctx, tx, g, fingerprint); err != nil {
+				return err
+			}
+			var content string
+			if err := tx.QueryRowContext(ctx, `SELECT content FROM memories WHERE id = ?`, g).Scan(&content); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					continue
+				}
+				return fmt.Errorf("forget memory %d: %w", g, err)
+			}
+			if err := fingerprint(content); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM memories WHERE id = ?`, g); err != nil {
+				return fmt.Errorf("forget memory %d: %w", g, err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return Memory{}, err
+	}
+	s.forgets.Add(1)
+	// The journal's copies of it went too (a trigger deletes them).
+	s.events.Invalidate(proto.DomainMemory, domainJournal)
+	return m, nil
+}
+
+// fingerprintHistory passes every wording reflection recorded for memory id.
+func (s *Service) fingerprintHistory(ctx context.Context, tx *sql.Tx, id int64, fn func(string) error) error {
+	rows, err := tx.QueryContext(ctx, `SELECT before, after FROM reflection_changes WHERE memory_id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("read memory %d's history: %w", id, err)
+	}
+	var contents []string
+	for rows.Next() {
+		var before, after string
+		if err := rows.Scan(&before, &after); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("read memory %d's history: %w", id, err)
+		}
+		for _, raw := range []string{before, after} {
+			var m Memory
+			if raw != "" && json.Unmarshal([]byte(raw), &m) == nil && m.Content != "" {
+				contents = append(contents, m.Content)
+			}
+		}
+	}
+	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read memory %d's history: %w", id, err)
+	}
+	for _, c := range contents {
+		if err := fn(c); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Retire hides a memory without deleting it, so the change can be undone
+// (reflection retires stale, contradicted or merged memories this way).
+func (s *Service) Retire(ctx context.Context, id int64) (Memory, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m, err := s.Get(ctx, id)
 	if err != nil {
 		return Memory{}, err
 	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM memories WHERE id = ?`, id); err != nil {
-		return Memory{}, fmt.Errorf("forget memory %d: %w", id, err)
+	return s.retire(ctx, id, m, nil)
+}
+
+// RetireIfUnchanged retires a memory only if it is still the version seen;
+// otherwise it returns ErrChanged. rec, if set, records it in the same transaction.
+func (s *Service) RetireIfUnchanged(ctx context.Context, id int64, seen Memory, rec Recorder) (Memory, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, err := s.Get(ctx, id)
+	if err != nil {
+		return Memory{}, err
+	}
+	if !Unchanged(m, seen) {
+		return Memory{}, ErrChanged
+	}
+	return s.retire(ctx, id, m, rec)
+}
+
+func (s *Service) retire(ctx context.Context, id int64, m Memory, rec Recorder) (Memory, error) {
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE memories SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL`, stamp(s.now()), id); err != nil {
+			return fmt.Errorf("retire memory %d: %w", id, err)
+		}
+		if rec != nil {
+			return rec(ctx, tx, &m, nil)
+		}
+		return nil
+	})
+	if err != nil {
+		return Memory{}, err
+	}
+	s.changed()
+	return m, nil
+}
+
+// Restore brings back a retired memory. A memory that was never retired is
+// returned as it is; one that was forgotten is gone. rec, if set, runs in the
+// same transaction.
+func (s *Service) Restore(ctx context.Context, id int64, rec Recorder) (Memory, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var m Memory
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE memories SET deleted_at = NULL, updated_at = ? WHERE id = ? AND deleted_at IS NOT NULL`, stamp(s.now()), id); err != nil {
+			return fmt.Errorf("restore memory %d: %w", id, err)
+		}
+		var err error
+		if m, err = s.get(ctx, tx, id); err != nil {
+			return err
+		}
+		if rec != nil {
+			return rec(ctx, tx, nil, &m)
+		}
+		return nil
+	})
+	if err != nil {
+		return Memory{}, err
 	}
 	s.changed()
 	return m, nil

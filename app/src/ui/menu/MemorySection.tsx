@@ -2,11 +2,12 @@ import { useState } from "react";
 import { useCoreMemory, useDeleteCore, useDeleteMemory, useMemories, useNow, usePatchMemory, usePutCore } from "../../data/hooks";
 import { MEMORY_KINDS, type CoreEntry, type Memory } from "../../data/model";
 import { EditIcon, PlusIcon, TrashIcon } from "../icons";
-import { Button, Chip, ConfirmButton, IconButton, SectionTitle, SelectField, StateMessage, TextArea, TextField } from "../kit/kit";
+import { Button, Chip, ConfirmButton, IconButton, SectionTitle, Segmented, SelectField, StateMessage, TextArea, TextField } from "../kit/kit";
 import { useAutoFocus } from "../kit/useAutoFocus";
 import { useDebounced } from "../kit/useDebounced";
 import { kindLabel } from "../rows/labels";
 import { MemoryRow } from "../rows/rows";
+import { DiaryView } from "./DiaryView";
 import { useMenuActive } from "./MenuContext";
 import styles from "./sections.module.css";
 import rowStyles from "../rows/rows.module.css";
@@ -210,8 +211,28 @@ function MemoryEditor({ memory, busy, deleting, onSave, onCancel, onDelete }: {
   );
 }
 
+type View = "memories" | "diary";
+
 export function MemorySection() {
   const active = useMenuActive();
+  const [view, setView] = useState<View>("memories");
+  return (
+    <div className={styles.stack}>
+      <Segmented<View>
+        label="Show"
+        options={[
+          { value: "memories", label: "Memories" },
+          { value: "diary", label: "Diary" },
+        ]}
+        value={view}
+        onChange={setView}
+      />
+      {view === "memories" ? <Memories active={active} /> : <DiaryView active={active} />}
+    </div>
+  );
+}
+
+function Memories({ active }: { active: boolean }) {
   const now = useNow();
   const [search, setSearch] = useState("");
   const [kind, setKind] = useState("");

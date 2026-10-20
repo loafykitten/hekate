@@ -8,6 +8,7 @@ import {
   approvalsApi,
   changesApi,
   ideasApi,
+  journalApi,
   calendarApi,
   fetchWeather,
   mailApi,
@@ -207,8 +208,9 @@ export function usePatchMemory() {
   return useDomainMutation(["memory"], ({ id, fields }: { id: string; fields: MemoryFields }) => memoryApi.patch(id, fields));
 }
 
+// Forgetting a memory also removes the diary's copies of it.
 export function useDeleteMemory() {
-  return useDomainMutation(["memory"], (id: string) => memoryApi.remove(id));
+  return useDomainMutation(["memory", "journal"], (id: string) => memoryApi.remove(id));
 }
 
 export function useCoreMemory(enabled = true) {
@@ -357,4 +359,15 @@ export function useIdeas(enabled = true) {
 
 export function useSetIdeaStatus() {
   return useDomainMutation(["ideas"], ({ id, status }: { id: string; status: IdeaStatus }) => ideasApi.setStatus(id, status));
+}
+
+// --- journal -------------------------------------------------------------------------------
+
+export function useJournal(enabled = true) {
+  return useQuery({ queryKey: keys.journal, queryFn: ({ signal }) => journalApi.list(signal), enabled });
+}
+
+// Undoing a reflection change changes her memories too.
+export function useUndoReflectionChange() {
+  return useDomainMutation(["journal", "memory"], (changeId: string) => journalApi.undo(changeId));
 }

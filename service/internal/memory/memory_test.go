@@ -1,6 +1,8 @@
 package memory
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -464,5 +466,69 @@ func TestConcurrentPatchesKeepEachOthersFields(t *testing.T) {
 		if got.Content != content || got.FollowUpAt != nil {
 			t.Fatalf("round %d: content=%q follow_up=%v; a patch lost the other's change", i, got.Content, got.FollowUpAt)
 		}
+	}
+}
+
+func TestRetireAndRestore(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	m, _, err := f.svc.Save(ctx, NewMemory{Kind: "fact", Content: "Works at the bakery"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := strconv.ParseInt(m.ID, 10, 64)
+	if _, err := f.svc.Retire(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Get(ctx, id); err == nil {
+		t.Error("a retired memory is hidden")
+	}
+	if found, _ := f.svc.Search(ctx, "bakery", "", 10); len(found) != 0 {
+		t.Errorf("search finds a retired memory: %+v", found)
+	}
+	// The same text can be saved again while the old one is retired.
+	if again, existed, _ := f.svc.Save(ctx, NewMemory{Kind: "fact", Content: "Works at the bakery"}); existed || again.ID == m.ID {
+		t.Errorf("saved again = %+v, existed %v", again, existed)
+	}
+	back, err := f.svc.Restore(ctx, id, nil)
+	if err != nil || back.Content != "Works at the bakery" {
+		t.Fatalf("restore: %+v %v", back, err)
+	}
+	if again, err := f.svc.Restore(ctx, id, nil); err != nil || again.ID != m.ID {
+		t.Errorf("restoring a live memory: %+v %v", again, err)
+	}
+	// A retired memory can still be forgotten for good.
+	if _, err := f.svc.Retire(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Forget(ctx, id); err != nil {
+		t.Fatalf("forgetting a retired memory: %v", err)
+	}
+	if _, err := f.svc.Restore(ctx, id, nil); err == nil {
+		t.Error("a forgotten memory can't come back")
+	}
+}
+
+func TestInsertNeverTouchesAnExistingMemory(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	m, _, err := f.svc.Save(ctx, NewMemory{Kind: "fact", Content: "Plays the cello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Insert(ctx, NewMemory{Kind: "fact", Content: "plays the cello", Importance: 5, FollowUpAt: "2026-11-01"}, nil); !errors.Is(err, ErrExists) {
+		t.Errorf("insert of known text: %v", err)
+	}
+	id, _ := strconv.ParseInt(m.ID, 10, 64)
+	if got, _ := f.svc.Get(ctx, id); got.Importance != 3 || got.FollowUpAt != nil {
+		t.Errorf("the existing memory changed: %+v", got)
+	}
+	// A recorder that fails rolls the change back.
+	boom := errors.New("boom")
+	if _, err := f.svc.Insert(ctx, NewMemory{Kind: "fact", Content: "Speaks Finnish"}, func(context.Context, *sql.Tx, *Memory, *Memory) error { return boom }); !errors.Is(err, boom) {
+		t.Errorf("recorder error: %v", err)
+	}
+	if found, _ := f.svc.Search(ctx, "Finnish", "", 5); len(found) != 0 {
+		t.Errorf("a rolled-back insert is visible: %+v", found)
 	}
 }

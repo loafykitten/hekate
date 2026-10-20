@@ -69,6 +69,7 @@ function toonify(mesh: THREE.Mesh, outline: CharacterRig["outline"]) {
 const _q = new THREE.Quaternion();
 const _dq = new THREE.Quaternion();
 const _qi = new THREE.Quaternion();
+const _qr = new THREE.Quaternion();
 
 // Crossfade lengths (seconds), eased. Gestures start and end in a different stance than a calm
 // idle (e.g. hands clasped vs. at the sides), so these are long enough to read as a deliberate
@@ -463,6 +464,9 @@ export class Character {
       this.tailParent.getWorldQuaternion(_q);
       if (this.tailPrimed) {
         _dq.copy(_q).multiply(this.tailParentQ.invert());
+        // This frame's turn of her hips, seen in her own frame: pitch stays pitch however she faces.
+        this.root.getWorldQuaternion(_qr);
+        _dq.premultiply(_qi.copy(_qr).invert()).multiply(_qr);
         if (_dq.w < 0) _dq.set(-_dq.x, -_dq.y, -_dq.z, -_dq.w); // the short way round
         // Small rotations: the vector part is about half the angle times the axis.
         baseTurn = 2 * _dq.y;

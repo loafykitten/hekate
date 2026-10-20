@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Character, type CharacterRig } from "./character";
+import { TailMotion, type TailInput } from "./tail";
 
 // A one-bone character with an idle loop, a talk loop, a gesture and two fidgets.
 function tiny() {
@@ -63,5 +64,46 @@ describe("Character idle variations", () => {
     const c = tiny();
     expect(c.playGesture("glance")).toBe(false);
     expect(c.playGesture("wave")).toBe(true);
+  });
+});
+
+describe("Character tail", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("feels her hips pitch in her own frame, whichever way she faces", () => {
+    const root = new THREE.Group();
+    const head = new THREE.Bone();
+    head.name = "head";
+    const hips = new THREE.Bone();
+    hips.name = "hips";
+    const tail = new THREE.Bone();
+    tail.name = "tail";
+    tail.position.set(0, 0, -0.2);
+    root.add(head, hips);
+    hips.add(tail);
+    const rig: CharacterRig = {
+      headBone: "head",
+      mouth: [],
+      blink: [],
+      outline: { byMesh: {}, fallback: null },
+      clips: { gestures: [], fidgets: [], headDriven: [] },
+      procedural: { tail: ["tail"], ears: [], chinLift: 0 },
+    };
+    const c = Character.fromScene(root, [], rig);
+    c.blinkEnabled = false;
+    const inputs: TailInput[] = [];
+    const update = TailMotion.prototype.update;
+    vi.spyOn(TailMotion.prototype, "update").mockImplementation(function (this: TailMotion, input: TailInput) {
+      inputs.push(input);
+      return update.call(this, input);
+    });
+
+    root.rotation.y = Math.PI / 2; // turned side-on
+    c.update(1 / 60); // first frame: takes her stance
+    hips.rotateX(0.1); // her hips pitch forward
+    c.update(1 / 60);
+    const last = inputs.at(-1)!;
+    expect(last.baseTip).toBeCloseTo(0.1, 2);
+    expect(last.baseTurn).toBeCloseTo(0, 2);
   });
 });

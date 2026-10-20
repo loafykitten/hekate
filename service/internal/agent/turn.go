@@ -66,11 +66,7 @@ func (a *Agent) runTurn(t *turn, prev *turn) {
 		log: a.log.With("turn_id", t.id)}
 	r.log.Info("turn start", "origin", t.origin, "chars", len(t.userText), "quiet", t.quiet)
 
-	begin := r.begin
-	if t.script != nil {
-		begin, r.lastUsed = r.beginScript, t.script.Model
-	}
-	if err := begin(); err != nil {
+	if err := r.begin(); err != nil {
 		r.log.Error("cannot start turn", "error", err)
 		a.hub.Broadcast(proto.NewError(proto.CodeLLMError, "Something went wrong on my side. Try again?", t.inputID))
 		return
@@ -84,12 +80,7 @@ func (a *Agent) runTurn(t *turn, prev *turn) {
 	r.pipe = newPipeline(ctx, synth, a.vocabulary(), r.emitSegment, r.log)
 	t.pipe.Store(r.pipe)
 
-	var loopErr error
-	if t.script != nil {
-		r.perform()
-	} else {
-		loopErr = r.loop(ctx)
-	}
+	loopErr := r.loop(ctx)
 	r.pipe.finish()
 	r.end(ctx, loopErr)
 }
@@ -122,39 +113,6 @@ func (r *turnRun) begin() error {
 	return nil
 }
 
-// beginScript records a scripted turn: its cue stands in for the user's
-// message, hidden from the conversation log.
-func (r *turnRun) beginScript() error {
-	a, t := r.a, r.t
-	ctx, cancel := a.dbCtx()
-	defer cancel()
-	if err := a.store.BeginTurn(ctx, store.Turn{ID: t.id, ConversationID: ConversationID,
-		InputID: t.inputID, Origin: t.origin, StartedAt: r.start}); err != nil {
-		return fmt.Errorf("record turn: %w", err)
-	}
-	if err := a.store.AddMessages(ctx, []store.Message{{
-		ConversationID: ConversationID, TurnID: t.id, Role: store.RoleUser,
-		Content: t.script.Cue, CreatedAt: r.start,
-	}}); err != nil {
-		return fmt.Errorf("record message: %w", err)
-	}
-	return nil
-}
-
-// perform shows a script's cards and speaks its text, sentence by sentence.
-func (r *turnRun) perform() {
-	s := r.t.script
-	rd := &roundRec{index: 0, model: s.Model, text: s.Text, results: map[string]string{}, stored: map[string]string{}}
-	r.rounds = append(r.rounds, rd)
-	for _, c := range s.Cards {
-		r.a.hub.Broadcast(proto.NewCard(r.t.id, c))
-	}
-	var split perform.Splitter
-	for _, sentence := range append(split.Push(s.Text), split.Flush()...) {
-		r.pipe.submit(rd.index, sentence)
-	}
-}
-
 func (r *turnRun) emitSegment(seg perform.Segment) {
 	if seg.Seq == 0 {
 		r.firstSeg = time.Since(r.start)
@@ -171,7 +129,11 @@ const outOfToolsNote = "You can't use any more tools this turn. Answer now in pl
 // loop runs LLM rounds until the model answers without calling tools.
 func (r *turnRun) loop(ctx context.Context) error {
 	a := r.a
-	for round := 0; ; round++ {
+	first, err := r.open(ctx)
+	if err != nil {
+		return err
+	}
+	for round := first; ; round++ {
 		allowTools := round < a.limits.MaxRounds && r.calls < a.limits.MaxCalls
 		var specs []llm.Tool
 		if allowTools {
@@ -213,6 +175,34 @@ func (r *turnRun) loop(ctx context.Context) error {
 			r.msgs = append(r.msgs, llm.Message{Role: llm.RoleTool, ToolCallID: call.ID, Content: o.content})
 		}
 	}
+}
+
+// open runs the opener's call, if it has one for this turn, as round 0: as if
+// the model had made it, so the reply answers its result. It returns the
+// round the model starts at.
+func (r *turnRun) open(ctx context.Context) (int, error) {
+	if r.a.opener == nil {
+		return 0, nil
+	}
+	name, ok := r.a.opener(ctx, r.t.userText)
+	if !ok {
+		return 0, nil
+	}
+	call := llm.ToolCall{ID: "call_open", Name: name, Arguments: "{}"}
+	rd := &roundRec{index: 0, model: r.model.Name, calls: []llm.ToolCall{call}, results: map[string]string{}, stored: map[string]string{}}
+	r.rounds = append(r.rounds, rd)
+	r.msgs = append(r.msgs, llm.Message{Role: llm.RoleAssistant, ToolCalls: rd.calls})
+	o := r.runCalls(ctx, rd.calls)[0]
+	if !o.executed {
+		return 0, ctx.Err()
+	}
+	r.log.Info("turn opened with a call", "tool", name)
+	rd.results[call.ID] = o.content
+	if o.stored != "" {
+		rd.stored[call.ID] = o.stored
+	}
+	r.msgs = append(r.msgs, llm.Message{Role: llm.RoleTool, ToolCallID: call.ID, Content: o.content})
+	return 1, nil
 }
 
 // llmRound makes one streaming request, feeding visible text to the pipeline.
@@ -392,6 +382,11 @@ func (r *turnRun) runTool(ctx context.Context, call llm.ToolCall, n int) toolOut
 	a.hub.Broadcast(proto.NewActivity(r.t.id, call.Name, label, state))
 	if runErr == nil && res.Card != nil {
 		a.hub.Broadcast(proto.NewCard(r.t.id, *res.Card))
+	}
+	if runErr == nil {
+		for _, c := range res.Cards {
+			a.hub.Broadcast(proto.NewCard(r.t.id, c))
+		}
 	}
 
 	dbctx, cancel := a.dbCtx()

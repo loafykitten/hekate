@@ -10,7 +10,6 @@ import {
   ideasApi,
   journalApi,
   routinesApi,
-  briefingApi,
   calendarApi,
   fetchWeather,
   mailApi,
@@ -384,6 +383,3 @@ export function usePatchRoutines() {
   return useDomainMutation(["routines"], (fields: Partial<RoutineSettings>) => routinesApi.patch(fields));
 }
 
-export function useBriefing(enabled = true) {
-  return useQuery({ queryKey: keys.briefing, queryFn: ({ signal }) => briefingApi.today(signal), enabled });
-}

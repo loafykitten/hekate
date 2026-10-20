@@ -17,7 +17,7 @@ client whose input started a turn (`origin` matches its `client_id`) plays the a
 
 | type | fields | meaning |
 |---|---|---|
-| `ready` | `client_id`, `conversation_id`, `capabilities: { stt, tts }`, `gestures: string[]`, `timezone`, `briefing` | Sent once on connect. `stt`/`tts` are false when unconfigured. `timezone` is the IANA zone the service schedules in; clients display times in it. `briefing` is true while today's morning briefing waits to be played: the client asks for it with `briefing` when it can be heard (or its voice is off), otherwise it offers it to tap. |
+| `ready` | `client_id`, `conversation_id`, `capabilities: { stt, tts }`, `gestures: string[]`, `timezone` | Sent once on connect. `stt`/`tts` are false when unconfigured. `timezone` is the IANA zone the service schedules in; clients display times in it. |
 | `capabilities` | `capabilities: { stt, tts }` | What the service can do changed after connecting (e.g. speech-to-text finished loading). |
 | `transcript` | `id`, `text`, `superseded?` | Push-to-talk result for input `id`. An empty `text` means nothing was heard, and no turn follows. `superseded: true` means newer input (from any device) arrived while it was transcribed, so it was dropped. |
 | `turn_start` | `turn_id`, `input_id`, `origin`, `user_text` | She's answering `user_text`. |
@@ -25,7 +25,7 @@ client whose input started a turn (`origin` matches its `client_id`) plays the a
 | `segment` | see below | One sentence of her reply, ready to perform. |
 | `card` | `turn_id`, `card: { kind, id, title, data }` | Something to show on screen (M2+). |
 | `turn_end` | `turn_id`, `status: "done" \| "interrupted" \| "error"`, `text`, `model`, `usage: { input_tokens, output_tokens, cost_usd \| null }` | The turn is over. `text` is the full display text. |
-| `error` | `code`, `message`, `input_id?` | A problem the user should see. Codes: `llm_unavailable` (no key), `llm_error`, `empty_reply`, `turn_timeout`, `stt_unavailable` (unconfigured or model still loading), `stt_failed`, `bad_message`, `too_long`, `no_briefing`, `briefing_busy`. |
+| `error` | `code`, `message`, `input_id?` | A problem the user should see. Codes: `llm_unavailable` (no key), `llm_error`, `empty_reply`, `turn_timeout`, `stt_unavailable` (unconfigured or model still loading), `stt_failed`, `bad_message`, `too_long`. |
 
 `segment`:
 
@@ -56,7 +56,6 @@ from the audio's loudness.
 | `ptt_start` | `id`, `sample_rate` (16000) | Push-to-talk started. Binary frames follow: little-endian signed 16-bit mono PCM. She stops talking at once on every device (the current turn ends as `interrupted`, keeping what was delivered). |
 | `ptt_end` | `id`, `quiet?` | Released. The server transcribes, sends `transcript`, then starts a turn (`quiet` as for `say`). |
 | `ptt_cancel` | `id` | Discard the audio. |
-| `briefing` | `id`, `quiet?`, `replay?` | Play today's morning briefing here. It arrives as a turn started by this client (`user_text` empty) with its cards, and new input interrupts it as usual. Without `replay` (the app asking on its own as it opens) it plays only while still waiting (the first device to ask claims it) and only at a quiet moment: while a turn runs or within two minutes of any input it answers `briefing_busy` and keeps waiting, and the app offers it to tap. With `replay` (the owner tapped to hear it) it plays again whenever asked. `error` `no_briefing` when there's none to play. |
 | `interrupt` | `heard_seq` (last segment seq the user heard at least partly, or -1), `turn_id` (the turn `heard_seq` describes) | Stop that turn. The server keeps segments up to `heard_seq` in history, and ignores an interrupt for a turn that is no longer the current one. |
 
 An `interrupt` that arrives after the turn already ended (the client was still playing queued audio) trims the saved reply to `heard_seq` and broadcasts a second `turn_end` with status `interrupted`, so every client stops playing that turn. With no recent turn it is ignored. New input while a turn is running interrupts that turn first. The client sends `interrupt` with its `heard_seq` only for a turn it started (it knows what was heard); for another device's turn it just sends the input, and the server interrupts that turn keeping what it delivered.
@@ -403,31 +402,28 @@ everything when it reached no one (no app open, and neither a push nor Telegram 
 nudged twice (what was sent is remembered for a year). Renamon can change these settings with
 `routine_settings` when the owner asks.
 
-The morning briefing is written at `briefing_at` (caught up within 3 h), from the weather at home,
-today's events, tasks due or late, today's reminders, mail that needs the owner and follow-ups,
-using the background model. It's pushed (`notify` kind `briefing`, opening Today, `/?menu=today`) and
-waits to be played: the app plays it when opened (see `ready`), with weather, events, tasks,
-reminders and mail cards.
+The morning briefing is never sent ahead of time: the owner starts it. The first `say` (or spoken
+input) each local day that contains "good morning" (any case) opens its turn with a
+`morning_briefing` call the service makes itself, before the model is asked, so her reply is the
+catch-up. The tool gathers the weather at home, the calendar for the next 24 hours, tasks due today
+or late, reminders in the next 24 hours, mail that needs the owner and follow-ups due today, and
+shows up to three cards (`activity` and `card` as for any tool). Later greetings that day are just
+greetings; she can call the tool herself any time she's asked for the briefing or what's on today.
 
 ```jsonc
 // RoutineSettings
-{ "heartbeat": true, "waking_start": "08:00", "waking_end": "22:00",   // HH:MM local; the window may pass midnight
-  "briefing": true, "briefing_at": "07:30" }
-// Briefing (today's)
-{ "day": "2026-10-20", "text": "Morning, Rika. Rain all day…",   // display text, tags removed
-  "cards": [Card], "created_at": "…", "delivered_at": null }       // first played
+{ "heartbeat": true, "waking_start": "08:00", "waking_end": "22:00" }   // HH:MM local; the window may pass midnight
 ```
 
 | Method & path | Body | Returns |
 |---|---|---|
 | `GET /api/routines` | | `RoutineSettings` |
 | `PATCH /api/routines` | any `RoutineSettings` fields | `RoutineSettings`; 400 for a bad time or an empty window |
-| `GET /api/briefing` | | today's `Briefing`; 404 when none was written today |
 
 ### Ideas and routine runs
 
 Renamon notes improvement ideas with `idea_log` (at most 10 a day; an open idea with the same text
-isn't saved twice). Routines are the scheduled background jobs (reflection, heartbeat, briefing);
+isn't saved twice). Routines are the scheduled background jobs (reflection, heartbeat);
 each run is recorded and kept 90 days.
 
 ```jsonc
@@ -474,6 +470,6 @@ from stored or fetched data, never from model text. Shapes of `data` by `kind`:
 
 | type | fields | meaning |
 |---|---|---|
-| `notify` | `id`, `kind: "reminder" \| "approval" \| "change" \| "nudge" \| "briefing"`, `title`, `body`, `card?` | Something fired, or she needs a decision she asked for outside a conversation (e.g. a rule from the weekly noise report). The app shows it even with no turn running. |
+| `notify` | `id`, `kind: "reminder" \| "approval" \| "change" \| "nudge"`, `title`, `body`, `card?` | Something fired, or she needs a decision she asked for outside a conversation (e.g. a rule from the weekly noise report). The app shows it even with no turn running. |
 | `approval` | `approval: Approval` | An approval was created or changed (decided, ran, expired). Clients update any card showing it. |
-| `invalidate` | `domains: ("tasks" \| "reminders" \| "calendar" \| "memory" \| "weather" \| "mail" \| "approvals" \| "changes" \| "ideas" \| "journal" \| "routines" \| "briefing")[]` | Data changed; refetch those menu sections (`weather`: the home place changed). |
+| `invalidate` | `domains: ("tasks" \| "reminders" \| "calendar" \| "memory" \| "weather" \| "mail" \| "approvals" \| "changes" \| "ideas" \| "journal" \| "routines")[]` | Data changed; refetch those menu sections (`weather`: the home place changed). |

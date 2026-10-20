@@ -62,6 +62,10 @@ type Options struct {
 	AssetsDir string
 	Limits    Limits
 	Now       func() time.Time
+	// Opener, if set, may start a turn with a tool call of its own before the
+	// model is asked, such as the morning briefing on the day's first "good
+	// morning". It returns the tool's name, or false to leave the turn alone.
+	Opener func(ctx context.Context, userText string) (tool string, ok bool)
 }
 
 // Agent owns the conversation and runs one turn at a time.
@@ -80,6 +84,7 @@ type Agent struct {
 	gestures *gestureSource
 	limits   Limits
 	now      func() time.Time
+	opener   func(ctx context.Context, userText string) (string, bool)
 
 	baseCtx context.Context //nolint:containedctx // service lifetime, set by Start
 	wg      sync.WaitGroup
@@ -94,8 +99,7 @@ type turn struct {
 	inputID  string
 	origin   string
 	userText string
-	quiet    bool    // the device that asked has her voice off: no speech for this turn
-	script   *Script // a reply written beforehand, performed instead of asking the model
+	quiet    bool // the device that asked has her voice off: no speech for this turn
 
 	ctx    context.Context //nolint:containedctx // the turn's lifetime
 	cancel context.CancelCauseFunc
@@ -163,7 +167,7 @@ func New(o Options) (*Agent, error) {
 	a := &Agent{
 		llm: o.LLM, store: o.Store, hub: o.Hub, synth: o.Synth, tools: reg, sources: o.Context, log: o.Logger,
 		tamer: o.Tamer, loc: o.Location, chat: o.Chat, deep: o.Deep,
-		gestures: newGestureSource(o.AssetsDir), limits: o.Limits, now: o.Now,
+		gestures: newGestureSource(o.AssetsDir), limits: o.Limits, now: o.Now, opener: o.Opener,
 	}
 	if a.log == nil {
 		a.log = slog.New(slog.DiscardHandler)
@@ -246,24 +250,6 @@ func (a *Agent) Say(origin, inputID, text string, quiet bool) {
 	}
 	ctx, cancel := context.WithCancelCause(a.baseCtx)
 	a.start(&turn{id: newID("t_"), inputID: inputID, origin: origin, userText: text, quiet: quiet,
-		ctx: ctx, cancel: cancel, done: make(chan struct{})})
-}
-
-// Script is a reply she gives without thinking it up on the spot, such as the
-// morning briefing written earlier. It's performed like any reply (voice,
-// gestures, cards) and kept in history.
-type Script struct {
-	Text  string       // her words, tags included
-	Cards []proto.Card // shown beside her as she speaks
-	Cue   string       // what history keeps as the prompt it answers; never shown
-	Model string       // the model that wrote it, for the record
-}
-
-// Perform delivers a scripted reply as a turn started by origin, interrupting
-// a running turn as new input would.
-func (a *Agent) Perform(origin, inputID string, s Script, quiet bool) {
-	ctx, cancel := context.WithCancelCause(a.baseCtx)
-	a.start(&turn{id: newID("t_"), inputID: inputID, origin: origin, quiet: quiet, script: &s,
 		ctx: ctx, cancel: cancel, done: make(chan struct{})})
 }
 

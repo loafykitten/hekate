@@ -809,42 +809,55 @@ func TestTrimFinishesBeforeTheNextTurnStarts(t *testing.T) {
 	}
 }
 
-func TestPerformAScript(t *testing.T) {
-	synth := &fakeSynth{}
+func TestAnOpenerMakesTheFirstCall(t *testing.T) {
+	brief := Tool{
+		Name: "brief", Description: "The day", Effect: EffectRead, Label: "Looking over your day",
+		Schema: json.RawMessage(`{"type":"object","properties":{}}`),
+		Run: func(context.Context, json.RawMessage) (Result, error) {
+			return Result{Content: "Rain, and the dentist at three.", Cards: []Card{
+				{Kind: "weather", ID: "w", Title: "Weather", Data: json.RawMessage(`{}`)},
+				{Kind: "events", ID: "e", Title: "Coming up", Data: json.RawMessage(`{}`)},
+			}}, nil
+		},
+	}
+	opener := func(_ context.Context, text string) (string, bool) {
+		return "brief", strings.Contains(text, "good morning")
+	}
 	e := newEnv(t, func(int, llmReq) (int, []string) {
-		t.Error("a script never asks the model")
-		return 500, nil
-	}, envOpts{synth: synth})
-	card := proto.Card{Kind: "weather", ID: "home", Title: "Weather", Data: json.RawMessage(`{}`)}
-	e.agent.Perform("client-1", "b-1", Script{Text: "{waving} Morning, Rika. [laughs] It's cold out.", Cards: []proto.Card{card},
-		Cue: "(The app opened: you gave the morning briefing.)", Model: "flex"}, false)
+		return 200, say("Morning, Rika. Take an umbrella to the dentist.")
+	}, envOpts{tools: []Tool{brief}, opener: opener})
+	e.agent.Say("c", "i", "good morning!", false)
 	ev := e.hub.waitTurnEnd(t, 1)
 
-	start := ofType[proto.TurnStart](ev)
-	if len(start) != 1 || start[0].UserText != "" || start[0].Origin != "client-1" || start[0].InputID != "b-1" {
-		t.Fatalf("turn_start = %+v", start)
+	// The model is asked once, with the opener's call and its result already in.
+	reqs := e.llm.requests()
+	if len(reqs) != 1 {
+		t.Fatalf("requests = %d", len(reqs))
 	}
-	if cards := ofType[proto.CardMsg](ev); len(cards) != 1 || cards[0].Card.Kind != "weather" {
+	m := reqs[0].Messages
+	asst, tool := m[len(m)-2], m[len(m)-1]
+	if asst["role"] != "assistant" || asst["tool_calls"] == nil || tool["role"] != "tool" || tool["content"] != "Rain, and the dentist at three." {
+		t.Errorf("opened messages = %v / %v", asst, tool)
+	}
+	if cards := ofType[proto.CardMsg](ev); len(cards) != 2 || cards[0].Card.Kind != "weather" || cards[1].Card.Kind != "events" {
 		t.Errorf("cards = %+v", cards)
 	}
-	segs := ofType[proto.Segment](ev)
-	if got := segTexts(ev); !slices.Equal(got, []string{"Morning, Rika.", "It's cold out."}) || segs[0].AudioB64 == nil || len(segs[0].Gestures) != 1 {
-		t.Errorf("segments = %q %+v", got, segs)
+	if acts := ofType[proto.Activity](ev); len(acts) != 2 || acts[0].Label != "Looking over your day" {
+		t.Errorf("activity = %+v", acts)
 	}
-	end := ofType[proto.TurnEnd](ev)[0]
-	if end.Status != proto.StatusDone || end.Text != "Morning, Rika. It's cold out." || end.Model != "flex" {
-		t.Errorf("turn_end = %+v", end)
+	// History replays: user, the call, its result, the reply.
+	var roles []string
+	for _, msg := range e.messages() {
+		roles = append(roles, msg.Role)
 	}
-	msgs := e.messages()
-	if len(msgs) != 2 || msgs[0].Role != store.RoleUser || msgs[0].Text != "" || !strings.Contains(msgs[0].Content, "morning briefing") ||
-		msgs[1].Role != store.RoleAssistant || msgs[1].Content != "{waving} Morning, Rika. [laughs] It's cold out." {
-		t.Errorf("history = %+v", msgs)
+	if !slices.Equal(roles, []string{"user", "assistant", "tool", "assistant"}) {
+		t.Errorf("history roles = %v", roles)
 	}
 
-	// Quiet: performed without speech.
-	e.agent.Perform("client-1", "b-2", Script{Text: "Quietly now.", Cue: "(cue)"}, true)
-	ev = e.hub.waitTurnEnd(t, 2)
-	if segs := ofType[proto.Segment](ev); segs[len(segs)-1].AudioB64 != nil {
-		t.Errorf("a quiet script was spoken: %+v", segs[len(segs)-1])
+	// Anything else is left to the model.
+	e.agent.Say("c", "j", "thanks", false)
+	e.hub.waitTurnEnd(t, 2)
+	if m := e.llm.requests()[1].Messages; m[len(m)-1]["role"] != "user" {
+		t.Errorf("an unopened turn starts with %v", m[len(m)-1])
 	}
 }

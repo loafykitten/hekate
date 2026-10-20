@@ -1,5 +1,5 @@
-// Package jobs runs Hekate's scheduled background work (reflection, heartbeat,
-// briefing) and records each run, so a missed run is caught up after a restart
+// Package jobs runs Hekate's scheduled background work (reflection, the
+// heartbeat) and records each run, so a missed run is caught up after a restart
 // and she can see how her routines went.
 package jobs
 

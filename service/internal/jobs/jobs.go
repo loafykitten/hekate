@@ -138,9 +138,7 @@ func (r *Runner) Run(ctx context.Context) {
 		WHERE status = ?`, StatusFailed, stamp(r.now()), StatusRunning); err != nil {
 		r.log.Error("cannot close interrupted job runs", "error", err)
 	}
-	if _, err := r.db.ExecContext(ctx, `DELETE FROM job_runs WHERE started_at < ?`, stamp(r.now().Add(-keepRuns))); err != nil {
-		r.log.Warn("cannot prune old job runs", "error", err)
-	}
+	r.prune(ctx)
 	r.mu.Lock()
 	jobs := append([]Job(nil), r.jobs...)
 	r.mu.Unlock()
@@ -216,6 +214,14 @@ func (r *Runner) runOnce(ctx context.Context, j Job) {
 		r.log.Info("job done", "job", j.Name, "summary", clip(summary, 200), "ms", time.Since(began).Milliseconds())
 	}
 	r.finish(ctx, id, summary, runErr)
+	r.prune(ctx)
+}
+
+// prune drops runs older than keepRuns; it runs at start and after every run.
+func (r *Runner) prune(ctx context.Context) {
+	if _, err := r.db.ExecContext(context.WithoutCancel(ctx), `DELETE FROM job_runs WHERE started_at < ?`, stamp(r.now().Add(-keepRuns))); err != nil {
+		r.log.Warn("cannot prune old job runs", "error", err)
+	}
 }
 
 func (r *Runner) begin(ctx context.Context, job string, at time.Time) (int64, error) {
@@ -337,8 +343,13 @@ func Daily(loc *time.Location, catchUp time.Duration, at func(ctx context.Contex
 		}
 		t := c.On(now, loc)
 		if now.Before(t) {
-			// Today's run is still ahead, unless yesterday's ran late (caught up) and
-			// it's not yet time; either way, today's time is next.
+			// Today's run is still ahead. Yesterday's may have been missed just before
+			// midnight: catch it up if it's recent enough and never ran.
+			n := now.In(loc)
+			y := c.On(time.Date(n.Year(), n.Month(), n.Day()-1, 12, 0, 0, 0, loc), loc)
+			if !last.IsZero() && last.Before(y) && now.Sub(y) <= catchUp {
+				return y, true
+			}
 			return t, true
 		}
 		if (!last.IsZero() && !last.Before(t)) || now.Sub(t) > catchUp {

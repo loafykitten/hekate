@@ -48,6 +48,18 @@ func TestDaily(t *testing.T) {
 			t.Errorf("%s: next = %v, %v; want %v", c.name, got, ok, c.want)
 		}
 	}
+	// A late-evening job missed just before midnight is caught up after it, once.
+	late := Daily(loc, 6*time.Hour, func(context.Context) (Clock, bool) { return Clock{23, 30}, true })
+	yesterday := time.Date(2026, 10, 19, 23, 30, 0, 0, loc)
+	if got, _ := late(t.Context(), at(0, 30), yesterday.AddDate(0, 0, -1)); !got.Equal(yesterday) {
+		t.Errorf("missed before midnight: %v, want %v", got, yesterday)
+	}
+	if got, _ := late(t.Context(), at(0, 30), yesterday); !got.Equal(at(23, 30)) {
+		t.Errorf("ran before midnight: %v", got)
+	}
+	if got, _ := late(t.Context(), at(7, 0), yesterday.AddDate(0, 0, -1)); !got.Equal(at(23, 30)) {
+		t.Errorf("missed too long ago: %v", got)
+	}
 	off := Daily(loc, time.Hour, func(context.Context) (Clock, bool) { return Clock{}, false })
 	if _, ok := off(t.Context(), at(9, 0), time.Time{}); ok {
 		t.Error("a switched-off daily job has a next run")
@@ -95,6 +107,14 @@ func TestRunsAreRecorded(t *testing.T) {
 	}
 	if b := latest["bad"]; b == nil || b.Status != StatusFailed || b.Error != "model unreachable" {
 		t.Errorf("bad = %+v", b)
+	}
+	// Runs older than 90 days are dropped as new ones finish.
+	now = now.Add(91 * 24 * time.Hour)
+	if err := r.RunNow(t.Context(), "good"); err != nil {
+		t.Fatal(err)
+	}
+	if runs, _ := r.Runs(t.Context(), "", 0); len(runs) != 1 {
+		t.Errorf("after 91 days, runs = %+v", runs)
 	}
 	if latest["idle"] != nil {
 		t.Errorf("a skipped run is not recorded: %+v", latest["idle"])

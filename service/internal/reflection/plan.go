@@ -31,10 +31,10 @@ type saveOp struct {
 }
 
 type updateOp struct {
-	ID         flexID  `json:"id"`
-	Content    *string `json:"content"`
-	Kind       *string `json:"kind"`
-	Importance *int    `json:"importance"`
+	ID         flexID   `json:"id"`
+	Content    *string  `json:"content"`
+	Kind       *string  `json:"kind"`
+	Importance *int     `json:"importance"`
 	FollowUpAt *string  `json:"follow_up_at"`
 	MergedFrom []flexID `json:"merged_from"` // a merge: the memories whose words this one now holds
 	Reason     string   `json:"reason"`

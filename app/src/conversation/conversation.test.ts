@@ -427,6 +427,27 @@ describe("Conversation: morning briefing", () => {
     expect(t.types().filter((x) => x === "briefing")).toHaveLength(1);
   });
 
+  it("doesn't cut into another device's conversation", async () => {
+    const t = setup({ ready: { ...READY, briefing: true } });
+    t.socket.receive({ type: "turn_start", turn_id: "t9", input_id: "x", origin: "other", user_text: "hi from the desktop" });
+    t.conversation.attachStage({ speech: new FakeSpeech(), bubble: undefined, character: undefined } as never);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(t.types()).not.toContain("briefing");
+    expect(t.state().notices).toMatchObject([{ id: "briefing", play: true }]);
+  });
+
+  it("forgets a tap made while loading once another device starts a turn", async () => {
+    const t = setup({ ready: { ...READY, briefing: true } });
+    t.conversation.playBriefing();
+    t.socket.receive({ type: "turn_start", turn_id: "t9", input_id: "x", origin: "other", user_text: "hi" });
+    t.socket.receive({ type: "turn_end", turn_id: "t9", status: "done", text: "hello", model: "m", usage: { input_tokens: 0, output_tokens: 0, cost_usd: null } });
+    t.conversation.attachStage({ speech: new FakeSpeech(), bubble: undefined, character: undefined } as never);
+    await vi.advanceTimersByTimeAsync(500);
+    // The tap was superseded: no replay. Still waiting and all quiet now, it's offered as on opening.
+    const sent = t.socket.json.filter((m) => m.type === "briefing");
+    expect(sent.every((m) => !("replay" in m))).toBe(true);
+  });
+
   it("asks for another tap when a tap made while loading can't start audio", async () => {
     const t = setup({ ready: { ...READY, briefing: true } });
     t.conversation.playBriefing();

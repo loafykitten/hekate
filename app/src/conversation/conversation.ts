@@ -299,7 +299,7 @@ export class Conversation {
   private async playDeferred(replay: boolean) {
     const gen = this.inputGen;
     const audible = !this.voice || (await Promise.race([this.stage!.speech.unlock(), wait(UNLOCK_WAIT_MS, false)]));
-    if (gen !== this.inputGen) return; // the owner said or asked something else meanwhile
+    if (gen !== this.inputGen) return; // something newer was said or asked, here or on another device
     if (audible) {
       this.playBriefing(replay);
       return;
@@ -316,12 +316,14 @@ export class Conversation {
     if (!this.briefingWaiting || this.offeringBriefing || !this.stage) return;
     this.offeringBriefing = true;
     try {
-      const visible = typeof document === "undefined" || document.visibilityState === "visible";
-      const idle = this.phase() === "idle";
-      if (visible && idle && this.stage) {
+      // Only when nothing is going on, here or on another device: starting it would cut that off.
+      const quiet = () =>
+        (typeof document === "undefined" || document.visibilityState === "visible") && this.phase() === "idle" && !this.client.turnActive;
+      if (quiet()) {
+        const gen = this.inputGen;
         // Some browsers leave the unlock pending until a tap: don't wait on it for long.
         const audible = !this.voice || (await Promise.race([this.stage.speech.unlock(), wait(UNLOCK_WAIT_MS, false)]));
-        if (audible && this.briefingWaiting && this.connected && this.phase() === "idle") {
+        if (audible && this.briefingWaiting && this.connected && gen === this.inputGen && quiet()) {
           this.playBriefing(false);
           return;
         }
@@ -564,6 +566,8 @@ export class Conversation {
 
   private onTurnStart(turnId: string, origin: string, userText: string) {
     const mine = origin === this.client.clientId;
+    // Any turn, from any device, is newer than a briefing tapped while she loaded.
+    if (!mine) this.newInput();
     if (mine) {
       // A newer reply of ours replaces whatever is still playing (its turn may have finished on
       // the server before this input arrived, so nothing else stops it).

@@ -41,7 +41,11 @@ const (
 	// out new ones.
 	maxCandidates = 1000
 	maxLines      = 4
-	maxLine       = 140
+	maxLine       = 140 // characters of one item
+	// Bytes: an item, and the whole body. Web push carries about 4 KB, encrypted
+	// JSON included, so the body stays well inside it whatever the script.
+	maxItemBytes = 300
+	maxBodyBytes = 1500
 )
 
 // What the heartbeat reads; the feature services satisfy these.
@@ -118,6 +122,9 @@ func (s *Service) Heartbeat(ctx context.Context) (string, error) {
 			return "", err
 		}
 		summary = fmt.Sprintf("Nudged about %d thing(s)", shownCount)
+		if shownCount == 0 {
+			summary = "Couldn't reach the owner (no app open, no notification delivered); trying again next time"
+		}
 	}
 	if len(failed) > 0 {
 		summary += fmt.Sprintf(" (couldn't check %s)", strings.Join(failed, ", "))
@@ -162,7 +169,7 @@ func (s *Service) taskNudges(ctx context.Context, now time.Time) ([]nudge, error
 		if t.Due == nil || (len(*t.Due) == len(time.DateOnly) && *t.Due >= today) {
 			continue // due today (all day) isn't late yet
 		}
-		out = append(out, nudge{key: "task:" + t.ID + ":" + *t.Due, kind: "task", title: "Overdue", line: t.Title})
+		out = append(out, nudge{key: "task:" + t.ID + ":" + *t.Due, kind: "task", title: "Overdue", line: clip(oneLine(t.Title), maxLine)})
 	}
 	return out, nil
 }
@@ -233,11 +240,22 @@ func (s *Service) deliver(ctx context.Context, now time.Time, list []nudge) (int
 	title, body, shown := compose(list)
 	id := "nudge-" + now.UTC().Format("20060102T150405")
 	s.events.Notify(proto.NewNotify(id, proto.NotifyKindNudge, title, body, nil))
+	// It reached the owner if an app is open to show it, a push service took
+	// it, or the backup channel did. Otherwise nothing counts as sent: the next
+	// heartbeat tries again.
+	delivered := false
+	if c, ok := s.events.(interface{ Clients() int }); ok && c.Clients() > 0 {
+		delivered = true
+	}
 	if s.pusher != nil {
 		res, err := s.pusher.Send(ctx, push.Payload{Title: title, Body: body, URL: "/?menu=today", Tag: "nudge"}, push.UrgencyNormal)
 		if err != nil {
 			s.log.Warn("heartbeat push failed", "error", err, "sent", res.Sent)
 		}
+		delivered = delivered || (err == nil && res.Sent > 0) || res.Backup
+	}
+	if !delivered {
+		return 0, nil
 	}
 	db := s.st.DB()
 	for _, n := range shown {
@@ -256,6 +274,9 @@ func (s *Service) deliver(ctx context.Context, now time.Time, list []nudge) (int
 // line, at most maxLines. It returns the nudges the notice names; the rest stay
 // pending for a later heartbeat.
 func compose(list []nudge) (title, body string, shown []nudge) {
+	for i := range list {
+		list[i].line = clipBytes(list[i].line, maxItemBytes)
+	}
 	type line struct {
 		text  string
 		named []nudge
@@ -297,15 +318,22 @@ func compose(list []nudge) (title, body string, shown []nudge) {
 			lines = append(lines, line{"On my mind: " + n.line, []nudge{n}})
 		}
 	}
-	more := 0
-	if len(lines) > maxLines {
-		for _, l := range lines[maxLines-1:] {
-			more += len(l.named)
-		}
-		lines = lines[:maxLines-1]
+	// Keep whole lines while they fit, by count and by bytes; the rest wait.
+	limit := len(lines)
+	if limit > maxLines {
+		limit = maxLines - 1
 	}
-	texts := make([]string, 0, len(lines)+1)
-	for _, l := range lines {
+	kept, used := 0, 0
+	for kept < limit && used+len(lines[kept].text)+1 <= maxBodyBytes-len("and 999 more") {
+		used += len(lines[kept].text) + 1
+		kept++
+	}
+	more := 0
+	for _, l := range lines[kept:] {
+		more += len(l.named)
+	}
+	texts := make([]string, 0, kept+1)
+	for _, l := range lines[:kept] {
 		texts = append(texts, l.text)
 		shown = append(shown, l.named...)
 	}
@@ -321,6 +349,18 @@ func compose(list []nudge) (title, body string, shown []nudge) {
 
 // stamp formats an instant for storage: UTC, fixed width, so strings sort.
 func stamp(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000Z") }
+
+// clipBytes shortens s to at most n bytes without splitting a character.
+func clipBytes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	cut := n - len("…")
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
+}
 
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 

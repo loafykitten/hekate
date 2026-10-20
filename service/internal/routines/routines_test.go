@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/loafykitten/hekate/service/internal/calendar"
 	"github.com/loafykitten/hekate/service/internal/jobs"
@@ -63,6 +64,8 @@ func (f *fakeFollowUps) FollowUpsDue(_ context.Context, _ time.Time, limit int) 
 }
 
 type recorder struct {
+	failPush    bool // push reaches no device and there's no backup
+	clients     int
 	mu          sync.Mutex
 	notices     []proto.Notify
 	pushes      []push.Payload
@@ -85,8 +88,13 @@ func (r *recorder) Send(_ context.Context, p push.Payload, _ push.Urgency) (push
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.pushes = append(r.pushes, p)
+	if r.failPush {
+		return push.Result{Failed: 1}, nil
+	}
 	return push.Result{Sent: 1}, nil
 }
+
+func (r *recorder) Clients() int { return r.clients }
 
 type fixture struct {
 	svc       *Service
@@ -298,5 +306,41 @@ func TestLongLinesAreNamedInFull(t *testing.T) {
 	_, body, shown := compose(list)
 	if len(shown) != 3 || !strings.Contains(body, "x2") {
 		t.Errorf("shown %d, body ends %q", len(shown), body[len(body)-20:])
+	}
+}
+
+func TestNudgesWaitUntilTheyReachTheOwner(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	f.followUps.due = []memory.Memory{{ID: "5", Content: "Ask about the trip"}}
+	f.rec.failPush = true
+	if summary, err := f.svc.Heartbeat(ctx); err != nil || !strings.HasPrefix(summary, "Couldn't reach the owner") {
+		t.Fatalf("undelivered: %q %v", summary, err)
+	}
+	f.now = f.now.Add(30 * time.Minute)
+	f.rec.clients = 1 // the app is open now, though push still fails
+	if summary, _ := f.svc.Heartbeat(ctx); summary != "Nudged about 1 thing(s)" {
+		t.Errorf("delivered in the app: %q", summary)
+	}
+	f.now = f.now.Add(30 * time.Minute)
+	if summary, _ := f.svc.Heartbeat(ctx); summary != "Nothing worth a nudge" {
+		t.Errorf("after delivery: %q", summary)
+	}
+}
+
+func TestTheBodyStaysWithinPushSize(t *testing.T) {
+	long := strings.Repeat("長", 300)
+	var list []nudge
+	for i := range 3 {
+		list = append(list, nudge{key: "t" + strconv.Itoa(i), kind: "task", line: long})
+		list = append(list, nudge{key: "m" + strconv.Itoa(i), kind: "mail", line: long})
+	}
+	list = append(list, nudge{key: "f", kind: "follow_up", line: long})
+	_, body, shown := compose(list)
+	if len(body) > maxBodyBytes || !utf8.ValidString(body) {
+		t.Errorf("body is %d bytes (valid UTF-8: %v)", len(body), utf8.ValidString(body))
+	}
+	if len(shown) == 0 || len(shown) == len(list) || !strings.Contains(body, "more") {
+		t.Errorf("shown %d of %d: %q", len(shown), len(list), body[len(body)-30:])
 	}
 }

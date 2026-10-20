@@ -217,6 +217,8 @@ func (f fallback) Send(ctx context.Context, p push.Payload, urgency push.Urgency
 	// Sent even if the caller is giving up, but never longer than a send takes.
 	if terr := f.tg.Send(context.WithoutCancel(ctx), text, approvalID); terr != nil {
 		f.tg.log.Error("cannot send the telegram backup", "error", terr)
+	} else {
+		res.Backup = true
 	}
 	return res, err
 }

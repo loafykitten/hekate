@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -75,8 +76,18 @@ func (sp RuleSpec) normalize() (RuleSpec, error) {
 		if strings.EqualFold(sp.Folder, inbox) {
 			return sp, httpx.BadRequest("moving mail to the inbox is not a rule")
 		}
+	case ActionUnsubscribe:
+		if sp.Folder != "" {
+			return sp, httpx.BadRequest("folder only goes with the move action")
+		}
+		// The owner names who to unsubscribe from: a category comes from the
+		// classifier reading untrusted mail, so it alone never decides where
+		// requests go.
+		if sp.From == "" {
+			return sp, httpx.BadRequest("an unsubscribe rule needs a sender (from)")
+		}
 	default:
-		return sp, httpx.BadRequest("action must be archive, trash, mark_read or move")
+		return sp, httpx.BadRequest("action must be archive, trash, mark_read, move or unsubscribe")
 	}
 	return sp, nil
 }
@@ -98,6 +109,13 @@ func checkSender(from string) error {
 
 // label words the rule for the owner, e.g. "Archive newsletter mail from example.com".
 func (sp RuleSpec) label() string {
+	if sp.Action == ActionUnsubscribe {
+		l := "Unsubscribe from " + strings.TrimPrefix(sp.From, "@")
+		if sp.Category != "" {
+			l += " (" + strings.ReplaceAll(sp.Category, "_", " ") + " mail)"
+		}
+		return l
+	}
 	verb := map[string]string{ActionArchive: "Archive", ActionTrash: "Trash", ActionMarkRead: "Mark as read", ActionMove: "Move"}[sp.Action]
 	what := "mail"
 	if sp.Category != "" {
@@ -234,7 +252,9 @@ func senderMatches(from, addr string) bool {
 // applyRules runs the rules over the account's inbox mail they have not seen.
 // A message is ready once it is classified, or classification has given up on
 // it, or it is too old to classify, or there is no model; rules that need a
-// category wait for it. Each hit is recorded.
+// category wait for it. The first filing rule that matches a message takes it;
+// unsubscribe rules file nothing, so they run afterwards on the mail the
+// filing rules settled. Each hit is recorded.
 func (s *Service) applyRules(ctx context.Context, a *account) (int, error) {
 	rules, err := s.Rules(ctx)
 	if err != nil {
@@ -269,7 +289,7 @@ func (s *Service) applyRules(ctx context.Context, a *account) (int, error) {
 	for _, m := range ready {
 		matched := -1
 		for i, r := range rules {
-			if r.matches(m) {
+			if r.Action != ActionUnsubscribe && r.matches(m) {
 				matched = i
 				break
 			}
@@ -286,6 +306,10 @@ func (s *Service) applyRules(ctx context.Context, a *account) (int, error) {
 	}
 	if err := s.settle(ctx, settled); err != nil {
 		return 0, err
+	}
+	done := map[int64]bool{}
+	for _, id := range settled {
+		done[id] = true
 	}
 	applied := 0
 	for _, i := range ruleOrder {
@@ -311,6 +335,9 @@ func (s *Service) applyRules(ctx context.Context, a *account) (int, error) {
 		if err := s.settle(ctx, ids); err != nil {
 			return applied, err
 		}
+		for _, id := range ids {
+			done[id] = true
+		}
 		n := out.Done
 		if n > 0 {
 			if _, err := s.db.ExecContext(ctx, `UPDATE mail_rules SET hits = hits + ?, last_hit_at = ? WHERE id = ?`, n, stamp(s.now()), rid); err != nil {
@@ -319,7 +346,60 @@ func (s *Service) applyRules(ctx context.Context, a *account) (int, error) {
 		}
 		applied += n
 	}
-	return applied, nil
+	n, err := s.unsubscribeByRules(ctx, rules, ready, done)
+	return applied + n, err
+}
+
+// unsubscribeByRules sends the one-click unsubscribe request for settled mail
+// that an unsubscribe rule covers. Settled mail is never looked at again, so
+// each message gets one try: a failure is logged, and the sender's next
+// message tries again. A sender's list that was asked within unsubEvery is not
+// asked again, so a burst of mail sent before the request took effect doesn't
+// become a burst of requests.
+func (s *Service) unsubscribeByRules(ctx context.Context, rules []Rule, ready []row, settled map[int64]bool) (int, error) {
+	n := 0
+	for _, m := range ready {
+		if !settled[m.ID] || !m.canUnsubscribe() {
+			continue
+		}
+		i := slices.IndexFunc(rules, func(r Rule) bool { return r.Action == ActionUnsubscribe && r.matches(m) })
+		if i < 0 {
+			continue
+		}
+		rid, _ := strconv.ParseInt(rules[i].ID, 10, 64)
+		if !s.ruleExists(ctx, rid) {
+			continue
+		}
+		recent, err := s.unsubscribedLately(ctx, m)
+		if err != nil {
+			return n, err
+		}
+		if recent {
+			continue
+		}
+		if err := s.Unsubscribe(ctx, m.ID); err != nil {
+			s.log.Warn("mail rule could not unsubscribe", "account", m.Account, "rule", rules[i].ID, "error", err)
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, `UPDATE mail_rules SET hits = hits + 1, last_hit_at = ? WHERE id = ?`, stamp(s.now()), rid); err != nil {
+			return n, fmt.Errorf("record mail rule hit: %w", err)
+		}
+		n++
+	}
+	return n, nil
+}
+
+// unsubscribedLately reports whether mail from m's sender and list was
+// unsubscribed from within unsubEvery, by a rule or by the owner.
+func (s *Service) unsubscribedLately(ctx context.Context, m row) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM mail_messages
+		WHERE from_addr = ? AND list_id = ? AND unsubscribed_at >= ?`,
+		m.FromAddr, m.ListID, stamp(s.now().Add(-unsubEvery))).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("check earlier unsubscribes: %w", err)
+	}
+	return n > 0, nil
 }
 
 // ruleExists reports whether a rule is still in force. A failed lookup counts

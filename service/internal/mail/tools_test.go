@@ -371,10 +371,17 @@ func TestRuleProposeTool(t *testing.T) {
 		`{"from":"@shop.example.net","action":"nuke","reason":"x"}`,
 		`{"from":"@shop.example.net","action":"move","reason":"x"}`,
 		`{"from":"@shop.example.net","action":"archive"}`,
+		`{"category":"promo","action":"unsubscribe","reason":"x"}`,
 	} {
 		if _, err := f.call("mail_rule_propose", bad); err == nil {
 			t.Errorf("accepted %s", bad)
 		}
+	}
+	f.mustCall("mail_rule_propose", `{"from":"deals@shop.example.net","action":"unsubscribe","reason":"Daily sales you never open."}`)
+	reqs := f.appr.requests()
+	u := reqs[len(reqs)-1]
+	if u.Title != "Unsubscribe from deals@shop.example.net?" || !strings.HasPrefix(u.Detail, "Daily sales you never open.\nA standing rule") {
+		t.Errorf("unsubscribe rule request %+v", u)
 	}
 }
 

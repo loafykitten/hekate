@@ -122,7 +122,7 @@ export interface Message {
 export interface MailRule {
   id: string;
   match: { from: string | null; category: string | null };
-  action: string; // archive | trash | mark_read | move
+  action: string; // archive | trash | mark_read | move | unsubscribe
   folder: string | null;
   label: string;
   hits: number;

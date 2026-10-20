@@ -43,6 +43,7 @@ const RULES = [
   { id: "4", match: { from: "@example.com", category: null }, action: "archive", folder: null, label: "Archive mail from example.com", hits: 12, last_hit_at: ago(60 * 5), created_at: ago(60 * 400) },
   { id: "5", match: { from: null, category: "promo" }, action: "trash", folder: null, label: "Trash promos", hits: 0, last_hit_at: null, created_at: ago(60 * 20) },
   { id: "6", match: { from: "news@example.com", category: null }, action: "move", folder: "Reading", label: "File Trailhead Weekly under Reading", hits: 1, last_hit_at: ago(60 * 30), created_at: ago(60 * 90) },
+  { id: "7", match: { from: "@deals.example.com", category: null }, action: "unsubscribe", folder: null, label: "Unsubscribe from deals.example.com", hits: 2, last_hit_at: ago(60 * 26), created_at: ago(60 * 300) },
 ];
 
 const approval = (id, over = {}) => ({

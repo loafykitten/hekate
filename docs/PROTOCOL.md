@@ -217,7 +217,7 @@ never stored.
 {
   "id": "4",
   "match": { "from": "@example.com", "category": null },  // from: an address or "@domain"; every set field must match
-  "action": "archive",               // archive | trash | mark_read | move
+  "action": "archive",               // archive | trash | mark_read | move | unsubscribe
   "folder": null,                    // for move
   "label": "Archive mail from example.com",
   "hits": 12, "last_hit_at": "…", "created_at": "…"
@@ -235,6 +235,13 @@ never stored.
 | `POST /api/mail/messages/{id}/read` | `{ unread: false \| true }` (required) | `Message`; 404 when it's gone from the server |
 | `GET /api/mail/rules` | | `{ rules: [MailRule] }` |
 | `DELETE /api/mail/rules/{id}` | | 204 |
+
+Rules are tried oldest first, and the first archive, trash, mark_read or move rule that matches
+a message takes it. An `unsubscribe` rule always names a sender (`match.from`) and files nothing:
+when matching mail offers one-click unsubscribe, the sweep sends the RFC 8058 request (an HTTPS
+POST, never a link opened or a mail sent) once the other rules are done with the message, and the
+message stays wherever they left it. Each message gets one try, and a sender's list is asked at
+most once a week. `hits` counts the requests that succeeded.
 
 A message keeps its `id` when it moves between folders. Mail that someone else moved or deleted
 is marked as having left the inbox (`folder: "other"`) and answers 404 to reads and actions; such

@@ -423,6 +423,69 @@ export function githubUrl(v: unknown): string | null {
   return isStr(v) && v.startsWith("https://github.com/") ? v : null;
 }
 
+// The journal: her diary entry for a day, and what that night's reflection changed.
+export interface DiaryEntry {
+  day: string; // YYYY-MM-DD, local
+  text: string;
+  created_at: string;
+  updated_at: string;
+}
+export const REFLECTION_ACTIONS = ["save", "update", "retire"] as const;
+export type ReflectionAction = (typeof REFLECTION_ACTIONS)[number];
+export interface ReflectionChange {
+  id: string;
+  action: ReflectionAction;
+  memory_id: string;
+  before: Memory | null; // null for save
+  after: Memory | null; // null for retire
+  reason: string;
+  undone_at: string | null;
+}
+export interface Reflection {
+  id: string;
+  summary: string;
+  created_at: string;
+  changes: ReflectionChange[];
+}
+export interface JournalDay {
+  day: string;
+  diary: DiaryEntry | null;
+  reflections: Reflection[];
+}
+
+export function asReflectionChange(v: unknown): ReflectionChange | undefined {
+  if (!isRec(v)) return undefined;
+  const id = idOf(v.id);
+  if (id === undefined || !(REFLECTION_ACTIONS as readonly string[]).includes(v.action as string)) return undefined;
+  return {
+    id,
+    action: v.action as ReflectionAction,
+    memory_id: idOf(v.memory_id) ?? "",
+    before: asMemory(v.before) ?? null,
+    after: asMemory(v.after) ?? null,
+    reason: strOr(v.reason),
+    undone_at: strOrNull(v.undone_at),
+  };
+}
+
+function asDiaryEntry(v: unknown): DiaryEntry | null {
+  if (!isRec(v) || !isStr(v.day) || !isStr(v.text)) return null;
+  return { day: v.day, text: v.text, created_at: strOr(v.created_at), updated_at: strOr(v.updated_at) };
+}
+
+export function asJournalDay(v: unknown): JournalDay | undefined {
+  if (!isRec(v) || !isStr(v.day)) return undefined;
+  return {
+    day: v.day,
+    diary: asDiaryEntry(v.diary),
+    reflections: list(v.reflections, (r): Reflection | undefined => {
+      const id = isRec(r) ? idOf(r.id) : undefined;
+      if (!isRec(r) || id === undefined) return undefined;
+      return { id, summary: strOr(r.summary), created_at: strOr(r.created_at), changes: list(r.changes, asReflectionChange) };
+    }),
+  };
+}
+
 export const IDEA_STATUSES = ["open", "done", "dismissed"] as const;
 export type IdeaStatus = (typeof IDEA_STATUSES)[number];
 // An improvement idea Renamon noted about herself.

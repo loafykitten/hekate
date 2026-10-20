@@ -313,6 +313,37 @@ func (s *Service) Forget(ctx context.Context, id int64) (Memory, error) {
 	return m, nil
 }
 
+// Retire hides a memory without deleting it, so the change can be undone
+// (reflection retires stale, contradicted or merged memories this way).
+func (s *Service) Retire(ctx context.Context, id int64) (Memory, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, err := s.Get(ctx, id)
+	if err != nil {
+		return Memory{}, err
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE memories SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL`, stamp(s.now()), id); err != nil {
+		return Memory{}, fmt.Errorf("retire memory %d: %w", id, err)
+	}
+	s.changed()
+	return m, nil
+}
+
+// Restore brings back a retired memory. A memory that was never retired is
+// returned as it is; one that was forgotten is gone.
+func (s *Service) Restore(ctx context.Context, id int64) (Memory, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	res, err := s.db.ExecContext(ctx, `UPDATE memories SET deleted_at = NULL, updated_at = ? WHERE id = ? AND deleted_at IS NOT NULL`, stamp(s.now()), id)
+	if err != nil {
+		return Memory{}, fmt.Errorf("restore memory %d: %w", id, err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		s.changed()
+	}
+	return s.Get(ctx, id)
+}
+
 // List returns memories, newest first, optionally of one kind.
 func (s *Service) List(ctx context.Context, kind string, limit int) ([]Memory, error) {
 	if kind != "" {

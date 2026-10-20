@@ -1,0 +1,136 @@
+.entry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.text {
+  margin: 0;
+  color: var(--fg);
+  font-size: 0.975rem;
+  line-height: 1.6;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.missing {
+  margin: 0;
+  color: var(--fg-subtle);
+  font-size: 0.875rem;
+}
+
+.changes {
+  border-top: 1px solid var(--hairline);
+  padding-top: var(--space-2);
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 0.875rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.toggle:hover {
+  color: var(--fg);
+}
+
+.chevron {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--fg-subtle);
+  transition: rotate var(--duration) var(--ease);
+}
+
+.toggle[aria-expanded="true"] .chevron {
+  rotate: 90deg;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.change {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.change:last-child {
+  border-bottom: 0;
+}
+
+.change[data-undone] .changeBody {
+  opacity: 0.55;
+}
+
+.changeBody {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.action {
+  color: var(--accent);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.action[data-action="retire"] {
+  color: var(--fg-subtle);
+}
+
+.content {
+  color: var(--fg);
+  font-size: 0.9rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.was,
+.reason {
+  color: var(--fg-muted);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.reason {
+  font-style: italic;
+}
+
+.undone {
+  flex: none;
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+}
+
+.error {
+  color: var(--danger);
+  font-size: 0.8125rem;
+}

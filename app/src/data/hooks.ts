@@ -8,6 +8,7 @@ import {
   approvalsApi,
   changesApi,
   ideasApi,
+  journalApi,
   calendarApi,
   fetchWeather,
   mailApi,
@@ -357,4 +358,15 @@ export function useIdeas(enabled = true) {
 
 export function useSetIdeaStatus() {
   return useDomainMutation(["ideas"], ({ id, status }: { id: string; status: IdeaStatus }) => ideasApi.setStatus(id, status));
+}
+
+// --- journal -------------------------------------------------------------------------------
+
+export function useJournal(enabled = true) {
+  return useQuery({ queryKey: keys.journal, queryFn: ({ signal }) => journalApi.list(signal), enabled });
+}
+
+// Undoing a reflection change changes her memories too.
+export function useUndoReflectionChange() {
+  return useDomainMutation(["journal", "memory"], (changeId: string) => journalApi.undo(changeId));
 }

@@ -28,6 +28,7 @@ import (
 	"github.com/loafykitten/hekate/service/internal/mail"
 	"github.com/loafykitten/hekate/service/internal/memory"
 	"github.com/loafykitten/hekate/service/internal/push"
+	"github.com/loafykitten/hekate/service/internal/reflection"
 	"github.com/loafykitten/hekate/service/internal/reminders"
 	"github.com/loafykitten/hekate/service/internal/server"
 	"github.com/loafykitten/hekate/service/internal/store"
@@ -197,6 +198,19 @@ func run() error {
 	}
 	toolList = slices.Concat(toolList, selfSvc.Tools())
 	api = append(api, selfSvc.Routes)
+
+	// Nightly reflection: tidies her memories and writes her diary.
+	reflectSvc, err := reflection.New(reflection.Options{
+		Store: db, Memory: memSvc, LLM: llmClient, Model: cfg.ModelBackground,
+		Tamer: cfg.TamerName, Location: cfg.Location, Events: hub, Logger: logger.Logger,
+	})
+	if err != nil {
+		return fmt.Errorf("build reflection: %w", err)
+	}
+	runner.Add(reflectSvc.Job())
+	toolList = slices.Concat(toolList, reflectSvc.Tools())
+	sources = append(sources, agent.Source{Name: "Your diary", Source: reflectSvc})
+	api = append(api, reflectSvc.Routes)
 
 	tools, err := agent.NewRegistry(toolList...)
 	if err != nil {

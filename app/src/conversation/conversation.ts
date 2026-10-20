@@ -440,7 +440,7 @@ export class Conversation {
     this.live = [];
     this.historyEpoch++;
     this.emit();
-    this.emitInvalidate(["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes", "ideas"]);
+    this.emitInvalidate(["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes", "ideas", "journal"]);
   }
 
   private onTranscript(id: string, text: string, superseded = false) {

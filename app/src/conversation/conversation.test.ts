@@ -497,7 +497,7 @@ describe("Conversation: cards, notices and invalidation", () => {
     t.conversation.client.reconnectNow();
     FakeSocket.last.open();
     FakeSocket.last.receive(READY);
-    expect(seen.at(-1)).toEqual(["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes", "ideas"]);
+    expect(seen.at(-1)).toEqual(["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes", "ideas", "journal"]);
   });
 });
 

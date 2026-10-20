@@ -350,6 +350,38 @@ the rest of the API.
 | `POST /api/changes/{id}/retry` | | `ChangeRequest` queued again, keeping its issue; the last outcome and PR move to `previous_*`. 409 unless `failed` or `rejected`. The owner's action |
 | `POST /api/changes/{id}/finish` | `{ outcome: "merged" \| "rejected" \| "failed", result, issue_url?, pr_url? }` | `ChangeRequest`; 409 unless `working`. Tells the owner by notify and push |
 
+### Journal
+
+Each night at 03:30 (caught up within 8 h after an outage) Renamon reflects on the conversation
+since her last reflection, using the background model: she saves memories she missed, merges
+duplicates, retires stale or contradicted ones, schedules follow-ups and writes a diary entry for
+the day. With no conversation since, nothing runs. Every change is recorded and can be undone.
+
+```jsonc
+// JournalDay
+{
+  "day": "2026-10-19",                       // local date
+  "diary": { "day": "2026-10-19", "text": "…", "created_at": "…", "updated_at": "…" },   // or null
+  "reflections": [{
+    "id": "3", "summary": "Saved 2, updated 1 and retired 1 memories; wrote the diary for 2026-10-19", "created_at": "…",
+    "changes": [{
+      "id": "11",
+      "action": "update",                    // save | update | retire
+      "memory_id": "42",
+      "before": Memory,                      // null for save
+      "after": Memory,                       // null for retire
+      "reason": "The interview moved to Thursday",
+      "undone_at": null
+    }]
+  }]
+}
+```
+
+| Method & path | Body | Returns |
+|---|---|---|
+| `GET /api/journal?limit=` (default 14 days, ≤ 60) | | `{ days: [JournalDay] }` newest first |
+| `POST /api/reflections/changes/{id}/undo` | | the change, now with `undone_at`. A saved memory is retired, an updated one goes back to `before`, a retired one comes back. 409 when already undone, or when the memory was forgotten since |
+
 ### Ideas and routines
 
 Renamon notes improvement ideas with `idea_log` (at most 10 a day; an open idea with the same text
@@ -402,4 +434,4 @@ from stored or fetched data, never from model text. Shapes of `data` by `kind`:
 |---|---|---|
 | `notify` | `id`, `kind: "reminder" \| "approval" \| "change"`, `title`, `body`, `card?` | Something fired, or she needs a decision she asked for outside a conversation (e.g. a rule from the weekly noise report). The app shows it even with no turn running. |
 | `approval` | `approval: Approval` | An approval was created or changed (decided, ran, expired). Clients update any card showing it. |
-| `invalidate` | `domains: ("tasks" \| "reminders" \| "calendar" \| "memory" \| "weather" \| "mail" \| "approvals" \| "changes" \| "ideas")[]` | Data changed; refetch those menu sections (`weather`: the home place changed). |
+| `invalidate` | `domains: ("tasks" \| "reminders" \| "calendar" \| "memory" \| "weather" \| "mail" \| "approvals" \| "changes" \| "ideas" \| "journal")[]` | Data changed; refetch those menu sections (`weather`: the home place changed). |

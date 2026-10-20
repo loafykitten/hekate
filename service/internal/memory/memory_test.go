@@ -466,3 +466,39 @@ func TestConcurrentPatchesKeepEachOthersFields(t *testing.T) {
 		}
 	}
 }
+
+func TestRetireAndRestore(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	m, _, err := f.svc.Save(ctx, NewMemory{Kind: "fact", Content: "Works at the bakery"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := strconv.ParseInt(m.ID, 10, 64)
+	if _, err := f.svc.Retire(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Get(ctx, id); err == nil {
+		t.Error("a retired memory is hidden")
+	}
+	if found, _ := f.svc.Search(ctx, "bakery", "", 10); len(found) != 0 {
+		t.Errorf("search finds a retired memory: %+v", found)
+	}
+	// The same text can be saved again while the old one is retired.
+	if again, existed, _ := f.svc.Save(ctx, NewMemory{Kind: "fact", Content: "Works at the bakery"}); existed || again.ID == m.ID {
+		t.Errorf("saved again = %+v, existed %v", again, existed)
+	}
+	back, err := f.svc.Restore(ctx, id)
+	if err != nil || back.Content != "Works at the bakery" {
+		t.Fatalf("restore: %+v %v", back, err)
+	}
+	if again, err := f.svc.Restore(ctx, id); err != nil || again.ID != m.ID {
+		t.Errorf("restoring a live memory: %+v %v", again, err)
+	}
+	if _, err := f.svc.Forget(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Restore(ctx, id); err == nil {
+		t.Error("a forgotten memory can't come back")
+	}
+}

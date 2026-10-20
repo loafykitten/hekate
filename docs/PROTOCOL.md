@@ -391,7 +391,28 @@ can still come back, and the owner can forget it again. Retired memories can be 
 | `GET /api/journal?limit=` (default 14 days, ≤ 60) | | `{ days: [JournalDay] }` newest first |
 | `POST /api/reflections/changes/{id}/undo` | | the change, now with `undone_at`. A saved memory is retired, an updated one goes back to `before`, a retired one comes back. 409 when already undone, or when the memory was edited since (so the newer edit isn't lost) |
 
-### Ideas and routines
+### Routines
+
+The heartbeat runs every 30 minutes during waking hours. It looks for an event with a place to get
+to starting in 10 to 75 minutes, tasks overdue by an hour (or from an earlier day), unread mail
+that needs a reply or matters and has waited 20 minutes (under a day old), and follow-ups that
+are due, then sends one `notify` (kind `nudge`) and a push about whatever it hasn't mentioned
+before. A notice names at most a few things; the rest come with the next heartbeat, as does
+everything when it reached no one (no app open, and neither a push nor Telegram delivered it). Nothing is
+nudged twice (what was sent is remembered for a year). Renamon can change these settings with
+`routine_settings` when the owner asks.
+
+```jsonc
+// RoutineSettings
+{ "heartbeat": true, "waking_start": "08:00", "waking_end": "22:00" }   // HH:MM local; the window may pass midnight
+```
+
+| Method & path | Body | Returns |
+|---|---|---|
+| `GET /api/routines` | | `RoutineSettings` |
+| `PATCH /api/routines` | any `RoutineSettings` fields | `RoutineSettings`; 400 for a bad time or an empty window |
+
+### Ideas and routine runs
 
 Renamon notes improvement ideas with `idea_log` (at most 10 a day; an open idea with the same text
 isn't saved twice). Routines are the scheduled background jobs (reflection, heartbeat, briefing);
@@ -441,6 +462,6 @@ from stored or fetched data, never from model text. Shapes of `data` by `kind`:
 
 | type | fields | meaning |
 |---|---|---|
-| `notify` | `id`, `kind: "reminder" \| "approval" \| "change"`, `title`, `body`, `card?` | Something fired, or she needs a decision she asked for outside a conversation (e.g. a rule from the weekly noise report). The app shows it even with no turn running. |
+| `notify` | `id`, `kind: "reminder" \| "approval" \| "change" \| "nudge"`, `title`, `body`, `card?` | Something fired, or she needs a decision she asked for outside a conversation (e.g. a rule from the weekly noise report). The app shows it even with no turn running. |
 | `approval` | `approval: Approval` | An approval was created or changed (decided, ran, expired). Clients update any card showing it. |
-| `invalidate` | `domains: ("tasks" \| "reminders" \| "calendar" \| "memory" \| "weather" \| "mail" \| "approvals" \| "changes" \| "ideas" \| "journal")[]` | Data changed; refetch those menu sections (`weather`: the home place changed). |
+| `invalidate` | `domains: ("tasks" \| "reminders" \| "calendar" \| "memory" \| "weather" \| "mail" \| "approvals" \| "changes" \| "ideas" \| "journal" \| "routines")[]` | Data changed; refetch those menu sections (`weather`: the home place changed). |

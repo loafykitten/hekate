@@ -123,15 +123,15 @@ func TestFallbackOnlyWhenPushReachesNoDevice(t *testing.T) {
 	b := newFakeBot(t)
 	s, _ := newService(t, b)
 	reached := s.Fallback(fakePush{push.Result{Sent: 1}})
-	if _, err := reached.Send(t.Context(), push.Payload{Title: "Reminder", Body: "Stretch"}, push.UrgencyNormal); err != nil {
-		t.Fatal(err)
+	if res, err := reached.Send(t.Context(), push.Payload{Title: "Reminder", Body: "Stretch"}, push.UrgencyNormal); err != nil || res.Backup {
+		t.Fatalf("%+v %v", res, err)
 	}
 	if n := len(b.sent("sendMessage")); n != 0 {
 		t.Fatalf("telegram got %d messages although push reached a device", n)
 	}
 	missed := s.Fallback(fakePush{push.Result{Failed: 2}})
-	if _, err := missed.Send(t.Context(), push.Payload{Title: "Reminder", Body: "Stretch", Tag: "reminder-4"}, push.UrgencyNormal); err != nil {
-		t.Fatal(err)
+	if res, err := missed.Send(t.Context(), push.Payload{Title: "Reminder", Body: "Stretch", Tag: "reminder-4"}, push.UrgencyNormal); err != nil || !res.Backup {
+		t.Fatalf("the backup should report it took the message: %+v %v", res, err)
 	}
 	sent := b.sent("sendMessage")
 	if len(sent) != 1 || sent[0].params["text"] != "Reminder\nStretch" || sent[0].params["chat_id"] != float64(owner) || sent[0].params["reply_markup"] != nil {

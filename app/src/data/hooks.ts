@@ -1,7 +1,7 @@
 import { keepPreviousData, MutationCache, QueryCache, QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { applyApproval, freshest } from "./approvals";
-import { asApproval, type Approval, type CalendarEvent, type IdeaStatus, type Message, type Task } from "./model";
+import { asApproval, type Approval, type CalendarEvent, type IdeaStatus, type Message, type RoutineSettings, type Task } from "./model";
 import { DOMAINS, keys, type Domain } from "./queryKeys";
 import {
   ApiError,
@@ -9,6 +9,7 @@ import {
   changesApi,
   ideasApi,
   journalApi,
+  routinesApi,
   calendarApi,
   fetchWeather,
   mailApi,
@@ -370,4 +371,14 @@ export function useJournal(enabled = true) {
 // Undoing a reflection change changes her memories too.
 export function useUndoReflectionChange() {
   return useDomainMutation(["journal", "memory"], (changeId: string) => journalApi.undo(changeId));
+}
+
+// --- routines ------------------------------------------------------------------------------
+
+export function useRoutines(enabled = true) {
+  return useQuery({ queryKey: keys.routines, queryFn: ({ signal }) => routinesApi.get(signal), enabled });
+}
+
+export function usePatchRoutines() {
+  return useDomainMutation(["routines"], (fields: Partial<RoutineSettings>) => routinesApi.patch(fields));
 }

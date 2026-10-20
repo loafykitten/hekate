@@ -69,9 +69,10 @@ type Subscription struct {
 
 // Result says how a send went.
 type Result struct {
-	Sent    int // accepted by the push service
-	Removed int // subscriptions the push service said are gone (404/410), now deleted
-	Failed  int // other errors; the subscription is kept
+	Sent    int  // accepted by the push service
+	Removed int  // subscriptions the push service said are gone (404/410), now deleted
+	Failed  int  // other errors; the subscription is kept
+	Backup  bool // web push reached no device, and a backup channel (Telegram) took it
 }
 
 // Options are the dependencies of a Service.

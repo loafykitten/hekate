@@ -486,6 +486,18 @@ export function asJournalDay(v: unknown): JournalDay | undefined {
   };
 }
 
+// The owner's choices for her routines (GET /api/routines).
+export interface RoutineSettings {
+  heartbeat: boolean; // check-in nudges
+  waking_start: string; // HH:MM
+  waking_end: string;
+}
+
+export function asRoutineSettings(v: unknown): RoutineSettings | undefined {
+  if (!isRec(v) || typeof v.heartbeat !== "boolean" || !isStr(v.waking_start) || !isStr(v.waking_end)) return undefined;
+  return { heartbeat: v.heartbeat, waking_start: v.waking_start, waking_end: v.waking_end };
+}
+
 export const IDEA_STATUSES = ["open", "done", "dismissed"] as const;
 export type IdeaStatus = (typeof IDEA_STATUSES)[number];
 // An improvement idea Renamon noted about herself.

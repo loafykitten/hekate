@@ -10,11 +10,11 @@ import {
   type PushDeps,
 } from "../../data/push";
 import { approvalKindLabel } from "../../data/approvals";
-import { useApprovalRules, useDeleteApprovalRule } from "../../data/hooks";
+import { useApprovalRules, useDeleteApprovalRule, usePatchRoutines, useRoutines } from "../../data/hooks";
 import { pushApi } from "../../data/rest";
 import { useConversation, useConversationState } from "../ConversationContext";
 import { useConnection } from "../health";
-import { Button, ConfirmButton, SectionTitle, StateMessage, SwitchRow } from "../kit/kit";
+import { Button, ConfirmButton, SectionTitle, StateMessage, SwitchRow, TextField } from "../kit/kit";
 import { useMenuActive } from "./MenuContext";
 import styles from "./sections.module.css";
 import rowStyles from "../rows/rows.module.css";
@@ -183,6 +183,50 @@ function StandingPermissions() {
   );
 }
 
+// Her proactive routines: check-in nudges and the waking hours they keep to.
+function Routines() {
+  const active = useMenuActive();
+  const routines = useRoutines(active);
+  const patch = usePatchRoutines();
+  const st = routines.data;
+  return (
+    <section>
+      <SectionTitle>Routines</SectionTitle>
+      {routines.isError && !st ? (
+        <StateMessage kind="error" title="Couldn't load routines" onRetry={() => void routines.refetch()}>
+          {routines.error.message}
+        </StateMessage>
+      ) : !st ? (
+        <StateMessage kind="loading" />
+      ) : (
+        <div className={styles.group}>
+          <SwitchRow className={styles.settingRow} checked={st.heartbeat} onChange={(heartbeat) => patch.mutate({ heartbeat })}>
+            <span className={styles.settingLabel}>
+              <strong>Check-ins</strong>
+              <span>She nudges you, once each, about an event you'll need to leave for, overdue tasks, mail that needs you and things worth following up.</span>
+            </span>
+          </SwitchRow>
+          <div className={styles.settingRow} style={{ borderBottom: 0 }}>
+            <div className={styles.settingLabel}>
+              <strong>Waking hours</strong>
+              <span>Check-ins only come between these times.</span>
+            </div>
+          </div>
+          <div className={styles.pair} style={{ paddingBottom: "var(--space-3)" }}>
+            <TextField label="From" type="time" value={st.waking_start} onChange={(e) => e.target.value && patch.mutate({ waking_start: e.target.value })} />
+            <TextField label="Until" type="time" value={st.waking_end} onChange={(e) => e.target.value && patch.mutate({ waking_end: e.target.value })} />
+          </div>
+        </div>
+      )}
+      {patch.isError && (
+        <p className={styles.callout} data-tone="danger" style={{ marginTop: "var(--space-3)" }}>
+          {patch.error.message}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function Voice() {
   const conversation = useConversation();
   const { capabilities, connection, voice } = useConversationState();
@@ -240,6 +284,7 @@ export function SettingsSection() {
     <div className={styles.stack}>
       <Notifications />
       <StandingPermissions />
+      <Routines />
       <Voice />
       <About />
     </div>

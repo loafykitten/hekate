@@ -245,6 +245,10 @@ func TestUnsubscribeRuleNeedsTheSendersSignature(t *testing.T) {
 		m.from = "Shop <deals@shop.example.net>"
 		f.deliver("INBOX", m)
 	}
+	// A genuinely signed message with a second List-Unsubscribe added on top: the
+	// signature covers the bottom copy, the cache would read the top one.
+	f.deliver("INBOX", mailSpec{subject: "Replayed", from: "Shop <deals@shop.example.net>", dkim: "shop.example.net",
+		headers: listMail(srv.URL+"/u/signed", "f.shop.example.net"), forged: "List-Unsubscribe: <" + srv.URL + "/u/evil>\r\n"})
 	// A sender on a subdomain, signed by the parent domain, is the sender's own.
 	f.deliver("INBOX", mailSpec{subject: "Genuine", from: "Shop <deals@mail.shop.example.net>", dkim: "shop.example.net",
 		headers: listMail(srv.URL+"/u/genuine", "e.shop.example.net")})

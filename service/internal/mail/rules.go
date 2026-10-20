@@ -1,6 +1,7 @@
 package mail
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"database/sql"
@@ -8,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/textproto"
 	"slices"
 	"strconv"
 	"strings"
@@ -680,6 +682,18 @@ func (s *Service) signedUnsubscribe(raw []byte, fromAddr string) bool {
 		return false
 	}
 	sender := strings.ToLower(fromAddr[at+1:])
+	// A signature covers the last copy of each header it lists, while the cache
+	// read the first: with a second copy added on top, the signed one wouldn't be
+	// the one used. So each of these must appear exactly once.
+	h, err := textproto.NewReader(bufio.NewReader(bytes.NewReader(raw))).ReadMIMEHeader()
+	if err != nil {
+		return false
+	}
+	for _, k := range []string{"From", "List-Unsubscribe", "List-Unsubscribe-Post"} {
+		if len(h.Values(k)) != 1 {
+			return false
+		}
+	}
 	vs, err := dkim.VerifyWithOptions(bytes.NewReader(raw), &dkim.VerifyOptions{LookupTXT: s.lookupTXT, MaxVerifications: 5})
 	if err != nil && !errors.Is(err, dkim.ErrTooManySignatures) {
 		return false

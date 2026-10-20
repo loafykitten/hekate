@@ -352,6 +352,7 @@ type mailSpec struct {
 	// headers it signs (default From, Subject, List-Unsubscribe, List-Unsubscribe-Post).
 	dkim     string
 	dkimKeys []string
+	forged   string // header lines a forger adds on top after signing, each ending in \r\n
 }
 
 // testDKIMKey signs test mail; testLookupTXT publishes it as test._domainkey
@@ -412,7 +413,7 @@ func (m mailSpec) raw(now time.Time) []byte {
 	if m.dkim != "" {
 		raw = dkimSign(raw, m.dkim, m.dkimKeys)
 	}
-	return raw
+	return append([]byte(m.forged), raw...)
 }
 
 // client opens a second IMAP connection to the server, as another mail app would.

@@ -2,6 +2,7 @@ import { keepPreviousData, MutationCache, QueryCache, QueryClient, useMutation, 
 import { useEffect, useState } from "react";
 import { applyApproval, freshest } from "./approvals";
 import { asApproval, type Approval, type CalendarEvent, type IdeaStatus, type Message, type RoutineSettings, type Task } from "./model";
+import { PERSIST_MAX_AGE } from "./persist";
 import { DOMAINS, keys, type Domain } from "./queryKeys";
 import {
   ApiError,
@@ -59,6 +60,8 @@ export function createQueryClient(onError: (message: string, key: string) => voi
         staleTime: STALE_MS,
         retry: (count, error) => !(error instanceof ApiError && error.status >= 400 && error.status < 500) && count < 2,
         networkMode: "always",
+        // The persisted copy (data/persist.ts) only holds queries the cache still has.
+        gcTime: PERSIST_MAX_AGE,
       },
       mutations: { networkMode: "always" },
     },
@@ -272,6 +275,7 @@ export function useMailMessage(id: string, enabled = true) {
     queryFn: ({ signal }) => mailApi.message(id, signal),
     retry: (count, error) => !(error instanceof ApiError) && count < 1,
     staleTime: 0,
+    gcTime: 5 * 60_000, // a message with its body is never kept around, or stored
     meta: { quiet: true },
     enabled,
   });

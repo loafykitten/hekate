@@ -1,9 +1,11 @@
-import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
+import type { QueryClient } from "@tanstack/react-query";
+import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import type { Stage } from "../character/stage";
 import { Conversation } from "../conversation/conversation";
 import { applyApproval } from "../data/approvals";
 import { createQueryClient } from "../data/hooks";
+import { createQueryPersister, PERSIST_BUSTER, PERSIST_MAX_AGE, shouldPersistQuery } from "../data/persist";
 import { invalidationKeys } from "../data/queryKeys";
 import { CardStack } from "./cards/CardStack";
 import { ConnectionPill } from "./ConnectionPill";
@@ -30,6 +32,8 @@ function sectionFromUrl(url: string): Section | undefined {
     return undefined;
   }
 }
+
+const persister = createQueryPersister();
 
 export function App() {
   const [stage, setStage] = useState<Stage>();
@@ -99,7 +103,15 @@ export function App() {
   }, [openMenu]);
 
   return (
-    <QueryClientProvider client={queryClient}>
+    <PersistQueryClientProvider
+      client={queryClient}
+      persistOptions={{
+        persister,
+        maxAge: PERSIST_MAX_AGE,
+        buster: PERSIST_BUSTER,
+        dehydrateOptions: { shouldDehydrateQuery: shouldPersistQuery },
+      }}
+    >
       <ConversationProvider value={conversation}>
         <StageView onStageChange={setStage} />
         <ConnectionPill />
@@ -117,6 +129,6 @@ export function App() {
           </Suspense>
         )}
       </ConversationProvider>
-    </QueryClientProvider>
+    </PersistQueryClientProvider>
   );
 }

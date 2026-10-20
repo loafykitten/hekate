@@ -276,6 +276,19 @@ Telegram backup channel and a voice-off toggle. Next: M5 (polish).
   the tool whenever asked.
 - Not built: the optional evening check-in.
 
+### M5 as built (2026-10-20)
+
+- **Offline shell**: after one online visit the app opens with the service out of reach: the shell
+  and the character come from the service worker's cache (a first visit asks for the character
+  again once the worker controls the page, so it is cached), the pill says Offline, and the menu
+  shows the last-known data with an "Offline · as of <time>" note in the header. The service
+  worker still never caches `/api/*`. The menu's read queries are kept in localStorage by TanStack
+  Query's persister (`app/src/data/persist.ts`): successful reads of the menu domains only, for up
+  to a week, under a buster that is a hash of `app/src/data/` (a schema change drops the old copy).
+  Never stored: a single mail message with its body, single approvals, searches, the health poll,
+  the conversation socket. Storage that is blocked or full just means no cache. Actions that need
+  the service say "Hekate isn't reachable." `npm run verify:offline` covers it.
+
 ### Next: change requests, Telegram, voice off
 
 **Change requests.** Renamon gets a `propose_change` tool (title, what, why, kind). It's told to

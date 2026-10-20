@@ -421,12 +421,9 @@ export class Conversation {
     if (status === "open") this.everOpen = true;
     if (status === "closed") {
       this.dropInFlight();
-      this.toast(
-        "error",
-        this.everOpen ? "Connection lost. Reconnecting…" : "Can't reach Hekate. Retrying…",
-        "connection",
-        true,
-      );
+      // Never connected: the app was opened with the service out of reach. The connection pill and
+      // the menu's offline note say so; a toast on top would only cover them.
+      if (this.everOpen) this.toast("error", "Connection lost. Reconnecting…", "connection", true);
     }
     this.emit();
   }

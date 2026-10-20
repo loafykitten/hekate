@@ -23,6 +23,8 @@ building and `HANDOFF.md` for the character slice.
    - `cd app && npm run check` (typecheck, lint, unit tests, build)
    - for UI changes, start the dev servers and run `npm run verify:screens -- app/verify-out/<name>`,
      then look at the screenshots
+   - for offline-shell changes, `npm run build`, `npx vite preview --port 5318 --strictPort`, then
+     `npm run verify:offline -- verify-out` (it needs the character files; see the script header)
 3. Push and open a PR with `gh pr create --fill` (or a written body: what, why, how verified).
 4. **AI review**: `scripts/ai-review.sh` (see below). Fix what's real, push, run it again.
 5. Merge with `gh pr merge --squash --delete-branch` once the required checks are green.

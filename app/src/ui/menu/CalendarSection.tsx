@@ -223,7 +223,7 @@ export function CalendarSection() {
   }, [anchor, month, configured]);
 
   if (status.isPending) return <StateMessage kind="loading" />;
-  if (status.isError) {
+  if (status.isError && !status.data) {
     return (
       <StateMessage kind="error" title="Couldn't check the calendar" onRetry={() => void status.refetch()}>
         {status.error.message}

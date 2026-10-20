@@ -54,8 +54,19 @@ export function safeStorage(get: () => Storage | undefined = () => globalThis.lo
   };
 }
 
-export function createQueryPersister(storage = safeStorage()): Persister {
-  return createSyncStoragePersister({ storage: storage as Storage, key: PERSIST_KEY, throttleTime: 1000 });
+export function createQueryPersister(storage = safeStorage(), now = () => Date.now()): Persister {
+  const inner = createSyncStoragePersister({ storage: storage as Storage, key: PERSIST_KEY, throttleTime: 1000 });
+  // The stored copy's own age is when it was last saved; each query in it is also dropped a week
+  // after it was fetched, so data saved again and again while offline still expires.
+  return {
+    ...inner,
+    restoreClient: async () => {
+      const client = await inner.restoreClient();
+      if (!client) return client;
+      const queries = client.clientState.queries.filter((q) => now() - q.state.dataUpdatedAt < PERSIST_MAX_AGE);
+      return { ...client, clientState: { ...client.clientState, queries } };
+    },
+  };
 }
 
 // While a change is in flight (a task ticked off, say), the cache already shows it but the service

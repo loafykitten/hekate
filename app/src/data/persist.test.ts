@@ -120,3 +120,18 @@ describe("holdWhileChanging", () => {
     expect(stored).toHaveLength(1);
   });
 });
+
+describe("restoring", () => {
+  it("drops queries fetched more than a week ago, even in a copy saved since", async () => {
+    const day = 24 * 60 * 60_000;
+    const mem = new Map<string, string>();
+    const storage = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => void mem.set(k, v), removeItem: (k: string) => void mem.delete(k) };
+    const qc = new QueryClient();
+    const t0 = Date.now();
+    qc.setQueryData(keys.lists, [], { updatedAt: t0 });
+    qc.setQueryData(keys.changes, [], { updatedAt: t0 + 6 * day });
+    mem.set(PERSIST_KEY, JSON.stringify({ timestamp: t0 + 6 * day, buster: "", clientState: dehydrate(qc) }));
+    const restored = await createQueryPersister(storage, () => t0 + 8 * day).restoreClient();
+    expect(restored?.clientState.queries.map((q) => q.queryKey[0])).toEqual(["changes"]);
+  });
+});

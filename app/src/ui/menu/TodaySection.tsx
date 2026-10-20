@@ -99,7 +99,7 @@ export function TodaySection() {
           >
             Today&rsquo;s events
           </SectionTitle>
-          {events.isError ? (
+          {events.isError && !events.data ? (
             <StateMessage kind="error" title="Couldn't load events" onRetry={() => void events.refetch()} />
           ) : !events.data ? (
             <StateMessage kind="loading" />
@@ -125,7 +125,7 @@ export function TodaySection() {
         >
           Due today &amp; overdue
         </SectionTitle>
-        {tasks.isError ? (
+        {tasks.isError && !tasks.data ? (
           <StateMessage kind="error" title="Couldn't load tasks" onRetry={() => void tasks.refetch()} />
         ) : !tasks.data ? (
           <StateMessage kind="loading" />
@@ -157,7 +157,7 @@ export function TodaySection() {
         >
           Coming up
         </SectionTitle>
-        {reminders.isError ? (
+        {reminders.isError && !reminders.data ? (
           <StateMessage kind="error" title="Couldn't load reminders" onRetry={() => void reminders.refetch()} />
         ) : !reminders.data ? (
           <StateMessage kind="loading" />
@@ -178,7 +178,7 @@ export function TodaySection() {
 }
 
 function WeatherSummary({ query, now }: { query: ReturnType<typeof useWeather>; now: number }) {
-  if (query.isError) return <StateMessage kind="error" title="Couldn't load the weather" onRetry={() => void query.refetch()} />;
+  if (query.isError && query.data === undefined) return <StateMessage kind="error" title="Couldn't load the weather" onRetry={() => void query.refetch()} />;
   if (query.isPending) return <StateMessage kind="loading" />;
   const w = query.data;
   if (!w) {

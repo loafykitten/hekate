@@ -2,6 +2,7 @@ import { keepPreviousData, MutationCache, QueryCache, QueryClient, useMutation, 
 import { useEffect, useState } from "react";
 import { applyApproval, freshest } from "./approvals";
 import { asApproval, type Approval, type CalendarEvent, type IdeaStatus, type Message, type RoutineSettings, type Task } from "./model";
+import { PERSIST_MAX_AGE } from "./persist";
 import { DOMAINS, keys, type Domain } from "./queryKeys";
 import {
   ApiError,
@@ -59,6 +60,8 @@ export function createQueryClient(onError: (message: string, key: string) => voi
         staleTime: STALE_MS,
         retry: (count, error) => !(error instanceof ApiError && error.status >= 400 && error.status < 500) && count < 2,
         networkMode: "always",
+        // The persisted copy (data/persist.ts) only holds queries the cache still has.
+        gcTime: PERSIST_MAX_AGE,
       },
       mutations: { networkMode: "always" },
     },
@@ -110,7 +113,9 @@ export function useDeleteTask() {
   return useDomainMutation(["tasks"], (id: string) => tasksApi.remove(id));
 }
 
-type TaskCache = [readonly unknown[], Task[] | undefined][];
+// Each task list as it was, with when it was fetched: a rollback restores both, so a failed change
+// doesn't make old data look fresh (the offline note reads that time).
+type TaskCache = { key: readonly unknown[]; data: Task[] | undefined; updatedAt: number }[];
 
 // Completing or reopening a task updates every cached task list at once, so the checkbox responds
 // immediately; a failure puts the lists back.
@@ -121,7 +126,10 @@ export function useSetTaskDone() {
       done ? tasksApi.complete(id, due) : tasksApi.reopen(id),
     onMutate: async ({ id, done }) => {
       await qc.cancelQueries({ queryKey: ["tasks", "list"] });
-      const previous: TaskCache = qc.getQueriesData<Task[]>({ queryKey: ["tasks", "list"] });
+      const previous: TaskCache = qc
+        .getQueryCache()
+        .findAll({ queryKey: ["tasks", "list"] })
+        .map((q) => ({ key: q.queryKey, data: q.state.data as Task[] | undefined, updatedAt: q.state.dataUpdatedAt }));
       const stamp = new Date().toISOString();
       qc.setQueriesData<Task[]>({ queryKey: ["tasks", "list"] }, (tasks) => {
         if (!tasks) return tasks;
@@ -135,7 +143,7 @@ export function useSetTaskDone() {
       return { previous };
     },
     onError: (_e, _v, ctx) => {
-      for (const [key, data] of ctx?.previous ?? []) qc.setQueryData(key, data);
+      for (const { key, data, updatedAt } of ctx?.previous ?? []) qc.setQueryData(key, data, { updatedAt });
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ["tasks"] }),
   });
@@ -272,6 +280,7 @@ export function useMailMessage(id: string, enabled = true) {
     queryFn: ({ signal }) => mailApi.message(id, signal),
     retry: (count, error) => !(error instanceof ApiError) && count < 1,
     staleTime: 0,
+    gcTime: 5 * 60_000, // a message with its body is never kept around, or stored
     meta: { quiet: true },
     enabled,
   });

@@ -4,6 +4,7 @@ import { CalendarSection } from "./CalendarSection";
 import { ChangesSection } from "./ChangesSection";
 import styles from "./Menu.module.css";
 import { MenuActiveContext, MenuNavigateContext } from "./MenuContext";
+import { OfflineNote } from "./OfflineNote";
 import { MailSection } from "./MailSection";
 import { MemorySection } from "./MemorySection";
 import { RemindersSection } from "./RemindersSection";
@@ -123,6 +124,7 @@ export function Menu({ open, section, onSection, onClose }: Props) {
             <div className={styles.main}>
               <header className={styles.header}>
                 <h2 className={styles.title}>{SECTION_LABEL[section]}</h2>
+                <OfflineNote />
                 <button type="button" className={styles.close} aria-label="Close menu" onClick={onClose}>
                   <CloseIcon />
                 </button>

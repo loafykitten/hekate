@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readdirSync, readFileSync } from "node:fs";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
@@ -15,10 +16,25 @@ function token(name: string): string {
 const themeColor = token("bg-top");
 const backgroundColor = token("bg-bottom");
 
+// Buster for the persisted menu cache (src/data/persist.ts): a hash of the data layer's source, so
+// a change to what the queries return or how it is parsed never meets data stored by an older build.
+const dataDir = new URL("./src/data/", import.meta.url);
+const buildId = createHash("sha256")
+  .update(
+    readdirSync(dataDir)
+      .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))
+      .sort()
+      .map((f) => readFileSync(new URL(f, dataDir), "utf8"))
+      .join("\0"),
+  )
+  .digest("hex")
+  .slice(0, 12);
+
 // The Go service (built separately) serves the API and, in production, this app and the assets.
 const service = "http://127.0.0.1:3200";
 
 export default defineConfig({
+  define: { __BUILD_ID__: JSON.stringify(buildId) },
   plugins: [
     react(),
     devAssets(),

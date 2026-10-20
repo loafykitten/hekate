@@ -20,10 +20,13 @@
     "verify:voice": "node scripts/verify/voice.mjs",
     "verify:diary": "node scripts/verify/diary.mjs",
     "verify:briefing": "node scripts/verify/briefing.mjs",
-    "verify:lipsync": "node scripts/verify/lipsync.mjs"
+    "verify:lipsync": "node scripts/verify/lipsync.mjs",
+    "verify:offline": "node scripts/verify/offline.mjs"
   },
   "dependencies": {
+    "@tanstack/query-sync-storage-persister": "5.104.5",
     "@tanstack/react-query": "^5.104.4",
+    "@tanstack/react-query-persist-client": "5.104.5",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "three": "^0.186.1"

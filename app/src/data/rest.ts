@@ -81,7 +81,7 @@ export async function request(method: string, path: string, { body, query, signa
     });
   } catch (e) {
     if (e instanceof DOMException && e.name === "AbortError") throw e;
-    throw new ApiError("Can't reach Hekate.", 0);
+    throw new ApiError("Hekate isn't reachable.", 0);
   }
   if (res.status === 204) return undefined;
   let json: unknown;

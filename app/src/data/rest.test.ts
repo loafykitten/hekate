@@ -47,7 +47,7 @@ describe("request", () => {
 
   it("says so when the service can't be reached", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new TypeError("Failed to fetch"))));
-    await expect(request("GET", "/tasks")).rejects.toMatchObject({ message: "Can't reach Hekate.", status: 0 });
+    await expect(request("GET", "/tasks")).rejects.toMatchObject({ message: "Hekate isn't reachable.", status: 0 });
   });
 });
 

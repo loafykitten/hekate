@@ -6,6 +6,7 @@ import { Character } from "./character";
 import { LipTrack } from "./lips";
 import { loadCharacterSource } from "./manifest";
 import { Speech } from "./speech";
+import { warmCharacterCache } from "./warm";
 
 // The scene around the character: renderer, camera framing, the animation loop, mouth
 // smoothing and the debug URL params. Framework-free; the React shell only owns its lifecycle.
@@ -186,6 +187,7 @@ export class Stage {
       disposeObject(character.root);
       this.assertAlive();
     }
+    void warmCharacterCache(["/character/manifest.json", source.modelUrl]);
     this._character = character;
     this.scene.add(character.root);
     this.outline = new OutlineEffect(this.renderer);

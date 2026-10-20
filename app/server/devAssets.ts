@@ -2,7 +2,7 @@
 // the Go service serves it from in production. Manifest and GLBs only.
 import { createReadStream, existsSync } from "node:fs";
 import path from "node:path";
-import type { ServerResponse } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
 
 // The asset pipeline's output: manifest.json plus the GLBs it lists. HEKATE_ASSETS_DIR points
@@ -23,22 +23,26 @@ function sendFile(res: ServerResponse, file: string, type: string) {
   createReadStream(file).pipe(res);
 }
 
+function serve(middlewares: { use: (fn: (req: IncomingMessage, res: ServerResponse, next: () => void) => void) => unknown }) {
+  middlewares.use((req, res, next) => {
+    const url = req.url?.split("?")[0];
+    if (url?.startsWith("/character/")) {
+      const file = resolveAssetFile(url);
+      if (!file) {
+        res.statusCode = 404;
+        return res.end();
+      }
+      return sendFile(res, file, file.endsWith(".glb") ? "model/gltf-binary" : "application/json");
+    }
+    next();
+  });
+}
+
+// Also used by `vite preview`, so a production build can be tried (offline checks) with the character.
 export function devAssets(): Plugin {
   return {
     name: "hekate-dev-assets",
-    configureServer(server) {
-      server.middlewares.use((req, res, next) => {
-        const url = req.url?.split("?")[0];
-        if (url?.startsWith("/character/")) {
-          const file = resolveAssetFile(url);
-          if (!file) {
-            res.statusCode = 404;
-            return res.end();
-          }
-          return sendFile(res, file, file.endsWith(".glb") ? "model/gltf-binary" : "application/json");
-        }
-        next();
-      });
-    },
+    configureServer: (server) => serve(server.middlewares),
+    configurePreviewServer: (server) => serve(server.middlewares),
   };
 }

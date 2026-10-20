@@ -64,3 +64,19 @@ func TestFeatureRoutesAreRegistered(t *testing.T) {
 		t.Errorf("unclaimed = %d %q", rec.Code, rec.Body)
 	}
 }
+
+func TestNotifyReachCountsWhoGotIt(t *testing.T) {
+	env := newWSServer(t, newFakeConv(), nil, false)
+	if n := env.hub.NotifyReach(proto.NewNotify("n0", proto.NotifyKindNudge, "t", "b", nil)); n != 0 {
+		t.Errorf("no clients: reached %d", n)
+	}
+	a := env.dial(t)
+	readMsg(t, a)
+	waitFor(t, func() bool { return env.hub.Clients() == 1 })
+	if n := env.hub.NotifyReach(proto.NewNotify("n1", proto.NotifyKindNudge, "t", "b", nil)); n != 1 {
+		t.Errorf("one client: reached %d", n)
+	}
+	if m := readMsg(t, a); m["id"] != "n1" {
+		t.Errorf("got %v", m)
+	}
+}

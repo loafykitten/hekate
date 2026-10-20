@@ -94,7 +94,10 @@ func (r *recorder) Send(_ context.Context, p push.Payload, _ push.Urgency) (push
 	return push.Result{Sent: 1}, nil
 }
 
-func (r *recorder) Clients() int { return r.clients }
+func (r *recorder) NotifyReach(n proto.Notify) int {
+	r.Notify(n)
+	return r.clients
+}
 
 type fixture struct {
 	svc       *Service
@@ -339,6 +342,15 @@ func TestTheBodyStaysWithinPushSize(t *testing.T) {
 	_, body, shown := compose(list)
 	if len(body) > maxBodyBytes || !utf8.ValidString(body) {
 		t.Errorf("body is %d bytes (valid UTF-8: %v)", len(body), utf8.ValidString(body))
+	}
+	// Characters JSON escapes count at their encoded size.
+	var escaped []nudge
+	for i := range 6 {
+		escaped = append(escaped, nudge{key: strconv.Itoa(i), kind: "follow_up", line: strings.Repeat("<", 140)})
+	}
+	_, body, _ = compose(escaped)
+	if n := encodedLen(body); n > maxBodyBytes {
+		t.Errorf("escaped body is %d bytes encoded", n)
 	}
 	if len(shown) == 0 || len(shown) == len(list) || !strings.Contains(body, "more") {
 		t.Errorf("shown %d of %d: %q", len(shown), len(list), body[len(body)-30:])

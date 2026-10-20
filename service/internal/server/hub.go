@@ -53,19 +53,26 @@ func (c *client) enqueue(frame []byte) bool {
 }
 
 // Broadcast sends msg to every client. msg is any value from package proto.
-func (h *Hub) Broadcast(msg any) {
+func (h *Hub) Broadcast(msg any) { h.broadcast(msg) }
+
+// broadcast sends msg to every client and returns how many took it.
+func (h *Hub) broadcast(msg any) int {
 	frame, err := json.Marshal(msg)
 	if err != nil {
 		h.log.Error("cannot encode event", "error", err)
-		return
+		return 0
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	n := 0
 	for c := range h.clients {
-		if !c.enqueue(frame) {
+		if c.enqueue(frame) {
+			n++
+		} else {
 			h.log.Warn("dropping slow client", "client_id", c.id)
 		}
 	}
+	return n
 }
 
 // Invalidate implements proto.Events.
@@ -73,6 +80,10 @@ func (h *Hub) Invalidate(domains ...string) { h.Broadcast(proto.NewInvalidate(do
 
 // Notify implements proto.Events.
 func (h *Hub) Notify(n proto.Notify) { h.Broadcast(n) }
+
+// NotifyReach shows n on every connected client and returns how many it was
+// queued for, counted in the same step as the send.
+func (h *Hub) NotifyReach(n proto.Notify) int { return h.broadcast(n) }
 
 // add registers a client; it reports false once the hub is closed.
 func (h *Hub) add(c *client) bool {

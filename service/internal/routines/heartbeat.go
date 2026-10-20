@@ -3,6 +3,7 @@ package routines
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -42,8 +43,9 @@ const (
 	maxCandidates = 1000
 	maxLines      = 4
 	maxLine       = 140 // characters of one item
-	// Bytes: an item, and the whole body. Web push carries about 4 KB, encrypted
-	// JSON included, so the body stays well inside it whatever the script.
+	// Bytes, as encoded in the JSON payload: an item, and the whole body. Web
+	// push carries about 4 KB, encryption included, so the body stays well
+	// inside it whatever the script or characters.
 	maxItemBytes = 300
 	maxBodyBytes = 1500
 )
@@ -239,13 +241,15 @@ func (s *Service) unsent(ctx context.Context, all []nudge) ([]nudge, error) {
 func (s *Service) deliver(ctx context.Context, now time.Time, list []nudge) (int, error) {
 	title, body, shown := compose(list)
 	id := "nudge-" + now.UTC().Format("20060102T150405")
-	s.events.Notify(proto.NewNotify(id, proto.NotifyKindNudge, title, body, nil))
-	// It reached the owner if an app is open to show it, a push service took
-	// it, or the backup channel did. Otherwise nothing counts as sent: the next
+	// It reached the owner if an open app took it, a push service took it, or
+	// the backup channel did. Otherwise nothing counts as sent: the next
 	// heartbeat tries again.
+	notice := proto.NewNotify(id, proto.NotifyKindNudge, title, body, nil)
 	delivered := false
-	if c, ok := s.events.(interface{ Clients() int }); ok && c.Clients() > 0 {
-		delivered = true
+	if r, ok := s.events.(interface{ NotifyReach(proto.Notify) int }); ok {
+		delivered = r.NotifyReach(notice) > 0
+	} else {
+		s.events.Notify(notice)
 	}
 	if s.pusher != nil {
 		res, err := s.pusher.Send(ctx, push.Payload{Title: title, Body: body, URL: "/?menu=today", Tag: "nudge"}, push.UrgencyNormal)
@@ -275,7 +279,7 @@ func (s *Service) deliver(ctx context.Context, now time.Time, list []nudge) (int
 // pending for a later heartbeat.
 func compose(list []nudge) (title, body string, shown []nudge) {
 	for i := range list {
-		list[i].line = clipBytes(list[i].line, maxItemBytes)
+		list[i].line = clipEncoded(list[i].line, maxItemBytes)
 	}
 	type line struct {
 		text  string
@@ -324,8 +328,8 @@ func compose(list []nudge) (title, body string, shown []nudge) {
 		limit = maxLines - 1
 	}
 	kept, used := 0, 0
-	for kept < limit && used+len(lines[kept].text)+1 <= maxBodyBytes-len("and 999 more") {
-		used += len(lines[kept].text) + 1
+	for kept < limit && used+encodedLen(lines[kept].text)+2 <= maxBodyBytes-len("and 999 more") {
+		used += encodedLen(lines[kept].text) + 2 // and the \n between lines
 		kept++
 	}
 	more := 0
@@ -350,16 +354,24 @@ func compose(list []nudge) (title, body string, shown []nudge) {
 // stamp formats an instant for storage: UTC, fixed width, so strings sort.
 func stamp(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000Z") }
 
-// clipBytes shortens s to at most n bytes without splitting a character.
-func clipBytes(s string, n int) string {
-	if len(s) <= n {
+// encodedLen is how many bytes s takes inside the JSON push payload, where
+// <, > and & become six bytes each.
+func encodedLen(s string) int {
+	b, _ := json.Marshal(s)
+	return len(b) - 2
+}
+
+// clipEncoded shortens s until it takes at most n bytes encoded, whole
+// characters only.
+func clipEncoded(s string, n int) string {
+	if encodedLen(s) <= n {
 		return s
 	}
-	cut := n - len("…")
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
+	r := []rune(s)
+	for len(r) > 0 && encodedLen(string(r)+"…") > n {
+		r = r[:len(r)-1]
 	}
-	return s[:cut] + "…"
+	return string(r) + "…"
 }
 
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }

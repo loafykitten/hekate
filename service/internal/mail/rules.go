@@ -455,7 +455,9 @@ func subjectClipped(s string) bool {
 }
 
 // needsBody reports whether the rule has to read a message's text to decide.
-func (r Rule) needsBody(m row) bool { return r.Match.Body != nil && r.matchesHeaders(m) }
+func (r Rule) needsBody(m row) bool {
+	return r.Match.Body != nil && r.matchesHeaders(m) && !r.spares(m)
+}
 
 // senderMatches compares a rule's from (an address or "@domain") with an
 // address. A domain covers its subdomains.
@@ -514,8 +516,8 @@ func (s *Service) applyRules(ctx context.Context, a *account) (int, error) {
 		for _, m := range batch {
 			matched := -1
 			for i, r := range rules {
-				if !r.matchesHeaders(m) {
-					continue
+				if !r.matchesHeaders(m) || r.spares(m) {
+					continue // a spared message is this rule's to skip, without reading its body
 				}
 				if r.Match.Body != nil {
 					text, ok := bodies[m.ID]
@@ -525,9 +527,6 @@ func (s *Service) applyRules(ctx context.Context, a *account) (int, error) {
 					if !strings.Contains(text, *r.Match.Body) {
 						continue
 					}
-				}
-				if r.spares(m) {
-					continue // this rule leaves it alone; a later one may not
 				}
 				matched = i
 				break

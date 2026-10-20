@@ -436,3 +436,15 @@ func TestRuleProposeToolExceptions(t *testing.T) {
 		t.Errorf("again = %q, %d requests", again, len(f.appr.requests()))
 	}
 }
+
+func TestSparedMailNeedsNoBody(t *testing.T) {
+	r := Rule{Match: RuleMatch{From: ptr("@bank.example.net"), Body: ptr("upgrade")}, Except: []RuleException{{Subject: "transaction"}}}
+	spared := row{FromAddr: "a@bank.example.net", Subject: "New transaction"}
+	if r.needsBody(spared) {
+		t.Error("a message an exception spares made the rule read its body")
+	}
+	other := row{FromAddr: "a@bank.example.net", Subject: "News"}
+	if !r.needsBody(other) {
+		t.Error("an unspared match should still read the body")
+	}
+}

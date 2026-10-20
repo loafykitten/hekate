@@ -503,12 +503,13 @@ func (s *Service) unsubscribeTool() agent.Tool {
 
 func (s *Service) rulesTool() agent.Tool {
 	return agent.Tool{
-		Name:        "mail_rules",
-		Description: "List the standing mail rules, in the order they're tried, with how often each has acted.",
-		Schema:      schema(`{}`),
-		Effect:      agent.EffectRead,
-		Label:       "Checking the mail rules",
-		Timeout:     toolTimeout,
+		Name: "mail_rules",
+		Description: "List the standing mail rules, in the order they're tried, with how often each has acted and exactly " +
+			"what each matches and spares. To change a rule's exceptions, propose its same match and action with the full new list.",
+		Schema:  schema(`{}`),
+		Effect:  agent.EffectRead,
+		Label:   "Checking the mail rules",
+		Timeout: toolTimeout,
 		Run: s.guarded(func(ctx context.Context, _ json.RawMessage) (agent.Result, error) {
 			rules, err := s.Rules(ctx)
 			if err != nil {
@@ -519,7 +520,14 @@ func (s *Service) rulesTool() agent.Tool {
 			}
 			var b strings.Builder
 			for _, r := range rules {
-				fmt.Fprintf(&b, "- %s (acted on %d messages)\n", oneLine(r.Label, 400), r.Hits)
+				// The whole rule, so a proposal that changes its exceptions can keep the rest.
+				spec, _ := json.Marshal(struct {
+					Match  RuleMatch       `json:"match"`
+					Except []RuleException `json:"except"`
+					Action string          `json:"action"`
+					Folder *string         `json:"folder,omitempty"`
+				}{r.Match, r.Except, r.Action, r.Folder})
+				fmt.Fprintf(&b, "- %s (acted on %d messages): %s\n", oneLine(r.Label, 1000), r.Hits, spec)
 			}
 			return agent.Result{Content: strings.TrimSpace(b.String())}, nil
 		}),

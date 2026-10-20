@@ -30,3 +30,8 @@ INSERT INTO sqlite_sequence (name, seq) SELECT 'mail_rules_new', seq FROM sqlite
 
 DROP TABLE mail_rules;
 ALTER TABLE mail_rules_new RENAME TO mail_rules;
+
+-- The unsubscribe rule due to act on a message: set when the rule matched it and its unsubscribe
+-- headers were found signed by the sender, cleared once the request has been tried, so a sweep cut
+-- short picks up where it stopped.
+ALTER TABLE mail_messages ADD COLUMN unsub_rule INTEGER;

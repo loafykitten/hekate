@@ -1,7 +1,12 @@
 package mail
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,6 +25,7 @@ import (
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/emersion/go-imap/v2/imapserver"
 	"github.com/emersion/go-imap/v2/imapserver/imapmemserver"
+	"github.com/emersion/go-msgauth/dkim"
 
 	"github.com/loafykitten/hekate/service/internal/approvals"
 	"github.com/loafykitten/hekate/service/internal/config"
@@ -309,7 +315,7 @@ func newFixture(t *testing.T, opts ...func(*fixtureOpts)) *fixture {
 	}
 	o := Options{
 		Store: f.store, Accounts: accounts, Approvals: f.appr, OwnerName: "Rika", Location: time.UTC,
-		Model: config.Model{Name: "bulk", Effort: "low"}, Now: f.clock.Now, HTTPClient: fo.httpc,
+		Model: config.Model{Name: "bulk", Effort: "low"}, Now: f.clock.Now, HTTPClient: fo.httpc, LookupTXT: testLookupTXT,
 		OnChange: func(string) { f.mu.Lock(); f.changes++; f.mu.Unlock() },
 		Dial: func(ctx context.Context, a config.MailAccount) (net.Conn, error) {
 			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp", a.Host)
@@ -342,6 +348,42 @@ type mailSpec struct {
 	headers string // extra header lines, each ending in \r\n
 	html    bool
 	msgID   string
+	// dkim signs the message as this domain with the test key; dkimKeys are the
+	// headers it signs (default From, Subject, List-Unsubscribe, List-Unsubscribe-Post).
+	dkim     string
+	dkimKeys []string
+}
+
+// testDKIMKey signs test mail; testLookupTXT publishes it as test._domainkey
+// of every domain, as a sender's DNS would.
+var testDKIMKey = func() *rsa.PrivateKey {
+	k, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		panic(err)
+	}
+	return k
+}()
+
+func testLookupTXT(domain string) ([]string, error) {
+	if !strings.HasPrefix(domain, "test._domainkey.") {
+		return nil, &net.DNSError{Err: "no such host", Name: domain, IsNotFound: true}
+	}
+	pub, err := x509.MarshalPKIXPublicKey(&testDKIMKey.PublicKey)
+	if err != nil {
+		return nil, err
+	}
+	return []string{"v=DKIM1; k=rsa; p=" + base64.StdEncoding.EncodeToString(pub)}, nil
+}
+
+func dkimSign(raw []byte, domain string, keys []string) []byte {
+	if keys == nil {
+		keys = []string{"From", "Subject", "List-Unsubscribe", "List-Unsubscribe-Post"}
+	}
+	var b bytes.Buffer
+	if err := dkim.Sign(&b, bytes.NewReader(raw), &dkim.SignOptions{Domain: domain, Selector: "test", Signer: testDKIMKey, HeaderKeys: keys}); err != nil {
+		panic(err)
+	}
+	return b.Bytes()
 }
 
 var specSeq int
@@ -365,8 +407,12 @@ func (m mailSpec) raw(now time.Time) []byte {
 	if body == "" {
 		body = "Hello Rika, this is the body of the message."
 	}
-	return []byte("From: " + m.from + "\r\nTo: " + testUser + "\r\nSubject: " + m.subject + "\r\nDate: " + m.date.Format(time.RFC1123Z) +
+	raw := []byte("From: " + m.from + "\r\nTo: " + testUser + "\r\nSubject: " + m.subject + "\r\nDate: " + m.date.Format(time.RFC1123Z) +
 		"\r\nMessage-ID: <" + m.msgID + ">\r\n" + m.headers + "MIME-Version: 1.0\r\nContent-Type: " + ct + "\r\n\r\n" + body + "\r\n")
+	if m.dkim != "" {
+		raw = dkimSign(raw, m.dkim, m.dkimKeys)
+	}
+	return raw
 }
 
 // client opens a second IMAP connection to the server, as another mail app would.

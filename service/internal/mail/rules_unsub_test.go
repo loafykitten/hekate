@@ -58,7 +58,7 @@ func TestUnsubscribeRuleSendsOneClickAndFilesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	shop := "Shop <deals@shop.example.net>"
-	f.deliver("INBOX", mailSpec{subject: "Sale", from: shop, headers: listMail(srv.URL+"/u/sale", "deals.shop.example.net")})
+	f.deliver("INBOX", mailSpec{dkim: "shop.example.net", subject: "Sale", from: shop, headers: listMail(srv.URL+"/u/sale", "deals.shop.example.net")})
 	f.deliver("INBOX", mailSpec{subject: "Order shipped", from: "Shop <orders@shop.example.net>"}) // no one-click: left alone
 	f.deliver("INBOX", mailSpec{subject: "Other list", headers: listMail(srv.URL+"/u/other", "news.example.org")})
 	f.sweep()
@@ -78,8 +78,8 @@ func TestUnsubscribeRuleSendsOneClickAndFilesNothing(t *testing.T) {
 
 	// More mail on the same list within the week sends nothing more; a
 	// different list from the same domain is its own request.
-	f.deliver("INBOX", mailSpec{subject: "Sale 2", from: shop, headers: listMail(srv.URL+"/u/sale2", "deals.shop.example.net")})
-	f.deliver("INBOX", mailSpec{subject: "Digest", from: "Shop <digest@shop.example.net>", headers: listMail(srv.URL+"/u/digest", "digest.shop.example.net")})
+	f.deliver("INBOX", mailSpec{dkim: "shop.example.net", subject: "Sale 2", from: shop, headers: listMail(srv.URL+"/u/sale2", "deals.shop.example.net")})
+	f.deliver("INBOX", mailSpec{dkim: "shop.example.net", subject: "Digest", from: "Shop <digest@shop.example.net>", headers: listMail(srv.URL+"/u/digest", "digest.shop.example.net")})
 	f.sweep()
 	if got := srv.reqs(); len(got) != 2 || !strings.HasPrefix(got[1], "POST /u/digest ") {
 		t.Errorf("requests = %q", got)
@@ -90,7 +90,7 @@ func TestUnsubscribeRuleSendsOneClickAndFilesNothing(t *testing.T) {
 
 	// A sender still mailing a week later is asked again.
 	f.clock.Advance(unsubEvery + time.Hour)
-	f.deliver("INBOX", mailSpec{subject: "Sale 3", from: shop, headers: listMail(srv.URL+"/u/sale3", "deals.shop.example.net")})
+	f.deliver("INBOX", mailSpec{dkim: "shop.example.net", subject: "Sale 3", from: shop, headers: listMail(srv.URL+"/u/sale3", "deals.shop.example.net")})
 	f.sweep()
 	if got := srv.reqs(); len(got) != 3 || !strings.HasPrefix(got[2], "POST /u/sale3 ") {
 		t.Errorf("requests = %q", got)
@@ -111,7 +111,7 @@ func TestUnsubscribeRulePairsWithFilingRule(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	f.deliver("INBOX", mailSpec{subject: "Sale", from: "Shop <deals@shop.example.net>", headers: listMail(srv.URL+"/u/1", "deals.shop.example.net")})
+	f.deliver("INBOX", mailSpec{dkim: "shop.example.net", subject: "Sale", from: "Shop <deals@shop.example.net>", headers: listMail(srv.URL+"/u/1", "deals.shop.example.net")})
 	f.sweep()
 	if m := f.bySubject("Sale"); m.Folder != "Trash" || m.CanUnsubscribe {
 		t.Errorf("message = %+v, want it trashed and unsubscribed", m)
@@ -132,7 +132,7 @@ func TestUnsubscribeRuleTriesEachMessageOnce(t *testing.T) {
 	}
 	shop := "Shop <deals@shop.example.net>"
 	srv.status = 500
-	f.deliver("INBOX", mailSpec{subject: "Sale", from: shop, headers: listMail(srv.URL+"/u/1", "deals.shop.example.net")})
+	f.deliver("INBOX", mailSpec{dkim: "shop.example.net", subject: "Sale", from: shop, headers: listMail(srv.URL+"/u/1", "deals.shop.example.net")})
 	f.sweep()
 	f.sweep()
 	if got := srv.reqs(); len(got) != 1 {
@@ -146,7 +146,7 @@ func TestUnsubscribeRuleTriesEachMessageOnce(t *testing.T) {
 	}
 	// The sender's next message tries again.
 	srv.status = 200
-	f.deliver("INBOX", mailSpec{subject: "Sale 2", from: shop, headers: listMail(srv.URL+"/u/2", "deals.shop.example.net")})
+	f.deliver("INBOX", mailSpec{dkim: "shop.example.net", subject: "Sale 2", from: shop, headers: listMail(srv.URL+"/u/2", "deals.shop.example.net")})
 	f.sweep()
 	if got := srv.reqs(); len(got) != 2 || !strings.HasPrefix(got[1], "POST /u/2 ") {
 		t.Errorf("requests = %q", got)
@@ -167,7 +167,7 @@ func TestUnsubscribeRuleWaitsForFailedFilingRule(t *testing.T) {
 		}
 	}
 	srv.status = 500
-	f.deliver("INBOX", mailSpec{subject: "Sale", from: "Shop <deals@shop.example.net>", headers: listMail(srv.URL+"/u/1", "deals.shop.example.net")})
+	f.deliver("INBOX", mailSpec{dkim: "shop.example.net", subject: "Sale", from: "Shop <deals@shop.example.net>", headers: listMail(srv.URL+"/u/1", "deals.shop.example.net")})
 	f.sweep()
 	f.sweep()
 	if got := srv.reqs(); len(got) != 0 {
@@ -200,7 +200,7 @@ func TestUnsubscribeRuleLimitIsPerInbox(t *testing.T) {
 	if _, err := f.svc.CreateRule(t.Context(), RuleSpec{From: "@shop.example.net", Action: "unsubscribe"}); err != nil {
 		t.Fatal(err)
 	}
-	f.deliver("INBOX", mailSpec{subject: "Sale", from: "Shop <deals@shop.example.net>", headers: listMail(srv.URL+"/u/sale", "deals.shop.example.net")})
+	f.deliver("INBOX", mailSpec{dkim: "shop.example.net", subject: "Sale", from: "Shop <deals@shop.example.net>", headers: listMail(srv.URL+"/u/sale", "deals.shop.example.net")})
 	f.sweep()
 	if got := srv.reqs(); len(got) != 2 {
 		t.Errorf("requests = %q, want one from each inbox", got)
@@ -220,10 +220,71 @@ func TestUnsubscribeRuleWithExceptionsAndWords(t *testing.T) {
 		Except: []RuleException{{Subject: "your order"}}}); err != nil {
 		t.Fatal(err)
 	}
-	f.deliver("INBOX", mailSpec{subject: "News about your order", from: "Shop <news@shop.example.net>", headers: listMail(srv.URL+"/u/order", "orders.shop.example.net")})
-	f.deliver("INBOX", mailSpec{subject: "Weekly deals", from: "Shop <deals@shop.example.net>", headers: listMail(srv.URL+"/u/deals", "deals.shop.example.net")})
+	f.deliver("INBOX", mailSpec{dkim: "shop.example.net", subject: "News about your order", from: "Shop <news@shop.example.net>", headers: listMail(srv.URL+"/u/order", "orders.shop.example.net")})
+	f.deliver("INBOX", mailSpec{dkim: "shop.example.net", subject: "Weekly deals", from: "Shop <deals@shop.example.net>", headers: listMail(srv.URL+"/u/deals", "deals.shop.example.net")})
 	f.sweep()
 	if got := srv.reqs(); len(got) != 1 || !strings.HasPrefix(got[0], "POST /u/deals ") {
 		t.Errorf("requests = %q, want only the unspared list", got)
+	}
+}
+
+// Only mail whose unsubscribe headers the sender's own domain signed is acted
+// on: anyone can forge a From line and point List-Unsubscribe anywhere.
+func TestUnsubscribeRuleNeedsTheSendersSignature(t *testing.T) {
+	srv := newUnsubServer(t)
+	f := newFixture(t, func(o *fixtureOpts) { o.httpc = srv.Client() })
+	if _, err := f.svc.CreateRule(t.Context(), RuleSpec{From: "@shop.example.net", Action: "unsubscribe"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range []mailSpec{
+		{subject: "Unsigned", headers: listMail(srv.URL+"/u/unsigned", "a.shop.example.net")},
+		{subject: "Signed by someone else", dkim: "attacker.example.org", headers: listMail(srv.URL+"/u/other", "b.shop.example.net")},
+		{subject: "Headers not signed", dkim: "shop.example.net", dkimKeys: []string{"From", "Subject"}, headers: listMail(srv.URL+"/u/partial", "c.shop.example.net")},
+		{subject: "Signed by a subdomain", dkim: "eu.shop.example.net", headers: listMail(srv.URL+"/u/sub", "d.shop.example.net")},
+	} {
+		m.from = "Shop <deals@shop.example.net>"
+		f.deliver("INBOX", m)
+	}
+	// A sender on a subdomain, signed by the parent domain, is the sender's own.
+	f.deliver("INBOX", mailSpec{subject: "Genuine", from: "Shop <deals@mail.shop.example.net>", dkim: "shop.example.net",
+		headers: listMail(srv.URL+"/u/genuine", "e.shop.example.net")})
+	f.sweep()
+	if got := srv.reqs(); len(got) != 1 || !strings.HasPrefix(got[0], "POST /u/genuine ") {
+		t.Errorf("requests = %q, want only the genuine one", got)
+	}
+}
+
+// A sweep cut short after the mail was settled still sends the request on the
+// next sweep, once.
+func TestUnsubscribeDueSurvivesAnInterruptedSweep(t *testing.T) {
+	srv := newUnsubServer(t)
+	f := newFixture(t, func(o *fixtureOpts) { o.httpc = srv.Client() })
+	r, err := f.svc.CreateRule(t.Context(), RuleSpec{From: "@shop.example.net", Action: "unsubscribe"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.deliver("INBOX", mailSpec{subject: "Sale", from: "Shop <deals@shop.example.net>", dkim: "shop.example.net",
+		headers: listMail(srv.URL+"/u/sale", "deals.shop.example.net")})
+	f.sweep()
+	if len(srv.reqs()) != 1 {
+		t.Fatalf("requests = %q", srv.reqs())
+	}
+	// What an interrupted sweep leaves: settled mail still marked due.
+	f.deliver("INBOX", mailSpec{subject: "Digest", from: "Shop <digest@shop.example.net>", dkim: "shop.example.net",
+		headers: listMail(srv.URL+"/u/digest", "digest.shop.example.net")})
+	f.sweep()
+	db := f.store.DB()
+	if _, err := db.Exec(`UPDATE mail_messages SET unsubscribed_at = NULL, unsub_rule = ? WHERE subject = 'Digest'`, r.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.sweep()
+	f.sweep()
+	if got := srv.reqs(); len(got) != 3 || !strings.HasPrefix(got[2], "POST /u/digest ") {
+		t.Errorf("requests = %q, want the due one sent once more", got)
+	}
+	var left int
+	_ = db.QueryRow(`SELECT count(*) FROM mail_messages WHERE unsub_rule IS NOT NULL`).Scan(&left)
+	if left != 0 {
+		t.Errorf("%d messages still marked due", left)
 	}
 }

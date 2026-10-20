@@ -291,6 +291,8 @@
   overflow-x: auto;
   scrollbar-width: none;
   scroll-padding-inline: var(--space-4);
+  /* Days running off either edge fade out rather than being cut, so it reads as a strip to scroll. */
+  mask-image: linear-gradient(to right, transparent, #000 var(--space-6), #000 calc(100% - var(--space-6)), transparent);
 }
 
 .strip::-webkit-scrollbar {

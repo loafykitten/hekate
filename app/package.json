@@ -21,7 +21,8 @@
     "verify:diary": "node scripts/verify/diary.mjs",
     "verify:briefing": "node scripts/verify/briefing.mjs",
     "verify:lipsync": "node scripts/verify/lipsync.mjs",
-    "verify:offline": "node scripts/verify/offline.mjs"
+    "verify:offline": "node scripts/verify/offline.mjs",
+    "verify:tour": "node scripts/verify/tour.mjs"
   },
   "dependencies": {
     "@tanstack/query-sync-storage-persister": "5.104.5",

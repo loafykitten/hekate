@@ -53,6 +53,16 @@ export class ApiError extends Error {
   }
 }
 
+// The proxy answers these when the service itself is down or restarting. The service uses them
+// too, for an integration that failed (calendar login refused, mail not set up), but always with
+// its own JSON error, so only a gateway status without one means Hekate is out of reach.
+const GATEWAY = [502, 503, 504];
+
+// The service couldn't be reached at all (no network, or the proxy found nothing behind it).
+export function unreachable(e: unknown): boolean {
+  return e instanceof ApiError && e.status === 0;
+}
+
 type Query = Record<string, string | number | undefined>;
 
 export interface RequestOptions {
@@ -89,11 +99,13 @@ export async function request(method: string, path: string, { body, query, signa
     json = await res.json();
   } catch {
     // An SPA fallback page or a proxy error is not the service's answer.
+    if (GATEWAY.includes(res.status)) throw new ApiError("Hekate isn't reachable.", 0);
     throw new ApiError(res.ok ? "Hekate sent something unexpected." : `Hekate answered ${res.status}.`, res.status);
   }
   if (!res.ok) {
-    const message = isRec(json) && typeof json.error === "string" && json.error ? json.error : `Hekate answered ${res.status}.`;
-    throw new ApiError(message, res.status);
+    const own = isRec(json) && typeof json.error === "string" && json.error ? json.error : undefined;
+    if (!own && GATEWAY.includes(res.status)) throw new ApiError("Hekate isn't reachable.", 0);
+    throw new ApiError(own ?? `Hekate answered ${res.status}.`, res.status);
   }
   return json;
 }

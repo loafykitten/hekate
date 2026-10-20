@@ -208,8 +208,9 @@ export function usePatchMemory() {
   return useDomainMutation(["memory"], ({ id, fields }: { id: string; fields: MemoryFields }) => memoryApi.patch(id, fields));
 }
 
+// Forgetting a memory also removes the diary's copies of it.
 export function useDeleteMemory() {
-  return useDomainMutation(["memory"], (id: string) => memoryApi.remove(id));
+  return useDomainMutation(["memory", "journal"], (id: string) => memoryApi.remove(id));
 }
 
 export function useCoreMemory(enabled = true) {

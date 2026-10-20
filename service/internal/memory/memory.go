@@ -150,6 +150,9 @@ func (s *Service) display(stored string) string {
 
 func (s *Service) changed() { s.events.Invalidate(proto.DomainMemory) }
 
+// domainJournal is reflection's invalidate domain: its records hold copies of memories.
+const domainJournal = "journal"
+
 // Get returns one memory.
 func (s *Service) Get(ctx context.Context, id int64) (Memory, error) { return s.get(ctx, s.db, id) }
 
@@ -258,7 +261,9 @@ var ErrExists = errors.New("a memory with that text already exists")
 // after is nil for a retired one.
 type Recorder func(ctx context.Context, tx *sql.Tx, before, after *Memory) error
 
-// Unchanged reports whether two snapshots of a memory are the same version.
+// Unchanged reports whether two snapshots of a memory hold the same fields.
+// The update time isn't compared: a change that was undone leaves the memory
+// as it was, so an earlier change can be undone after it.
 func Unchanged(a, b Memory) bool {
 	fa, fb := "", ""
 	if a.FollowUpAt != nil {
@@ -267,7 +272,7 @@ func Unchanged(a, b Memory) bool {
 	if b.FollowUpAt != nil {
 		fb = *b.FollowUpAt
 	}
-	return a.ID == b.ID && a.Kind == b.Kind && a.Content == b.Content && a.Importance == b.Importance && fa == fb && a.UpdatedAt == b.UpdatedAt
+	return a.ID == b.ID && a.Kind == b.Kind && a.Content == b.Content && a.Importance == b.Importance && fa == fb
 }
 
 type rowQuerier interface {
@@ -453,7 +458,8 @@ func (s *Service) Forget(ctx context.Context, id int64) (Memory, error) {
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM memories WHERE id = ?`, id); err != nil {
 		return Memory{}, fmt.Errorf("forget memory %d: %w", id, err)
 	}
-	s.changed()
+	// The journal's copies of it went too (a trigger deletes them).
+	s.events.Invalidate(proto.DomainMemory, domainJournal)
 	return m, nil
 }
 

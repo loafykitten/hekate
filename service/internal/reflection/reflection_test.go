@@ -133,7 +133,7 @@ func TestReflectAppliesAndRecords(t *testing.T) {
 	old := f.remember("fact", "Has a job interview on Friday")
 	dupA := f.remember("preference", "Likes oolong")
 	dupB := f.remember("preference", "Drinks oolong tea most mornings")
-	keep := f.remember("person", "Mika is Rika's sister")
+	f.remember("person", "Mika is Rika's sister")
 	f.say(time.Date(2026, 10, 19, 9, 15, 0, 0, f.loc), "The interview got moved to Thursday at 2, ugh.", "Thursday it is. You'll be ready.")
 	f.say(time.Date(2026, 10, 19, 21, 40, 0, 0, f.loc), "Mika's coming over Saturday. Also I'm off coffee now.", "Noted. I'll ask how it went with Mika.")
 	f.say(time.Date(2026, 10, 18, 20, 0, 0, 0, f.loc), "too old to read", "and this") // before the window
@@ -141,14 +141,11 @@ func TestReflectAppliesAndRecords(t *testing.T) {
 	f.model.reply = "Here you go:\n```json\n" + `{
 		"save": [
 			{"kind": "preference", "content": "Has given up coffee", "importance": 3, "reason": "said so tonight"},
-			{"kind": "follow_up", "content": "Ask how Mika's visit went", "follow_up_at": "2026-10-25", "reason": "visit Saturday"},
-			{"kind": "wish", "content": "bad kind", "reason": "x"}
+			{"kind": "follow_up", "content": "Ask how Mika's visit went", "follow_up_at": "2026-10-25", "reason": "visit Saturday"}
 		],
 		"update": [
 			{"id": "` + strconv.FormatInt(old, 10) + `", "content": "Has a job interview on Thursday at 2 pm", "kind": "follow_up", "follow_up_at": "2026-10-23T17:00", "reason": "moved"},
-			{"id": ` + strconv.FormatInt(dupB, 10) + `, "content": "Likes oolong tea, most mornings", "reason": "merged with a duplicate"},
-			{"id": 9999, "content": "not a memory", "reason": "x"},
-			{"id": ` + strconv.FormatInt(keep, 10) + `, "reason": "no fields"}
+			{"id": ` + strconv.FormatInt(dupB, 10) + `, "content": "Likes oolong tea, most mornings", "reason": "merged with a duplicate"}
 		],
 		"retire": [{"id": ` + strconv.FormatInt(dupA, 10) + `, "reason": "merged into the other"}],
 		"diary": "Rika's interview moved. They sounded tired, but steadier than last week.",
@@ -158,7 +155,7 @@ func TestReflectAppliesAndRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if summary != "Saved 2, updated 2 and retired 1 memories; wrote the diary for 2026-10-19 (3 changes refused)" {
+	if summary != "Saved 2, updated 2 and retired 1 memories; wrote the diary for 2026-10-19" {
 		t.Errorf("summary = %q", summary)
 	}
 
@@ -483,5 +480,79 @@ func TestMergeKeepsSourcesWhenTheDestinationUpdateIsRefused(t *testing.T) {
 	}
 	if _, err := f.mem.Get(ctx, src); err != nil {
 		t.Errorf("the merge source was retired though the merge failed (%q): %v", summary, err)
+	}
+}
+
+func TestJunkIsRefusedAndHoldsRetirementsBack(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	keep := f.remember("person", "Mika is Rika's sister")
+	src := f.remember("preference", "Likes oolong")
+	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "hi", "hello")
+	for _, update := range []string{
+		`{"id": 9999, "content": "a mistyped destination", "reason": "merge"}`,
+		`{"id": ` + strconv.FormatInt(keep, 10) + `, "reason": "no fields"}`,
+	} {
+		f.model.reply = `{"update": [` + update + `], "retire": [{"id": ` + strconv.FormatInt(src, 10) + `, "reason": "merged"}],
+			"save": [{"kind": "wish", "content": "bad kind"}], "diary": "d"}`
+		summary, err := f.svc.Reflect(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(summary, "Saved 0, updated 0 and retired 0 memories") || !strings.HasSuffix(summary, "(2 changes refused) (1 retirements held back: an update didn't happen)") {
+			t.Errorf("summary = %q", summary)
+		}
+		if _, err := f.mem.Get(ctx, src); err != nil {
+			t.Errorf("the merge source was retired: %v", err)
+		}
+		f.say(f.now.Add(time.Hour), "again", "again") // something new for the next run
+		f.now = f.now.Add(2 * time.Hour)
+	}
+}
+
+func TestADatabaseFailureLeavesItUnfinished(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "I play the cello", "Lovely.")
+	model := &editingModel{fakeModel: &fakeModel{reply: `{"save": [{"kind": "fact", "content": "Plays the cello"}], "diary": "d"}`}}
+	model.during = func() {
+		if _, err := f.store.DB().ExecContext(ctx, `DROP TABLE reflection_changes`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.svc.llm = model
+	if _, err := f.svc.Reflect(ctx); err == nil {
+		t.Fatal("a failing database should fail the run")
+	}
+	if found, _ := f.mem.Search(ctx, "cello", "", 5); len(found) != 0 {
+		t.Errorf("the save survived its failed record: %+v", found)
+	}
+	if start, _ := f.svc.windowStart(ctx, f.now); !start.Equal(f.now.Add(-defaultWindow)) {
+		t.Errorf("the failed run advanced the window to %v", start)
+	}
+}
+
+func TestUndoInReverseOrder(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	a := f.remember("fact", "Has a cat")
+	for i, content := range []string{"Has a cat named Miso", "Has a cat named Miso, who is twelve"} {
+		f.say(f.now.Add(-time.Hour), "hi", "hello")
+		f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(a, 10) + `, "content": "` + content + `", "reason": "x"}], "diary": "d` + strconv.Itoa(i) + `"}`
+		if _, err := f.svc.Reflect(ctx); err != nil {
+			t.Fatal(err)
+		}
+		f.now = f.now.Add(24 * time.Hour)
+	}
+	days, _ := f.svc.Journal(ctx, 0)
+	newest, older := days[0].Reflections[0].Changes[0], days[1].Reflections[0].Changes[0]
+	if _, err := f.svc.Undo(ctx, mustID(t, newest.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Undo(ctx, mustID(t, older.ID)); err != nil {
+		t.Fatalf("undoing the earlier change after the later one: %v", err)
+	}
+	if m, _ := f.mem.Get(ctx, a); m.Content != "Has a cat" {
+		t.Errorf("after both undos: %+v", m)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/loafykitten/hekate/service/internal/httpx"
 	"github.com/loafykitten/hekate/service/internal/memory"
 )
 
@@ -25,8 +26,9 @@ const (
 // Each change applies only to the memory as the model saw it: one the owner
 // edited meanwhile is left alone, as are changes the memory service refuses (an
 // unknown id, a bad kind or date). Merges are an update plus retirements, so if
-// an update to a known memory doesn't happen, nothing is retired: the
-// information stays live.
+// any update doesn't happen, nothing is retired: the information stays live. If
+// the database fails, the reflection stops unfinished and the next one reads
+// the same conversation again.
 // Once changes start, cancellation waits until they're done.
 func (s *Service) apply(ctx context.Context, in *input, p plan) (string, error) {
 	ctx = context.WithoutCancel(ctx)
@@ -40,7 +42,7 @@ func (s *Service) apply(ctx context.Context, in *input, p plan) (string, error) 
 		return "", fmt.Errorf("record the reflection: %w", err)
 	}
 	var saved, updated, retired, refused, stale, held int
-	updateFailed := false // an update to a memory she knows didn't happen
+	updateFailed := false // an update in the plan didn't happen
 	recorder := func(action, reason string) memory.Recorder {
 		return func(ctx context.Context, tx *sql.Tx, before, after *memory.Memory) error {
 			id := ""
@@ -66,24 +68,32 @@ func (s *Service) apply(ctx context.Context, in *input, p plan) (string, error) 
 	for id, m := range in.byID {
 		latest[id] = m
 	}
-	failed := func(what string, id int64, err error) {
-		if errors.Is(err, memory.ErrChanged) || errors.Is(err, memory.ErrExists) {
+	// failed sorts an error from the memory service: a memory changed meanwhile
+	// or a change it refuses (bad input, unknown id) is skipped; anything else
+	// (the database failing) stops the reflection unfinished.
+	failed := func(what string, id int64, err error) error {
+		var he *httpx.Error
+		switch {
+		case errors.Is(err, memory.ErrChanged), errors.Is(err, memory.ErrExists):
 			stale++
-			return
+		case errors.As(err, &he) && he.Status < 500:
+			s.log.Warn("reflection: a change was refused", "change", what, "memory_id", id, "error", err)
+			refused++
+		default:
+			return fmt.Errorf("reflection: %s memory %d: %w", what, id, err)
 		}
-		s.log.Warn("reflection: a change was refused", "change", what, "memory_id", id, "error", err)
-		refused++
+		return nil
 	}
-	update := func(id int64, patch memory.Patch, reason string) {
+	update := func(id int64, patch memory.Patch, reason string) error {
 		before := latest[id]
 		after, err := s.mem.UpdateIfUnchanged(ctx, id, before, patch, recorder(ActionUpdate, reason))
 		if err != nil {
-			failed(ActionUpdate, id, err)
 			updateFailed = true
-			return
+			return failed(ActionUpdate, id, err)
 		}
 		latest[id] = after
 		updated++
+		return nil
 	}
 
 	for _, u := range p.Update {
@@ -91,9 +101,12 @@ func (s *Service) apply(ctx context.Context, in *input, p plan) (string, error) 
 		patch := memory.Patch{Content: u.Content, Kind: u.Kind, Importance: u.Importance, FollowUpAt: u.FollowUpAt}
 		if _, ok := latest[id]; !ok || (patch == memory.Patch{}) {
 			refused++
+			updateFailed = true // a merge's destination may be the one that's wrong
 			continue
 		}
-		update(id, patch, u.Reason)
+		if err := update(id, patch, u.Reason); err != nil {
+			return "", err
+		}
 	}
 	for _, r := range p.Retire {
 		id := int64(r.ID)
@@ -107,7 +120,9 @@ func (s *Service) apply(ctx context.Context, in *input, p plan) (string, error) 
 			continue
 		}
 		if _, err := s.mem.RetireIfUnchanged(ctx, id, before, recorder(ActionRetire, r.Reason)); err != nil {
-			failed(ActionRetire, id, err)
+			if err := failed(ActionRetire, id, err); err != nil {
+				return "", err
+			}
 			continue
 		}
 		delete(latest, id)
@@ -125,14 +140,18 @@ func (s *Service) apply(ctx context.Context, in *input, p plan) (string, error) 
 				patch.FollowUpAt = &sv.FollowUpAt
 			}
 			if patch != (memory.Patch{}) {
-				update(id, patch, sv.Reason)
+				if err := update(id, patch, sv.Reason); err != nil {
+					return "", err
+				}
 			}
 			continue
 		}
 		m, err := s.mem.Insert(ctx, memory.NewMemory{Kind: sv.Kind, Content: sv.Content, Importance: sv.Importance, FollowUpAt: sv.FollowUpAt},
 			recorder(ActionSave, sv.Reason))
 		if err != nil {
-			failed(ActionSave, 0, err)
+			if err := failed(ActionSave, 0, err); err != nil {
+				return "", err
+			}
 			continue
 		}
 		id, _ := strconv.ParseInt(m.ID, 10, 64)

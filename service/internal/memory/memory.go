@@ -254,6 +254,22 @@ func (s *Service) Save(ctx context.Context, n NewMemory) (m Memory, existed bool
 	return m, existed, err
 }
 
+// ErrChanged is returned by the IfUnchanged operations when the memory is no
+// longer what the caller last saw.
+var ErrChanged = errors.New("the memory changed since it was read")
+
+// Unchanged reports whether two snapshots of a memory are the same version.
+func Unchanged(a, b Memory) bool {
+	fa, fb := "", ""
+	if a.FollowUpAt != nil {
+		fa = *a.FollowUpAt
+	}
+	if b.FollowUpAt != nil {
+		fb = *b.FollowUpAt
+	}
+	return a.ID == b.ID && a.Kind == b.Kind && a.Content == b.Content && a.Importance == b.Importance && fa == fb && a.UpdatedAt == b.UpdatedAt
+}
+
 // Update changes a memory.
 func (s *Service) Update(ctx context.Context, id int64, p Patch) (Memory, error) {
 	s.mu.Lock()
@@ -262,6 +278,26 @@ func (s *Service) Update(ctx context.Context, id int64, p Patch) (Memory, error)
 	if err != nil {
 		return Memory{}, err
 	}
+	return s.update(ctx, id, cur, p)
+}
+
+// UpdateIfUnchanged changes a memory only if it is still the version seen;
+// otherwise it returns ErrChanged and changes nothing.
+func (s *Service) UpdateIfUnchanged(ctx context.Context, id int64, seen Memory, p Patch) (Memory, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cur, err := s.Get(ctx, id)
+	if err != nil {
+		return Memory{}, err
+	}
+	if !Unchanged(cur, seen) {
+		return Memory{}, ErrChanged
+	}
+	return s.update(ctx, id, cur, p)
+}
+
+func (s *Service) update(ctx context.Context, id int64, cur Memory, p Patch) (Memory, error) {
+	var err error
 	kind, content, importance := cur.Kind, cur.Content, cur.Importance
 	if p.Kind != nil {
 		if err := checkKind(*p.Kind); err != nil {
@@ -322,6 +358,25 @@ func (s *Service) Retire(ctx context.Context, id int64) (Memory, error) {
 	if err != nil {
 		return Memory{}, err
 	}
+	return s.retire(ctx, id, m)
+}
+
+// RetireIfUnchanged retires a memory only if it is still the version seen;
+// otherwise it returns ErrChanged.
+func (s *Service) RetireIfUnchanged(ctx context.Context, id int64, seen Memory) (Memory, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, err := s.Get(ctx, id)
+	if err != nil {
+		return Memory{}, err
+	}
+	if !Unchanged(m, seen) {
+		return Memory{}, ErrChanged
+	}
+	return s.retire(ctx, id, m)
+}
+
+func (s *Service) retire(ctx context.Context, id int64, m Memory) (Memory, error) {
 	if _, err := s.db.ExecContext(ctx, `UPDATE memories SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL`, stamp(s.now()), id); err != nil {
 		return Memory{}, fmt.Errorf("retire memory %d: %w", id, err)
 	}

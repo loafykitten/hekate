@@ -163,7 +163,7 @@ func (s *Service) Reflect(ctx context.Context) (string, error) {
 // windowStart is where the last reflection stopped reading, bounded.
 func (s *Service) windowStart(ctx context.Context, end time.Time) (time.Time, error) {
 	var last sql.NullString
-	if err := s.db.QueryRowContext(ctx, `SELECT MAX(window_end) FROM reflections`).Scan(&last); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT MAX(window_end) FROM reflections WHERE finished_at IS NOT NULL`).Scan(&last); err != nil {
 		return time.Time{}, fmt.Errorf("find the last reflection: %w", err)
 	}
 	start := end.Add(-defaultWindow)

@@ -356,6 +356,9 @@ Each night at 03:30 (caught up within 8 h after an outage) Renamon reflects on t
 since her last reflection, using the background model: she saves memories she missed, merges
 duplicates, retires stale or contradicted ones, schedules follow-ups and writes a diary entry for
 the day. With no conversation since, nothing runs. Every change is recorded and can be undone.
+A change applies only to the memory as she read it: one the owner edited while she was thinking
+is left alone. The next reflection reads on from the last one that finished. Forgetting a memory
+also deletes the copies reflections kept of it; her diary entries are her own words and stay.
 
 ```jsonc
 // JournalDay
@@ -380,7 +383,7 @@ the day. With no conversation since, nothing runs. Every change is recorded and 
 | Method & path | Body | Returns |
 |---|---|---|
 | `GET /api/journal?limit=` (default 14 days, ≤ 60) | | `{ days: [JournalDay] }` newest first |
-| `POST /api/reflections/changes/{id}/undo` | | the change, now with `undone_at`. A saved memory is retired, an updated one goes back to `before`, a retired one comes back. 409 when already undone, or when the memory was forgotten since |
+| `POST /api/reflections/changes/{id}/undo` | | the change, now with `undone_at`. A saved memory is retired, an updated one goes back to `before`, a retired one comes back. 409 when already undone, or when the memory was edited since (so the newer edit isn't lost) |
 
 ### Ideas and routines
 

@@ -3,6 +3,7 @@ package reflection
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -17,10 +18,15 @@ const (
 	ActionRetire = "retire"
 )
 
-// apply carries out a plan through the memory service, recording each change
-// that took effect so it can be undone, then writes the diary entry. Changes
-// the memory service refuses (an unknown id, a bad kind or date) are skipped.
+// apply carries out a plan through the memory service and records each change
+// that took effect, so it can be undone, then writes the diary entry and marks
+// the reflection finished (the next one reads on from where it stopped). Each
+// change applies only to the memory as the model saw it: one the owner edited
+// meanwhile is left alone, as are changes the memory service refuses (an
+// unknown id, a bad kind or date). Once changes start, cancellation waits until
+// they're recorded.
 func (s *Service) apply(ctx context.Context, in *input, p plan) (string, error) {
+	ctx = context.WithoutCancel(ctx)
 	res, err := s.db.ExecContext(ctx, `INSERT INTO reflections (day, window_start, window_end, summary, created_at) VALUES (?, ?, ?, ?, ?)`,
 		in.day, stamp(in.start), stamp(in.end), p.Summary, stamp(s.now()))
 	if err != nil {
@@ -30,7 +36,7 @@ func (s *Service) apply(ctx context.Context, in *input, p plan) (string, error) 
 	if err != nil {
 		return "", fmt.Errorf("record the reflection: %w", err)
 	}
-	var saved, updated, retired, skipped int
+	var saved, updated, retired, refused, stale int
 	record := func(action string, id int64, before, after *memory.Memory, reason string) error {
 		b, a := "", ""
 		if before != nil {
@@ -48,88 +54,126 @@ func (s *Service) apply(ctx context.Context, in *input, p plan) (string, error) 
 		}
 		return nil
 	}
+	// latest is each memory as it stands after this plan's own changes.
+	latest := make(map[int64]memory.Memory, len(in.byID))
+	for id, m := range in.byID {
+		latest[id] = m
+	}
+	failed := func(what string, id int64, err error) {
+		if errors.Is(err, memory.ErrChanged) {
+			stale++
+			return
+		}
+		s.log.Warn("reflection: a change was refused", "change", what, "memory_id", id, "error", err)
+		refused++
+	}
+	update := func(id int64, patch memory.Patch, reason string) error {
+		before := latest[id]
+		after, err := s.mem.UpdateIfUnchanged(ctx, id, before, patch)
+		if err != nil {
+			failed(ActionUpdate, id, err)
+			return nil
+		}
+		latest[id] = after
+		if same(before, after) {
+			return nil
+		}
+		updated++
+		return record(ActionUpdate, id, &before, &after, reason)
+	}
 
 	for _, u := range p.Update {
 		id := int64(u.ID)
-		before, ok := in.byID[id]
 		patch := memory.Patch{Content: u.Content, Kind: u.Kind, Importance: u.Importance, FollowUpAt: u.FollowUpAt}
-		if !ok || (patch == memory.Patch{}) {
-			skipped++
+		if _, ok := latest[id]; !ok || (patch == memory.Patch{}) {
+			refused++
 			continue
 		}
-		after, err := s.mem.Update(ctx, id, patch)
-		if err != nil {
-			s.log.Warn("reflection: an update was refused", "memory_id", id, "error", err)
-			skipped++
-			continue
-		}
-		if same(before, after) {
-			continue
-		}
-		if err := record(ActionUpdate, id, &before, &after, u.Reason); err != nil {
+		if err := update(id, patch, u.Reason); err != nil {
 			return "", err
 		}
-		updated++
 	}
 	for _, r := range p.Retire {
 		id := int64(r.ID)
-		before, ok := in.byID[id]
+		before, ok := latest[id]
 		if !ok {
-			skipped++
+			refused++
 			continue
 		}
-		cur, err := s.mem.Retire(ctx, id)
-		if err != nil {
-			s.log.Warn("reflection: a retirement was refused", "memory_id", id, "error", err)
-			skipped++
+		if _, err := s.mem.RetireIfUnchanged(ctx, id, before); err != nil {
+			failed(ActionRetire, id, err)
 			continue
 		}
-		if !same(before, cur) {
-			before = cur // updated just above: undoing the retirement brings back this version
-		}
+		delete(latest, id)
+		retired++
 		if err := record(ActionRetire, id, &before, nil, r.Reason); err != nil {
 			return "", err
 		}
-		retired++
 	}
 	for _, sv := range p.Save {
-		m, existed, err := s.mem.Save(ctx, memory.NewMemory{Kind: sv.Kind, Content: sv.Content, Importance: sv.Importance, FollowUpAt: sv.FollowUpAt})
-		if err != nil {
-			s.log.Warn("reflection: a save was refused", "error", err)
-			skipped++
-			continue
-		}
-		id, _ := strconv.ParseInt(m.ID, 10, 64)
-		if existed {
-			// Saving known text refreshes it (importance, follow-up): an update.
-			if before, ok := in.byID[id]; ok && !same(before, m) {
-				if err := record(ActionUpdate, id, &before, &m, sv.Reason); err != nil {
+		// Saving what she already remembers refreshes that memory: make it an update.
+		if id, ok := findContent(latest, sv.Content); ok {
+			cur := latest[id]
+			patch := memory.Patch{}
+			if sv.Importance > cur.Importance {
+				patch.Importance = &sv.Importance
+			}
+			if sv.FollowUpAt != "" {
+				patch.FollowUpAt = &sv.FollowUpAt
+			}
+			if patch != (memory.Patch{}) {
+				if err := update(id, patch, sv.Reason); err != nil {
 					return "", err
 				}
-				updated++
 			}
 			continue
 		}
+		m, existed, err := s.mem.Save(ctx, memory.NewMemory{Kind: sv.Kind, Content: sv.Content, Importance: sv.Importance, FollowUpAt: sv.FollowUpAt})
+		if err != nil {
+			failed(ActionSave, 0, err)
+			continue
+		}
+		if existed {
+			continue // saved by someone else while she thought; not hers to record
+		}
+		id, _ := strconv.ParseInt(m.ID, 10, 64)
+		latest[id] = m
+		saved++
 		if err := record(ActionSave, id, nil, &m, sv.Reason); err != nil {
 			return "", err
 		}
-		saved++
 	}
 	if err := s.writeDiary(ctx, in.day, p.Diary); err != nil {
 		return "", err
 	}
 
 	summary := fmt.Sprintf("Saved %d, updated %d and retired %d memories; wrote the diary for %s", saved, updated, retired, in.day)
-	if skipped > 0 {
-		summary += fmt.Sprintf(" (%d changes refused)", skipped)
+	if refused > 0 {
+		summary += fmt.Sprintf(" (%d changes refused)", refused)
 	}
-	if p.Summary == "" {
-		if _, err := s.db.ExecContext(ctx, `UPDATE reflections SET summary = ? WHERE id = ?`, summary, rid); err != nil {
-			return "", fmt.Errorf("record the reflection: %w", err)
-		}
+	if stale > 0 {
+		summary += fmt.Sprintf(" (%d left alone: edited meanwhile)", stale)
+	}
+	stored := p.Summary
+	if stored == "" {
+		stored = summary
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE reflections SET summary = ?, finished_at = ? WHERE id = ?`, stored, stamp(s.now()), rid); err != nil {
+		return "", fmt.Errorf("finish the reflection: %w", err)
 	}
 	s.events.Invalidate(DomainJournal)
 	return summary, nil
+}
+
+// findContent finds a live memory with the same text, any case.
+func findContent(mems map[int64]memory.Memory, content string) (int64, bool) {
+	want := strings.ToLower(strings.TrimSpace(content))
+	for id, m := range mems {
+		if strings.ToLower(strings.TrimSpace(m.Content)) == want {
+			return id, true
+		}
+	}
+	return 0, false
 }
 
 // same reports whether two snapshots of a memory hold the same fields.

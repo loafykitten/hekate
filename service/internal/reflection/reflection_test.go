@@ -228,12 +228,18 @@ func TestReflectAppliesAndRecords(t *testing.T) {
 	if _, err := f.svc.Undo(ctx, mustID(t, ch[3].ID)); !errors.As(err, &he) || he.Status != http.StatusConflict {
 		t.Errorf("undoing twice: %v", err)
 	}
-	// An update whose memory was forgotten since can't be undone.
+	// Forgetting a memory forgets the copies the reflection kept of it.
 	if _, err := f.mem.Forget(ctx, dupB); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.svc.Undo(ctx, mustID(t, ch[1].ID)); !errors.As(err, &he) || he.Status != http.StatusConflict {
-		t.Errorf("undoing an update of a forgotten memory: %v", err)
+	if _, err := f.svc.Undo(ctx, mustID(t, ch[1].ID)); !errors.As(err, &he) || he.Status != http.StatusNotFound {
+		t.Errorf("undoing a change to a forgotten memory: %v", err)
+	}
+	days, _ = f.svc.Journal(ctx, 0)
+	for _, c := range days[0].Reflections[0].Changes {
+		if c.MemoryID == strconv.FormatInt(dupB, 10) {
+			t.Errorf("a forgotten memory's copy is still in the journal: %+v", c)
+		}
 	}
 
 	// The next night reads only what came after.
@@ -343,4 +349,100 @@ func TestDiaryToolContextAndREST(t *testing.T) {
 		t.Errorf("second undo = %d", res.StatusCode)
 	}
 	_ = res.Body.Close()
+}
+
+// editingModel edits a memory while "thinking", as the owner might.
+type editingModel struct {
+	*fakeModel
+	during func()
+}
+
+func (m *editingModel) Complete(ctx context.Context, req llm.Request) (string, *llm.Result, error) {
+	m.during()
+	return m.fakeModel.Complete(ctx, req)
+}
+
+func TestEditsMadeMeanwhileWin(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	a := f.remember("fact", "Lives on Elm Street")
+	b := f.remember("fact", "Drives a blue car")
+	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "hi", "hello")
+	model := &editingModel{fakeModel: &fakeModel{reply: `{
+		"update": [{"id": ` + strconv.FormatInt(a, 10) + `, "content": "Lives on Oak Street", "reason": "x"}],
+		"retire": [{"id": ` + strconv.FormatInt(b, 10) + `, "reason": "x"}],
+		"diary": "d"}`}}
+	model.during = func() {
+		f.now = f.now.Add(2 * time.Second)
+		content := "Lives on Maple Street"
+		if _, err := f.mem.Update(ctx, a, memory.Patch{Content: &content}); err != nil {
+			t.Fatal(err)
+		}
+		imp := 5
+		if _, err := f.mem.Update(ctx, b, memory.Patch{Importance: &imp}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.svc.llm = model
+	summary, err := f.svc.Reflect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(summary, "(2 left alone: edited meanwhile)") {
+		t.Errorf("summary = %q", summary)
+	}
+	if m, _ := f.mem.Get(ctx, a); m.Content != "Lives on Maple Street" {
+		t.Errorf("the owner's edit was overwritten: %+v", m)
+	}
+	if _, err := f.mem.Get(ctx, b); err != nil {
+		t.Errorf("the owner's edited memory was retired: %v", err)
+	}
+}
+
+func TestUndoRefusesToLoseNewerEdits(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	a := f.remember("fact", "Has a cat")
+	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "hi", "hello")
+	f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(a, 10) + `, "content": "Has a cat named Miso", "reason": "named"}],
+		"save": [{"kind": "fact", "content": "Plays the cello", "reason": "said so"}], "diary": "d"}`
+	if _, err := f.svc.Reflect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	days, _ := f.svc.Journal(ctx, 0)
+	ch := days[0].Reflections[0].Changes
+	f.now = f.now.Add(5 * time.Second)
+	content := "Has a cat named Miso, who is twelve"
+	if _, err := f.mem.Update(ctx, a, memory.Patch{Content: &content}); err != nil {
+		t.Fatal(err)
+	}
+	var he *httpx.Error
+	if _, err := f.svc.Undo(ctx, mustID(t, ch[0].ID)); !errors.As(err, &he) || he.Status != http.StatusConflict {
+		t.Errorf("undoing an update the owner built on: %v", err)
+	}
+	if m, _ := f.mem.Get(ctx, a); m.Content != content {
+		t.Errorf("the newer edit was lost: %+v", m)
+	}
+	saved := mustID(t, ch[1].MemoryID)
+	imp := 4
+	if _, err := f.mem.Update(ctx, saved, memory.Patch{Importance: &imp}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Undo(ctx, mustID(t, ch[1].ID)); !errors.As(err, &he) || he.Status != http.StatusConflict {
+		t.Errorf("undoing a save the owner edited: %v", err)
+	}
+}
+
+func TestUnfinishedReflectionDoesNotAdvance(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	_, err := f.store.DB().ExecContext(ctx, `INSERT INTO reflections (day, window_start, window_end, created_at) VALUES ('2026-10-19', ?, ?, ?)`,
+		stamp(f.now.Add(-24*time.Hour)), stamp(f.now), stamp(f.now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, err := f.svc.windowStart(ctx, f.now)
+	if err != nil || !start.Equal(f.now.Add(-defaultWindow)) {
+		t.Errorf("an unfinished reflection moved the window: %v %v", start, err)
+	}
 }

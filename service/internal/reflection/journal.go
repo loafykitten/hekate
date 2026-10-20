@@ -208,13 +208,22 @@ func (s *Service) Undo(ctx context.Context, changeID int64) (Change, error) {
 	}
 	var mid int64
 	_, _ = fmt.Sscan(c.MemoryID, &mid)
+	edited := httpx.Conflict("that memory was edited since; change it in Memories instead, so the newer edit isn't lost")
 	switch c.Action {
 	case ActionSave:
-		if _, err := s.mem.Retire(ctx, mid); err != nil && !isNotFound(err) {
-			return Change{}, err
+		if c.After == nil {
+			return Change{}, httpx.Conflict("there's nothing recorded to undo")
+		}
+		if _, err := s.mem.RetireIfUnchanged(ctx, mid, *c.After); err != nil {
+			switch {
+			case errors.Is(err, memory.ErrChanged):
+				return Change{}, edited
+			case !isNotFound(err): // already gone: nothing left to undo
+				return Change{}, err
+			}
 		}
 	case ActionUpdate:
-		if c.Before == nil {
+		if c.Before == nil || c.After == nil {
 			return Change{}, httpx.Conflict("there's no earlier version to go back to")
 		}
 		b := c.Before
@@ -222,8 +231,11 @@ func (s *Service) Undo(ctx context.Context, changeID int64) (Change, error) {
 		if b.FollowUpAt != nil {
 			follow = *b.FollowUpAt
 		}
-		if _, err := s.mem.Update(ctx, mid, memory.Patch{Content: &b.Content, Kind: &b.Kind, Importance: &b.Importance, FollowUpAt: &follow}); err != nil {
-			if isNotFound(err) {
+		if _, err := s.mem.UpdateIfUnchanged(ctx, mid, *c.After, memory.Patch{Content: &b.Content, Kind: &b.Kind, Importance: &b.Importance, FollowUpAt: &follow}); err != nil {
+			switch {
+			case errors.Is(err, memory.ErrChanged):
+				return Change{}, edited
+			case isNotFound(err):
 				return Change{}, httpx.Conflict("that memory is gone now, so there's nothing to put back")
 			}
 			return Change{}, err

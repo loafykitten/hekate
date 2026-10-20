@@ -193,11 +193,11 @@ export class ConversationClient {
   }
 
   // Asks for today's morning briefing; it arrives as a turn started by this client.
-  briefing(quiet = false): string | undefined {
+  briefing(quiet = false, replay = false): string | undefined {
     if (!this.canSend()) return undefined;
     this.interruptForNewInput();
     const id = newId();
-    return this.send(quiet ? { type: "briefing", id, quiet } : { type: "briefing", id }) ? id : undefined;
+    return this.send({ type: "briefing", id, ...(quiet && { quiet }), ...(replay && { replay }) }) ? id : undefined;
   }
 
   // Stops the current turn; the server keeps segments up to heardSeq in history.

@@ -113,7 +113,7 @@ func TestBriefingIsWrittenPushedAndPlayed(t *testing.T) {
 		t.Error("not waiting after it was written")
 	}
 
-	if err := f.svc.PlayBriefing(ctx, "c1", "b1", true); err != nil {
+	if err := f.svc.PlayBriefing(ctx, "c1", "b1", true, false); err != nil {
 		t.Fatal(err)
 	}
 	got := perf.got[0]
@@ -128,7 +128,12 @@ func TestBriefingIsWrittenPushedAndPlayed(t *testing.T) {
 	if f.svc.BriefingWaiting(ctx) {
 		t.Error("still waiting after it was played")
 	}
-	if err := f.svc.PlayBriefing(ctx, "c2", "b2", false); err != nil || len(perf.got) != 2 {
+	// A second device opening on its own doesn't take it from the first...
+	if err := f.svc.PlayBriefing(ctx, "c2", "b2", false, false); !errors.Is(err, ErrNoBriefing) || len(perf.got) != 1 {
+		t.Errorf("a second automatic play: %v, %d performed", err, len(perf.got))
+	}
+	// ...but the owner asking to hear it again does.
+	if err := f.svc.PlayBriefing(ctx, "c2", "b3", false, true); err != nil || len(perf.got) != 2 {
 		t.Errorf("replay: %v", err)
 	}
 
@@ -143,7 +148,7 @@ func TestBriefingIsWrittenPushedAndPlayed(t *testing.T) {
 	_ = res.Body.Close()
 
 	f.now = f.now.Add(24 * time.Hour) // a new day: yesterday's isn't today's
-	if err := f.svc.PlayBriefing(ctx, "c1", "b3", false); !errors.Is(err, ErrNoBriefing) {
+	if err := f.svc.PlayBriefing(ctx, "c1", "b4", false, true); !errors.Is(err, ErrNoBriefing) {
 		t.Errorf("next day: %v", err)
 	}
 	res, _ = http.Get(srv.URL + "/api/briefing")

@@ -21,7 +21,7 @@ import (
 // Briefings is the morning briefing, as the socket offers and plays it.
 type Briefings interface {
 	BriefingWaiting(ctx context.Context) bool
-	PlayBriefing(ctx context.Context, origin, inputID string, quiet bool) error
+	PlayBriefing(ctx context.Context, origin, inputID string, quiet, replay bool) error
 }
 
 // Pinger is the slice of the store the server needs.

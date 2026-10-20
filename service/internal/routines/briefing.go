@@ -397,8 +397,11 @@ func (s *Service) BriefingWaiting(ctx context.Context) bool {
 }
 
 // PlayBriefing performs today's briefing on the device that asked (origin),
-// with its cards, and marks it delivered. It can be played again.
-func (s *Service) PlayBriefing(ctx context.Context, origin, inputID string, quiet bool) error {
+// with its cards. A device asking on its own, as the app opens, gets it only
+// while it's waiting: the first to ask claims it, so two devices opening at
+// once don't take it from each other. replay (the owner tapped to hear it)
+// plays it again whenever asked.
+func (s *Service) PlayBriefing(ctx context.Context, origin, inputID string, quiet, replay bool) error {
 	if s.performer == nil {
 		return errors.New("routines: no performer connected")
 	}
@@ -406,11 +409,16 @@ func (s *Service) PlayBriefing(ctx context.Context, origin, inputID string, quie
 	if err != nil {
 		return err
 	}
+	res, err := s.st.DB().ExecContext(ctx, `UPDATE briefings SET delivered_at = ? WHERE day = ? AND delivered_at IS NULL`, stamp(s.now()), b.Day)
+	if err != nil {
+		return fmt.Errorf("mark the briefing delivered: %w", err)
+	}
+	claimed, _ := res.RowsAffected()
+	if claimed == 0 && !replay {
+		return ErrNoBriefing // another device already has it
+	}
 	s.performer.Perform(origin, inputID, agent.Script{Text: raw, Cards: b.Cards, Cue: fmt.Sprintf(briefingCue, s.tamer), Model: model}, quiet)
-	if b.DeliveredAt == nil {
-		if _, err := s.st.DB().ExecContext(ctx, `UPDATE briefings SET delivered_at = ? WHERE day = ? AND delivered_at IS NULL`, stamp(s.now()), b.Day); err != nil {
-			return fmt.Errorf("mark the briefing delivered: %w", err)
-		}
+	if claimed > 0 {
 		s.events.Invalidate(DomainBriefing)
 	}
 	return nil

@@ -36,6 +36,10 @@ export interface Notice {
 
 // The notice that offers the morning briefing when it can't start on its own.
 export const BRIEFING_NOTICE = "briefing";
+// How long the app waits to find out whether audio can start without a tap.
+const UNLOCK_WAIT_MS = 400;
+
+const wait = <T,>(ms: number, value: T) => new Promise<T>((resolve) => setTimeout(() => resolve(value), ms));
 
 function noticeSection(kind: string): Notice["section"] {
   if (kind === "reminder") return "reminders";
@@ -256,15 +260,16 @@ export class Conversation {
   }
 
   // Plays today's morning briefing here: she performs it with its cards. Call from a user gesture
-  // (it unlocks audio). Works again after it was played, as a replay.
-  playBriefing(): boolean {
+  // (it unlocks audio). Works again after it was played, as a replay. On its own, as the app opens,
+  // the app asks without replay: if another device already has it, nothing happens here.
+  playBriefing(replay = true): boolean {
     this.unlockAudio();
     if (!this.connected) {
       this.toast("error", "Not connected to Hekate yet.", "offline-briefing");
       return false;
     }
     this.interruptIfBusy();
-    const id = this.client.briefing(!this.voice);
+    const id = this.client.briefing(!this.voice, replay);
     if (!id) return false;
     this.briefingWaiting = false;
     this.dismissNotice(BRIEFING_NOTICE);
@@ -282,9 +287,10 @@ export class Conversation {
       const visible = typeof document === "undefined" || document.visibilityState === "visible";
       const idle = this.phase() === "idle";
       if (visible && idle && this.stage) {
-        const audible = !this.voice || (await this.stage.speech.unlock());
+        // Some browsers leave the unlock pending until a tap: don't wait on it for long.
+        const audible = !this.voice || (await Promise.race([this.stage.speech.unlock(), wait(UNLOCK_WAIT_MS, false)]));
         if (audible && this.briefingWaiting && this.connected && this.phase() === "idle") {
-          this.playBriefing();
+          this.playBriefing(false);
           return;
         }
       }

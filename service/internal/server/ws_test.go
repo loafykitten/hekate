@@ -887,7 +887,7 @@ func (f *fakeBriefings) BriefingWaiting(context.Context) bool {
 	return f.waiting
 }
 
-func (f *fakeBriefings) PlayBriefing(_ context.Context, origin, id string, quiet bool) error {
+func (f *fakeBriefings) PlayBriefing(_ context.Context, origin, id string, quiet, _ bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if !f.waiting {

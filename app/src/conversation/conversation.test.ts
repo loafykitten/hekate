@@ -357,6 +357,7 @@ describe("Conversation: morning briefing", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(t.socket.json.at(-1)).toMatchObject({ type: "briefing" });
     expect(t.socket.json.at(-1)).not.toHaveProperty("quiet");
+    expect(t.socket.json.at(-1)).not.toHaveProperty("replay"); // on its own: only if it's still waiting
     expect(t.state().phase).toBe("thinking");
     expect(t.state().notices).toEqual([]);
 
@@ -379,6 +380,17 @@ describe("Conversation: morning briefing", () => {
     t.conversation.playBriefing();
     expect(t.socket.json.at(-1)).toMatchObject({ type: "briefing" });
     expect(t.state().notices).toEqual([]);
+  });
+
+  it("offers it when unlocking audio never settles without a tap", async () => {
+    const speech = new FakeSpeech();
+    speech.unlock = () => new Promise<boolean>(() => {}); // pending until a gesture
+    const t = setup({ ready: { ...READY, briefing: true }, stage: stageWith(speech) });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(t.types()).not.toContain("briefing");
+    expect(t.state().notices).toMatchObject([{ id: "briefing", play: true }]);
+    t.conversation.playBriefing();
+    expect(t.socket.json.at(-1)).toMatchObject({ type: "briefing", replay: true });
   });
 
   it("plays quietly at once when her voice is off", async () => {

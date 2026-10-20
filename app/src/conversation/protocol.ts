@@ -144,7 +144,8 @@ export type ClientMessage =
   | { type: "ptt_end"; id: string; quiet?: boolean }
   | { type: "ptt_cancel"; id: string }
   // Play today's morning briefing on this device.
-  | { type: "briefing"; id: string; quiet?: boolean }
+  // replay: the owner asked to hear it, even if it was played already.
+  | { type: "briefing"; id: string; quiet?: boolean; replay?: boolean }
   | { type: "interrupt"; heard_seq: number; turn_id?: string };
 
 export const MAX_TEXT_LENGTH = 4000;

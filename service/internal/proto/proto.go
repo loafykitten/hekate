@@ -228,6 +228,7 @@ type ClientMessage struct {
 	HeardSeq   *int   `json:"heard_seq"`
 	TurnID     string `json:"turn_id"` // interrupt: the turn heard_seq describes
 	Quiet      bool   `json:"quiet"`   // say, ptt_end: answer in text only (the device has her voice off)
+	Replay     bool   `json:"replay"`  // briefing: the owner asked to hear it, even if it was played
 }
 
 // Limits from PROTOCOL.md.

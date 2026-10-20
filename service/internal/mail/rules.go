@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"mime"
+	"net/mail"
 	"net/textproto"
 	"slices"
 	"strconv"
@@ -660,7 +662,7 @@ func (s *Service) unsubDue(ctx context.Context, a *account, batch []row, rules [
 			continue
 		}
 		for _, m := range ms {
-			if s.signedUnsubscribe(raws[imap.UID(m.UID)], m.FromAddr) {
+			if raw := raws[imap.UID(m.UID)]; s.signedUnsubscribe(raw, m.FromAddr) && cacheMatches(raw, m) {
 				due[m.ID] = ruleFor[m.ID]
 			} else {
 				s.log.Info("unsubscribe rule left unsigned mail alone", "account", a.cfg.Name, "rule", ruleFor[m.ID], "message", m.ID)
@@ -717,6 +719,29 @@ func (s *Service) signedUnsubscribe(raw []byte, fromAddr string) bool {
 		}
 	}
 	return false
+}
+
+// cacheMatches reports whether the cached sender, subject and unsubscribe link
+// are the ones in raw, the message whose signature was checked. The rule matched
+// and the request goes by the cache, so a row still holding another message's
+// headers (say, from before the server renumbered the mailbox) must not ride on
+// this message's signature.
+func cacheMatches(raw []byte, m row) bool {
+	hdr, err := textproto.NewReader(bufio.NewReader(bytes.NewReader(raw))).ReadMIMEHeader()
+	if err != nil {
+		return false
+	}
+	from, err := mail.ParseAddress(hdr.Get("From"))
+	if err != nil || !strings.EqualFold(from.Address, m.FromAddr) {
+		return false
+	}
+	subject, err := new(mime.WordDecoder).DecodeHeader(hdr.Get("Subject"))
+	if err != nil || oneLine(subject, maxCachedSubject) != m.Subject {
+		return false
+	}
+	var h fetchedHeader
+	applyListHeaders(&h, raw)
+	return h.unsubURL == m.UnsubURL && h.oneClick == m.HasPost
 }
 
 // unsubscribeDue sends the one-click unsubscribe request for the account's

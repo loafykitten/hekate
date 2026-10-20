@@ -334,3 +334,26 @@ func TestUnsubscribeLimitIgnoresUnsignedListID(t *testing.T) {
 		t.Errorf("requests = %q, want one", got)
 	}
 }
+
+// A cached row is only acted on with the headers of the message whose signature
+// was checked: a row left holding another copy's link must not ride on it.
+func TestUnsubscribeCacheMustMatchTheSignedMessage(t *testing.T) {
+	raw := mailSpec{subject: "Big =?utf-8?q?sale?=", from: "Shop <Deals@shop.example.net>", dkim: "shop.example.net",
+		headers: listMail("https://shop.example.net/u/1", "deals.shop.example.net")}.raw(time.Now())
+	m := row{FromAddr: "deals@shop.example.net", Subject: "Big sale", UnsubURL: "https://shop.example.net/u/1", HasPost: true}
+	if !cacheMatches(raw, m) {
+		t.Fatal("the matching row was refused")
+	}
+	for name, change := range map[string]func(*row){
+		"link":    func(r *row) { r.UnsubURL = "https://evil.example.org/u" },
+		"sender":  func(r *row) { r.FromAddr = "other@shop.example.net" },
+		"subject": func(r *row) { r.Subject = "Your order" },
+		"post":    func(r *row) { r.HasPost = false },
+	} {
+		bad := m
+		change(&bad)
+		if cacheMatches(raw, bad) {
+			t.Errorf("%s: a row with another message's headers was accepted", name)
+		}
+	}
+}

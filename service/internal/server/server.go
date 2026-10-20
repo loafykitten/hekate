@@ -75,8 +75,9 @@ type Server struct {
 	// since all of them talk to the same conversation. A transcription that
 	// finishes after newer input from any device is stale. inputMu also makes
 	// "is it still current?" and starting the turn one step.
-	inputMu sync.Mutex
-	inputs  uint64
+	inputMu   sync.Mutex
+	inputs    uint64
+	lastInput time.Time // when the newest typed, spoken or briefing input arrived
 }
 
 // startPTT records a push-to-talk as the newest input and hushes her, as one
@@ -86,6 +87,7 @@ func (s *Server) startPTT() uint64 {
 	s.inputMu.Lock()
 	defer s.inputMu.Unlock()
 	s.inputs++
+	s.lastInput = time.Now()
 	if testHookInPTTStart != nil {
 		testHookInPTTStart()
 	}
@@ -117,6 +119,7 @@ func (s *Server) say(origin, id, text string, quiet bool) {
 	s.inputMu.Lock()
 	defer s.inputMu.Unlock()
 	s.inputs++
+	s.lastInput = time.Now()
 	s.conv.Say(origin, id, text, quiet)
 }
 

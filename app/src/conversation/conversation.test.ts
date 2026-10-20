@@ -448,6 +448,18 @@ describe("Conversation: morning briefing", () => {
     expect(sent.every((m) => !("replay" in m))).toBe(true);
   });
 
+  it("offers it for a tap when the service says now isn't a good moment", async () => {
+    const speech = new FakeSpeech();
+    const t = setup({ ready: { ...READY, briefing: true }, stage: stageWith(speech) });
+    await vi.advanceTimersByTimeAsync(0);
+    const req = t.socket.json.at(-1)!;
+    expect(req).toMatchObject({ type: "briefing" });
+    t.socket.receive({ type: "error", code: "briefing_busy", message: "Your briefing is waiting for a quiet moment.", input_id: req.id });
+    expect(t.state().toasts).toEqual([]);
+    expect(t.state().notices).toMatchObject([{ id: "briefing", play: true }]);
+    expect(t.state().phase).toBe("idle");
+  });
+
   it("asks for another tap when a tap made while loading can't start audio", async () => {
     const t = setup({ ready: { ...READY, briefing: true } });
     t.conversation.playBriefing();

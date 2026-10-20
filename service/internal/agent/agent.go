@@ -309,6 +309,21 @@ func (a *Agent) Interrupt(turnID string, heardSeq int) {
 	a.trimFinished(t, heardSeq)
 }
 
+// Busy reports whether a turn is running (generation not finished).
+func (a *Agent) Busy() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.cur == nil {
+		return false
+	}
+	select {
+	case <-a.cur.done:
+		return false
+	default:
+		return true
+	}
+}
+
 // Hush stops whatever she's saying because someone started talking (push-to-
 // talk on any device). A running turn ends keeping what was delivered; a
 // finished one that may still be playing somewhere is announced as

@@ -36,6 +36,7 @@ const (
 	CodeBadMessage     = "bad_message"
 	CodeTooLong        = "too_long"
 	CodeNoBriefing     = "no_briefing"
+	CodeBriefingBusy   = "briefing_busy" // an automatic briefing request came while something else was going on
 )
 
 // Turn end statuses.

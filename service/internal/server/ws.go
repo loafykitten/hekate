@@ -21,15 +21,17 @@ import (
 )
 
 const (
-	pingInterval   = 20 * time.Second // PROTOCOL.md
-	pingTimeout    = 10 * time.Second
-	writeTimeout   = 10 * time.Second
-	sttTimeout     = 30 * time.Second
-	maxPTTSamples  = proto.PTTSampleRate * proto.MaxPTTSeconds
-	minPTTSamples  = proto.PTTSampleRate / 5 // under 0.2 s is a mis-tap, not speech
-	maxInputIDLen  = 128
-	defaultHistory = 50
-	maxHistory     = 100
+	pingInterval = 20 * time.Second // PROTOCOL.md
+	pingTimeout  = 10 * time.Second
+	writeTimeout = 10 * time.Second
+	sttTimeout   = 30 * time.Second
+	// An automatic briefing waits this long after the last input.
+	quietBeforeBriefing = 2 * time.Minute
+	maxPTTSamples       = proto.PTTSampleRate * proto.MaxPTTSeconds
+	minPTTSamples       = proto.PTTSampleRate / 5 // under 0.2 s is a mis-tap, not speech
+	maxInputIDLen       = 128
+	defaultHistory      = 50
+	maxHistory          = 100
 )
 
 // Conversation is the slice of the agent the HTTP layer needs.
@@ -40,6 +42,8 @@ type Conversation interface {
 	Say(origin, inputID, text string, quiet bool)
 	Interrupt(turnID string, heardSeq int)
 	Hush()
+	// Busy reports whether a turn is running.
+	Busy() bool
 	Messages(ctx context.Context, before int64, limit int) ([]proto.HistoryMessage, error)
 }
 
@@ -282,12 +286,20 @@ func (ss *session) onBriefing(m proto.ClientMessage) {
 	}
 	ss.s.inputMu.Lock()
 	defer ss.s.inputMu.Unlock()
+	// The app asking on its own, as it opens, never cuts into a conversation:
+	// not while a turn runs, nor soon after any input (a recording may still be
+	// transcribing). The briefing keeps waiting, and the app offers it to tap.
+	if !m.Replay && (ss.s.conv.Busy() || time.Since(ss.s.lastInput) < quietBeforeBriefing) {
+		ss.sendTo(proto.NewError(proto.CodeBriefingBusy, "Your briefing is waiting for a quiet moment.", m.ID))
+		return
+	}
 	if err := ss.s.briefings.PlayBriefing(ss.ctx, ss.id, m.ID, m.Quiet, m.Replay); err != nil {
 		ss.s.log.Info("no briefing to play", "client_id", ss.id, "error", err)
 		ss.sendTo(proto.NewError(proto.CodeNoBriefing, "There's no briefing for today yet.", m.ID))
 		return
 	}
 	ss.s.inputs++ // it started a turn: a recording still being transcribed is now stale
+	ss.s.lastInput = time.Now()
 }
 
 func (ss *session) onPTTStart(m proto.ClientMessage) {

@@ -679,6 +679,13 @@ export class Conversation {
 
   private onError(code: string, message: string, inputId?: string) {
     if (this.pending && (inputId === undefined || inputId === this.pending.id)) this.clearPending();
+    if (code === "briefing_busy") {
+      // Something else is going on: it keeps waiting, offered for a tap.
+      this.briefingWaiting = true;
+      this.notices = [...this.notices.filter((n) => n.id !== BRIEFING_NOTICE), { id: BRIEFING_NOTICE, title: "Good morning", body: "Your briefing is ready.", play: true }].slice(-2);
+      this.emit();
+      return;
+    }
     if (inputId !== undefined && this.capture?.id === inputId) this.cancelCapture();
     this.toast("error", message || "Something went wrong.", `error-${code}`);
     this.emit();

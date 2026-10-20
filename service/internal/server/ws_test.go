@@ -41,6 +41,7 @@ type fakeConv struct {
 		limit  int
 	}
 	sayCh chan said
+	busy  bool
 }
 
 type said struct {
@@ -51,8 +52,13 @@ type said struct {
 func newFakeConv() *fakeConv { return &fakeConv{sayCh: make(chan said, 8)} }
 
 func (f *fakeConv) ConversationID() string { return "default" }
-func (f *fakeConv) Gestures() []string     { return []string{"waving"} }
-func (f *fakeConv) Timezone() string       { return "America/Chicago" }
+func (f *fakeConv) Busy() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.busy
+}
+func (f *fakeConv) Gestures() []string { return []string{"waving"} }
+func (f *fakeConv) Timezone() string   { return "America/Chicago" }
 func (f *fakeConv) Say(origin, id, text string, quiet bool) {
 	f.mu.Lock()
 	f.said = append(f.said, said{origin, id, text, quiet})
@@ -926,13 +932,37 @@ func TestBriefingOverTheSocket(t *testing.T) {
 		return s.inputs
 	}
 	before := srvInputs()
-	send(t, c, map[string]any{"type": "briefing", "id": "b2"})
+	send(t, c, map[string]any{"type": "briefing", "id": "b2", "replay": true})
 	if m := readMsg(t, c); m["code"] != "no_briefing" || m["input_id"] != "b2" {
 		t.Errorf("nothing waiting: %v", m)
 	}
 	if srvInputs() != before {
 		t.Error("a refused briefing counted as new input: a recording being transcribed would be dropped")
 	}
+
+	// The app asking on its own never cuts into a conversation; a tap still replays.
+	b.mu.Lock()
+	b.waiting = true
+	b.mu.Unlock()
+	conv := server.conv.(*fakeConv)
+	conv.mu.Lock()
+	conv.busy = true
+	conv.mu.Unlock()
+	send(t, c, map[string]any{"type": "briefing", "id": "b3"})
+	if m := readMsg(t, c); m["code"] != "briefing_busy" {
+		t.Errorf("while a turn runs: %v", m)
+	}
+	conv.mu.Lock()
+	conv.busy = false
+	conv.mu.Unlock()
+	send(t, c, map[string]any{"type": "say", "id": "s1", "text": "hello"})
+	<-conv.sayCh
+	send(t, c, map[string]any{"type": "briefing", "id": "b4"})
+	if m := readMsg(t, c); m["code"] != "briefing_busy" {
+		t.Errorf("right after input: %v", m)
+	}
+	send(t, c, map[string]any{"type": "briefing", "id": "b5", "replay": true})
+	waitFor(t, func() bool { b.mu.Lock(); defer b.mu.Unlock(); return len(b.played) == 2 })
 	if ready2 := readMsg(t, env.dial(t)); ready2["briefing"] != false {
 		t.Errorf("a played briefing still shows as waiting: %v", ready2)
 	}

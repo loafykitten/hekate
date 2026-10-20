@@ -25,7 +25,7 @@ client whose input started a turn (`origin` matches its `client_id`) plays the a
 | `segment` | see below | One sentence of her reply, ready to perform. |
 | `card` | `turn_id`, `card: { kind, id, title, data }` | Something to show on screen (M2+). |
 | `turn_end` | `turn_id`, `status: "done" \| "interrupted" \| "error"`, `text`, `model`, `usage: { input_tokens, output_tokens, cost_usd \| null }` | The turn is over. `text` is the full display text. |
-| `error` | `code`, `message`, `input_id?` | A problem the user should see. Codes: `llm_unavailable` (no key), `llm_error`, `empty_reply`, `turn_timeout`, `stt_unavailable` (unconfigured or model still loading), `stt_failed`, `bad_message`, `too_long`, `no_briefing`. |
+| `error` | `code`, `message`, `input_id?` | A problem the user should see. Codes: `llm_unavailable` (no key), `llm_error`, `empty_reply`, `turn_timeout`, `stt_unavailable` (unconfigured or model still loading), `stt_failed`, `bad_message`, `too_long`, `no_briefing`, `briefing_busy`. |
 
 `segment`:
 
@@ -56,7 +56,7 @@ from the audio's loudness.
 | `ptt_start` | `id`, `sample_rate` (16000) | Push-to-talk started. Binary frames follow: little-endian signed 16-bit mono PCM. She stops talking at once on every device (the current turn ends as `interrupted`, keeping what was delivered). |
 | `ptt_end` | `id`, `quiet?` | Released. The server transcribes, sends `transcript`, then starts a turn (`quiet` as for `say`). |
 | `ptt_cancel` | `id` | Discard the audio. |
-| `briefing` | `id`, `quiet?`, `replay?` | Play today's morning briefing here. It arrives as a turn started by this client (`user_text` empty) with its cards, and new input interrupts it as usual. Without `replay` (the app asking on its own as it opens) it plays only while still waiting: the first device to ask claims it. With `replay` (the owner tapped to hear it) it plays again whenever asked. `error` `no_briefing` when there's none to play. |
+| `briefing` | `id`, `quiet?`, `replay?` | Play today's morning briefing here. It arrives as a turn started by this client (`user_text` empty) with its cards, and new input interrupts it as usual. Without `replay` (the app asking on its own as it opens) it plays only while still waiting (the first device to ask claims it) and only at a quiet moment: while a turn runs or within two minutes of any input it answers `briefing_busy` and keeps waiting, and the app offers it to tap. With `replay` (the owner tapped to hear it) it plays again whenever asked. `error` `no_briefing` when there's none to play. |
 | `interrupt` | `heard_seq` (last segment seq the user heard at least partly, or -1), `turn_id` (the turn `heard_seq` describes) | Stop that turn. The server keeps segments up to `heard_seq` in history, and ignores an interrupt for a turn that is no longer the current one. |
 
 An `interrupt` that arrives after the turn already ended (the client was still playing queued audio) trims the saved reply to `heard_seq` and broadcasts a second `turn_end` with status `interrupted`, so every client stops playing that turn. With no recent turn it is ignored. New input while a turn is running interrupts that turn first. The client sends `interrupt` with its `heard_seq` only for a turn it started (it knows what was heard); for another device's turn it just sends the input, and the server interrupts that turn keeping what it delivered.

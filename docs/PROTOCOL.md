@@ -350,6 +350,28 @@ the rest of the API.
 | `POST /api/changes/{id}/retry` | | `ChangeRequest` queued again, keeping its issue; the last outcome and PR move to `previous_*`. 409 unless `failed` or `rejected`. The owner's action |
 | `POST /api/changes/{id}/finish` | `{ outcome: "merged" \| "rejected" \| "failed", result, issue_url?, pr_url? }` | `ChangeRequest`; 409 unless `working`. Tells the owner by notify and push |
 
+### Ideas and routines
+
+Renamon notes improvement ideas with `idea_log` (at most 10 a day; an open idea with the same text
+isn't saved twice). Routines are the scheduled background jobs (reflection, heartbeat, briefing);
+each run is recorded and kept 90 days.
+
+```jsonc
+// Idea
+{ "id": "4", "text": "A tool to read package tracking pages", "kind": "tool",   // tool | fix | improvement | other
+  "status": "open", "created_at": "…", "updated_at": "…" }                       // open | done | dismissed
+// RoutineRun
+{ "id": "12", "job": "reflection", "status": "ok",   // running | ok | failed
+  "summary": "Saved 2 memories, wrote the diary", "error": "", "started_at": "…", "finished_at": "…" }
+```
+
+| Method & path | Body | Returns |
+|---|---|---|
+| `GET /api/ideas?status=open\|all` (default open) | | `{ ideas: [Idea] }` newest first |
+| `PATCH /api/ideas/{id}` | `{ status }` | `Idea` |
+| `DELETE /api/ideas/{id}` | | 204 |
+| `GET /api/routines/runs?routine=&limit=` (default every routine, 200) | | `{ runs: [RoutineRun] }` newest first |
+
 ### Weather
 
 | Method & path | Returns |
@@ -380,4 +402,4 @@ from stored or fetched data, never from model text. Shapes of `data` by `kind`:
 |---|---|---|
 | `notify` | `id`, `kind: "reminder" \| "approval" \| "change"`, `title`, `body`, `card?` | Something fired, or she needs a decision she asked for outside a conversation (e.g. a rule from the weekly noise report). The app shows it even with no turn running. |
 | `approval` | `approval: Approval` | An approval was created or changed (decided, ran, expired). Clients update any card showing it. |
-| `invalidate` | `domains: ("tasks" \| "reminders" \| "calendar" \| "memory" \| "weather" \| "mail" \| "approvals" \| "changes")[]` | Data changed; refetch those menu sections (`weather`: the home place changed). |
+| `invalidate` | `domains: ("tasks" \| "reminders" \| "calendar" \| "memory" \| "weather" \| "mail" \| "approvals" \| "changes" \| "ideas")[]` | Data changed; refetch those menu sections (`weather`: the home place changed). |

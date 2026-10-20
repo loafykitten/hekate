@@ -40,6 +40,7 @@ type Config struct {
 	DataDir   string
 	WebDir    string // optional: built PWA
 	AssetsDir string // optional: character assets
+	DeployLog string // optional: the homelab deployer's JSON-lines log, read-only
 	LogLevel  slog.Level
 	TamerName string
 	Location  *time.Location
@@ -121,6 +122,7 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 		DataDir:   str("HEKATE_DATA_DIR", "./data"),
 		WebDir:    str("HEKATE_WEB_DIR", ""),
 		AssetsDir: str("HEKATE_ASSETS_DIR", ""),
+		DeployLog: str("HEKATE_DEPLOY_LOG", ""),
 		TamerName: str("HEKATE_TAMER_NAME", "Tamer"),
 	}
 
@@ -248,6 +250,7 @@ func (c Config) LogValue() slog.Value {
 		slog.String("data_dir", c.DataDir),
 		slog.String("web_dir", c.WebDir),
 		slog.String("assets_dir", c.AssetsDir),
+		slog.String("deploy_log", c.DeployLog),
 		slog.String("log_level", c.LogLevel.String()),
 		slog.String("tamer_name", c.TamerName),
 		slog.String("timezone", c.Location.String()),

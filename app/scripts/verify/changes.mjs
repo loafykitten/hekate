@@ -66,6 +66,10 @@ async function wireApi(page, sockets) {
       state.retried.push(c.id);
       return json(route, c);
     }
+    if (p === "/api/ideas") return json(route, { ideas: [
+      { id: "2", text: "A tool to read parcel tracking pages, so I can say when a delivery arrives.", kind: "tool", status: "open", created_at: ago(200), updated_at: ago(200) },
+      { id: "1", text: "Weather lookups time out now and then in the morning; retry once before giving up.", kind: "fix", status: "open", created_at: ago(3000), updated_at: ago(3000) },
+    ] });
     if (p === "/api/approvals/rules") return json(route, { rules: [] });
     if (p === "/api/approvals" && method === "GET") {
       const pending = new URL(route.request().url()).searchParams.get("status") !== "recent";
@@ -121,6 +125,8 @@ for (const [vname, viewport] of [["phone", { width: 375, height: 812 }], ["deskt
   let { page } = await open(browser, `${vname}-list`, viewport, "menu=changes");
   await page.getByText("Snooze reminders by voice").waitFor();
   await shot(page, `${vname}-list`);
+  await page.getByText("Her ideas").scrollIntoViewIfNeeded();
+  await shot(page, `${vname}-ideas`);
   await page.getByRole("button", { name: /Match mail rules/ }).click();
   await shot(page, `${vname}-list-open`);
   // A failed change: its last attempt, then Try again sends it back to the queue.

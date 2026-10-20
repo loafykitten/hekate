@@ -423,6 +423,25 @@ export function githubUrl(v: unknown): string | null {
   return isStr(v) && v.startsWith("https://github.com/") ? v : null;
 }
 
+export const IDEA_STATUSES = ["open", "done", "dismissed"] as const;
+export type IdeaStatus = (typeof IDEA_STATUSES)[number];
+// An improvement idea Renamon noted about herself.
+export interface Idea {
+  id: string;
+  text: string;
+  kind: string; // tool | fix | improvement | other; kept as sent
+  status: IdeaStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export function asIdea(v: unknown): Idea | undefined {
+  if (!isRec(v)) return undefined;
+  const id = idOf(v.id);
+  if (id === undefined || !isStr(v.text) || !(IDEA_STATUSES as readonly string[]).includes(v.status as string)) return undefined;
+  return { id, text: v.text, kind: strOr(v.kind), status: v.status as IdeaStatus, created_at: strOr(v.created_at), updated_at: strOr(v.updated_at) };
+}
+
 export function asChangeRequest(v: unknown): ChangeRequest | undefined {
   if (!isRec(v)) return undefined;
   const id = idOf(v.id);

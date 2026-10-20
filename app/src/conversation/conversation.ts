@@ -225,7 +225,7 @@ export class Conversation {
       if (this.deferredBriefing !== undefined) {
         const replay = this.deferredBriefing;
         this.deferredBriefing = undefined;
-        this.playBriefing(replay);
+        void this.playDeferred(replay);
       } else {
         void this.offerBriefing();
       }
@@ -290,6 +290,19 @@ export class Conversation {
     this.setPending({ id, stage: "turn" });
     this.emit();
     return true;
+  }
+
+  // A tap on the briefing came while she loaded. The tap is over now, so start it only if it can be
+  // heard (or her voice is off); otherwise offer it again for another tap.
+  private async playDeferred(replay: boolean) {
+    const audible = !this.voice || (await Promise.race([this.stage!.speech.unlock(), wait(UNLOCK_WAIT_MS, false)]));
+    if (audible) {
+      this.playBriefing(replay);
+      return;
+    }
+    this.briefingWaiting = true;
+    this.notices = [...this.notices.filter((n) => n.id !== BRIEFING_NOTICE), { id: BRIEFING_NOTICE, title: "Good morning", body: "Tap to hear your briefing.", play: true }].slice(-2);
+    this.emit();
   }
 
   // The briefing is waiting: start it when the app is in view and it can be heard (or her voice is

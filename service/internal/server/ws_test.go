@@ -901,7 +901,8 @@ func (f *fakeBriefings) PlayBriefing(_ context.Context, origin, id string, quiet
 func TestBriefingOverTheSocket(t *testing.T) {
 	b := &fakeBriefings{waiting: true}
 	hub := NewHub(nil)
-	srv := httptest.NewServer(New(Options{Conversation: newFakeConv(), Hub: hub, Briefings: b}).Routes())
+	server := New(Options{Conversation: newFakeConv(), Hub: hub, Briefings: b})
+	srv := httptest.NewServer(server.Routes())
 	t.Cleanup(func() { hub.Close(); srv.Close() })
 	env := &wsEnv{srv: srv, hub: hub}
 
@@ -918,9 +919,19 @@ func TestBriefingOverTheSocket(t *testing.T) {
 	if got.origin != ready["client_id"] || got.id != "b1" || !got.quiet {
 		t.Errorf("played = %+v", got)
 	}
+	srvInputs := func() uint64 {
+		s := server
+		s.inputMu.Lock()
+		defer s.inputMu.Unlock()
+		return s.inputs
+	}
+	before := srvInputs()
 	send(t, c, map[string]any{"type": "briefing", "id": "b2"})
 	if m := readMsg(t, c); m["code"] != "no_briefing" || m["input_id"] != "b2" {
 		t.Errorf("nothing waiting: %v", m)
+	}
+	if srvInputs() != before {
+		t.Error("a refused briefing counted as new input: a recording being transcribed would be dropped")
 	}
 	if ready2 := readMsg(t, env.dial(t)); ready2["briefing"] != false {
 		t.Errorf("a played briefing still shows as waiting: %v", ready2)

@@ -282,11 +282,12 @@ func (ss *session) onBriefing(m proto.ClientMessage) {
 	}
 	ss.s.inputMu.Lock()
 	defer ss.s.inputMu.Unlock()
-	ss.s.inputs++
 	if err := ss.s.briefings.PlayBriefing(ss.ctx, ss.id, m.ID, m.Quiet, m.Replay); err != nil {
 		ss.s.log.Info("no briefing to play", "client_id", ss.id, "error", err)
 		ss.sendTo(proto.NewError(proto.CodeNoBriefing, "There's no briefing for today yet.", m.ID))
+		return
 	}
+	ss.s.inputs++ // it started a turn: a recording still being transcribed is now stale
 }
 
 func (ss *session) onPTTStart(m proto.ClientMessage) {

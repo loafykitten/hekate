@@ -401,7 +401,19 @@ describe("Conversation: morning briefing", () => {
     t.conversation.playBriefing(); // tapped while she loads
     expect(t.types()).not.toContain("briefing");
     t.conversation.attachStage({ speech: new FakeSpeech(), bubble: undefined, character: undefined } as never);
+    await vi.advanceTimersByTimeAsync(0);
     expect(t.socket.json.at(-1)).toMatchObject({ type: "briefing", replay: true });
+  });
+
+  it("asks for another tap when a tap made while loading can't start audio", async () => {
+    const t = setup({ ready: { ...READY, briefing: true } });
+    t.conversation.playBriefing();
+    const speech = new FakeSpeech();
+    speech.unlockable = false;
+    t.conversation.attachStage({ speech, bubble: undefined, character: undefined } as never);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(t.types()).not.toContain("briefing");
+    expect(t.state().notices).toMatchObject([{ id: "briefing", play: true }]);
   });
 
   it("plays quietly at once when her voice is off", async () => {

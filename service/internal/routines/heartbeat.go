@@ -35,10 +35,13 @@ const (
 	mailWait   = 20 * time.Minute
 	mailMaxAge = 24 * time.Hour
 	// What was nudged is remembered a year, so nothing still due comes round again.
-	keepNudges   = 365 * 24 * time.Hour
-	maxFollowUps = 100
-	maxLines     = 4
-	maxLine      = 140
+	keepNudges = 365 * 24 * time.Hour
+	// Candidates read from each source. Ones already nudged are dropped after
+	// reading, so this is far more than ever waits at once: they mustn't crowd
+	// out new ones.
+	maxCandidates = 1000
+	maxLines      = 4
+	maxLine       = 140
 )
 
 // What the heartbeat reads; the feature services satisfy these.
@@ -168,7 +171,7 @@ func (s *Service) mailNudges(ctx context.Context, now time.Time) ([]nudge, error
 	if s.mail == nil || !s.mail.Configured() {
 		return nil, nil
 	}
-	sum, err := s.mail.Summary(ctx, 10)
+	sum, err := s.mail.Summary(ctx, maxCandidates)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +195,7 @@ func (s *Service) followUpNudges(ctx context.Context, now time.Time) ([]nudge, e
 		return nil, nil
 	}
 	// Plenty: ones already nudged are dropped afterwards, and mustn't crowd out the rest.
-	due, err := s.followUps.FollowUpsDue(ctx, now, maxFollowUps)
+	due, err := s.followUps.FollowUpsDue(ctx, now, maxCandidates)
 	if err != nil {
 		return nil, err
 	}
@@ -279,7 +282,7 @@ func compose(list []nudge) (title, body string, shown []nudge) {
 			if len(items) > len(named) {
 				text += fmt.Sprintf(" and %d more", len(items)-len(named))
 			}
-			lines = append(lines, line{clip(text, maxLine*2), named})
+			lines = append(lines, line{text, named}) // each item is already clipped: none is cut off
 		}
 	}
 	for _, n := range list {

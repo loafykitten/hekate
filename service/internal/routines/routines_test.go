@@ -289,3 +289,14 @@ func TestNudgesLeftOutComeNextTime(t *testing.T) {
 		t.Errorf("follow-ups fetched %d at a time: already-nudged ones would crowd out the rest", f.followUps.limits[0])
 	}
 }
+
+func TestLongLinesAreNamedInFull(t *testing.T) {
+	var list []nudge
+	for i := range 3 {
+		list = append(list, nudge{key: strconv.Itoa(i), kind: "mail", line: strings.Repeat("x", maxLine-1) + strconv.Itoa(i)})
+	}
+	_, body, shown := compose(list)
+	if len(shown) != 3 || !strings.Contains(body, "x2") {
+		t.Errorf("shown %d, body ends %q", len(shown), body[len(body)-20:])
+	}
+}

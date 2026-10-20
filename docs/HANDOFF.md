@@ -163,8 +163,9 @@ commands are in `NOTES.md`. Note: rebuilding changes nothing unless sources or s
   first file with skin), retargeted by Astra. No tail/ear/face keys in clips; the app drives
   those procedurally.
 - **Base idle = `idle_2` (calm)**, not Mixamo `Idle` (busy, arm swings up to 113°).
-- **Lip sync today is loudness-driven** (`jawOpen` + 0.15 `mouthSmile`). Viseme-driven sync
-  waits for real per-character timing from the TTS.
+- **Lip sync was loudness-driven** (`jawOpen` + 0.15 `mouthSmile`) until the TTS gave real
+  per-character timing; since M5 it's viseme-driven from that timing (see `docs/PROTOCOL.md`,
+  segments), with loudness as the fallback.
 
 ### Agreed design for the assistant pipeline (not built yet; "no mocks, build it for real")
 

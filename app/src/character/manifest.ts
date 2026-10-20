@@ -13,7 +13,11 @@ export interface Manifest {
     // GLTFLoader strips punctuation from node names (head.x -> headx).
     threejs_runtime_names?: Record<string, string>;
   };
-  lipsync?: { amplitude_only?: { primary: string; optional_blend?: Record<string, number> } };
+  lipsync?: {
+    amplitude_only?: { primary: string; optional_blend?: Record<string, number> };
+    // Viseme class -> morph weights ("sil" is usually empty).
+    viseme_based?: Record<string, Record<string, number>>;
+  };
   blink?: { left: string; right: string };
   outline?: {
     meshes?: Record<string, { entries: { enabled: boolean; color_linear: [number, number, number]; relative_thickness: number }[] }>;
@@ -73,6 +77,7 @@ export function rigFrom(m: Manifest): CharacterRig {
   return {
     headBone: bone(m.skeleton.head_bone),
     mouth: open,
+    visemes: m.lipsync?.viseme_based,
     blink: m.blink ? [m.blink.left, m.blink.right] : ["eyeBlink_L", "eyeBlink_R"],
     outline: { byMesh, fallback: null },
     clips: clipsOf(m.animations ?? []),

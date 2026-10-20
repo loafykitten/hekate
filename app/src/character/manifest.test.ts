@@ -12,7 +12,10 @@ const fixture: Manifest = {
     humanoid: { spine: "spine.x", chest: "chest.x" },
     threejs_runtime_names: { "head.x": "headx", "tail_1.x": "tail_1x", "tail_2.x": "tail_2x", "ear_l.x": "ear_lx", "ear_r.x": "ear_rx", "chest.x": "chestx" },
   },
-  lipsync: { amplitude_only: { primary: "jawOpen", optional_blend: { mouthSmile: 0.15 } } },
+  lipsync: {
+    amplitude_only: { primary: "jawOpen", optional_blend: { mouthSmile: 0.15 } },
+    viseme_based: { sil: {}, aa: { viseme_aa: 1 }, FF: { viseme_I: 0.35, viseme_PP: 0.35 } },
+  },
   blink: { left: "blinkL", right: "blinkR" },
   outline: {
     meshes: {
@@ -49,9 +52,14 @@ describe("rigFrom", () => {
     ]);
   });
 
+  it("takes the viseme shapes for timed lip sync", () => {
+    expect(rig.visemes?.FF).toEqual({ viseme_I: 0.35, viseme_PP: 0.35 });
+  });
+
   it("falls back to jawOpen and default blink morphs when the manifest has none", () => {
     const bare = rigFrom({ ...fixture, lipsync: undefined, blink: undefined });
     expect(bare.mouth).toEqual([{ name: "jawOpen", weight: 1 }]);
+    expect(bare.visemes).toBeUndefined();
     expect(bare.blink).toEqual(["eyeBlink_L", "eyeBlink_R"]);
   });
 

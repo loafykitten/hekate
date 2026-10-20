@@ -207,7 +207,7 @@ export class Conversation {
     this.stage = stage;
     if (stage) {
       stage.speech.muted = !this.voice;
-      const host = { speech: stage.speech, bubble: stage.bubble as Bubble | undefined, character: () => stage.character };
+      const host = { speech: stage.speech, lips: stage.lips, bubble: stage.bubble as Bubble | undefined, character: () => stage.character };
       this.player = new SegmentPlayer(host);
       this.player.onChange(() => this.emit());
     }

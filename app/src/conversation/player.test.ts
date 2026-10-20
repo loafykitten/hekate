@@ -35,15 +35,18 @@ function setup() {
     playGesture: (n: string) => gestures.push(n),
     setExpression: (weights: Record<string, number>, eyes = 0) => expressions.push({ weights, eyes }),
   };
+  const lines: { start: number; end: number; visemes: { v: string; at: number }[] }[] = [];
+  let lipsCleared = 0;
+  const lips = { add: (start: number, end: number, visemes: { v: string; at: number }[]) => lines.push({ start, end, visemes }), clear: () => lipsCleared++ };
   const player = new SegmentPlayer(
-    { speech: speech as never, bubble: bubble as never, character: () => character as never },
+    { speech: speech as never, lips: lips as never, bubble: bubble as never, character: () => character as never },
     { gapSeconds: 0.1, lingerSeconds: 2, tickMs: 10 },
   );
   const advance = (seconds: number) => {
     speech.position += seconds;
     vi.advanceTimersByTime(20);
   };
-  return { speech, player, texts, gestures, expressions, advance, hidden: () => hidden };
+  return { speech, player, texts, gestures, expressions, advance, hidden: () => hidden, lines, lipsCleared: () => lipsCleared };
 }
 
 beforeEach(() => vi.useFakeTimers());
@@ -68,6 +71,19 @@ describe("SegmentPlayer", () => {
     advance(3);
     expect(player.busy).toBe(false);
     expect(gestures).toEqual(["waving"]); // each fires once
+  });
+
+  it("hands a spoken line's mouth shapes to the lip track, on the speech clock", async () => {
+    const { player, lines, lipsCleared } = setup();
+    const visemes = [{ v: "PP", at: 0 }, { v: "O", at: 0.1 }];
+    player.enqueue(segment({ audio_b64: audio(1), visemes, words: [] }));
+    player.enqueue(segment({ seq: 1, audio_b64: audio(1), visemes: [] })); // timing unknown: loudness alone
+    await vi.advanceTimersByTimeAsync(0);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].visemes).toEqual(visemes);
+    expect(lines[0].end - lines[0].start).toBeCloseTo(1);
+    player.stop();
+    expect(lipsCleared()).toBe(1);
   });
 
   it("shows audio segments as text when her voice is muted", async () => {

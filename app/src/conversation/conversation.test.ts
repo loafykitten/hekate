@@ -413,6 +413,12 @@ describe("Conversation: cards, notices and invalidation", () => {
     expect(t.state().cards.map((c) => [c.card.kind, c.source])).toEqual([["approval", "notify"]]);
   });
 
+  it("points a change notify at the Changes section", () => {
+    const t = setup();
+    t.socket.receive({ type: "notify", id: "n4", kind: "change", title: "Change merged", body: "Match mail rules on subject words" });
+    expect(t.state().notices).toMatchObject([{ id: "n4", section: "changes" }]);
+  });
+
   it("passes approval events on, and ignores malformed ones", () => {
     const t = setup();
     const seen: string[] = [];
@@ -442,7 +448,7 @@ describe("Conversation: cards, notices and invalidation", () => {
     t.conversation.client.reconnectNow();
     FakeSocket.last.open();
     FakeSocket.last.receive(READY);
-    expect(seen.at(-1)).toEqual(["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals"]);
+    expect(seen.at(-1)).toEqual(["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes"]);
   });
 });
 

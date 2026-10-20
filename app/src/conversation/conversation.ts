@@ -29,7 +29,11 @@ export interface Notice {
   title: string;
   body: string;
   // The menu section it belongs to, when it has one.
-  section?: "reminders" | "today";
+  section?: "reminders" | "today" | "changes";
+}
+
+function noticeSection(kind: string): Notice["section"] {
+  return kind === "reminder" ? "reminders" : kind === "approval" ? "today" : kind === "change" ? "changes" : undefined;
 }
 
 export const NOTICE_MS = 12_000;
@@ -392,7 +396,7 @@ export class Conversation {
     this.live = [];
     this.historyEpoch++;
     this.emit();
-    this.emitInvalidate(["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals"]);
+    this.emitInvalidate(["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes"]);
   }
 
   private onTranscript(id: string, text: string, superseded = false) {
@@ -493,7 +497,7 @@ export class Conversation {
       id: m.id,
       title: m.title || "Hekate",
       body: m.body || "",
-      section: m.kind === "reminder" ? "reminders" : m.kind === "approval" ? "today" : undefined,
+      section: noticeSection(m.kind),
     };
     clearTimeout(this.noticeTimers.get(notice.id));
     this.notices = [...this.notices.filter((n) => n.id !== notice.id), notice].slice(-2);

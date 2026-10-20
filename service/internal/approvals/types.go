@@ -7,6 +7,7 @@ package approvals
 import (
 	"context"
 	"encoding/json"
+	"time"
 )
 
 // Approval statuses.
@@ -52,6 +53,8 @@ type Request struct {
 	Within []string
 	// Payload is what the Executor needs to run the action.
 	Payload json.RawMessage
+	// TTL is how long the request waits for the owner; zero means 24 hours.
+	TTL time.Duration
 	// Notify tells the owner by push and a notify event, for requests made
 	// outside a conversation (e.g. the weekly mail noise report). Inside a
 	// conversation the approval card already asks.
@@ -72,6 +75,7 @@ type Approval struct {
 	Status     string  `json:"status"`
 	Result     *string `json:"result"`
 	DecidedBy  *string `json:"decided_by"`
+	Note       *string `json:"note"`
 	CreatedAt  string  `json:"created_at"`
 	ExpiresAt  string  `json:"expires_at"`
 	DecidedAt  *string `json:"decided_at"`

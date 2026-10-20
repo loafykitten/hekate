@@ -61,7 +61,12 @@ func (s *Service) PromptContext(ctx context.Context, now time.Time) (string, err
 		if a.Result != nil && *a.Result != "" {
 			text += " → " + *a.Result
 		}
-		fmt.Fprintf(&b, "- %s %s: %s\n", verdict(a), ago(now, *a.DecidedAt), quote(text))
+		fmt.Fprintf(&b, "- %s %s: %s", verdict(a), ago(now, *a.DecidedAt), quote(text))
+		if a.Note != nil {
+			// The owner wrote it, so it sits outside the markers.
+			fmt.Fprintf(&b, " (the owner's reason: %q)", oneLine(*a.Note))
+		}
+		b.WriteString("\n")
 	}
 	if b.Len() == 0 {
 		return "", nil

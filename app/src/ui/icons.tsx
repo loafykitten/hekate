@@ -130,6 +130,12 @@ export const TrashIcon = (p: SVGProps<SVGSVGElement>) => (
   </Icon>
 );
 
+export const ChangesIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M6 4.5v10M6 14.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5ZM6 4.5a2.5 2.5 0 1 0 0-.01ZM18 19.5v-8a4 4 0 0 0-4-4h-3.5M13 4.5l-2.5 3 2.5 3" />
+  </Icon>
+);
+
 export const EditIcon = (p: SVGProps<SVGSVGElement>) => (
   <Icon {...p}>
     <path d="M4.5 19.5 5 15 15.5 4.5a2.1 2.1 0 0 1 3 3L8 18l-3.5 1.5Z" />

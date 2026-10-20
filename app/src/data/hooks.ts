@@ -6,6 +6,7 @@ import { DOMAINS, keys, type Domain } from "./queryKeys";
 import {
   ApiError,
   approvalsApi,
+  changesApi,
   calendarApi,
   fetchWeather,
   mailApi,
@@ -329,10 +330,16 @@ export function useLiveApproval(initial: Approval): Approval {
 export function useDecideApproval() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, decision }: { id: string; decision: ApprovalDecision }) => approvalsApi.decide(id, decision),
+    mutationFn: ({ id, decision, note }: { id: string; decision: ApprovalDecision; note?: string }) => approvalsApi.decide(id, decision, note),
     meta: { handles409: true, reportsApprovalFailure: true },
     onSuccess: (approval) => applyApproval(qc, approval),
     // Allowing can change mail, and a 409 means somebody decided first: either way, look again.
     onSettled: () => Promise.all([qc.invalidateQueries({ queryKey: ["approvals"] }), qc.invalidateQueries({ queryKey: ["mail"] })]),
   });
+}
+
+// --- changes -------------------------------------------------------------------------------
+
+export function useChanges(enabled = true) {
+  return useQuery({ queryKey: keys.changes, queryFn: ({ signal }) => changesApi.list(signal), enabled });
 }

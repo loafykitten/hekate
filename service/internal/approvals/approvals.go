@@ -28,6 +28,7 @@ const (
 	maxSleep     = time.Minute // re-check regularly in case the wall clock jumps
 	retryAfter   = 5 * time.Second
 	maxResult    = 500
+	maxNote      = 500
 	notifyTitle  = "Approval needed"
 	// interruptedResult is recorded for an action cut off by a restart.
 	interruptedResult = "Interrupted by a restart before it finished; it may have partly happened."
@@ -151,7 +152,7 @@ func (s *Service) displayPtr(stored sql.NullString) *string {
 // has expired. It is a 409 over REST.
 var ErrNotPending = httpx.Conflict("this approval is no longer pending")
 
-const columns = `id, kind, title, detail, scope_label, status, result, decided_by, created_at, expires_at, decided_at`
+const columns = `id, kind, title, detail, scope_label, status, result, decided_by, note, created_at, expires_at, decided_at`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -161,9 +162,10 @@ func (s *Service) scan(row scanner) (Approval, error) {
 		id                      int64
 		scopeLabel              string
 		result, decidedBy, when sql.NullString
+		note                    sql.NullString
 		created, expires        string
 	)
-	if err := row.Scan(&id, &a.Kind, &a.Title, &a.Detail, &scopeLabel, &a.Status, &result, &decidedBy, &created, &expires, &when); err != nil {
+	if err := row.Scan(&id, &a.Kind, &a.Title, &a.Detail, &scopeLabel, &a.Status, &result, &decidedBy, &note, &created, &expires, &when); err != nil {
 		return Approval{}, err //nolint:wrapcheck // callers distinguish sql.ErrNoRows
 	}
 	a.ID = strconv.FormatInt(id, 10)
@@ -175,6 +177,9 @@ func (s *Service) scan(row scanner) (Approval, error) {
 	}
 	if decidedBy.Valid {
 		a.DecidedBy = &decidedBy.String
+	}
+	if note.Valid {
+		a.Note = &note.String
 	}
 	a.CreatedAt, a.ExpiresAt, a.DecidedAt = s.display(created), s.display(expires), s.displayPtr(when)
 	return a, nil
@@ -303,9 +308,28 @@ func (s *Service) Request(ctx context.Context, r Request) (Approval, error) {
 		}
 	}
 
-	res, err := s.db.ExecContext(ctx, `INSERT INTO approvals (kind, title, detail, scope, scope_label, payload, status, created_at, expires_at)
+	a, err := s.insertPending(ctx, s.db, r, payload, now)
+	if err != nil {
+		return Approval{}, err
+	}
+	s.announce(ctx, a, r.Notify)
+	return a, nil
+}
+
+// execQuerier is what insertPending needs: the database or a transaction.
+type execQuerier interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func (s *Service) insertPending(ctx context.Context, db execQuerier, r Request, payload string, now time.Time) (Approval, error) {
+	ttl := r.TTL
+	if ttl <= 0 {
+		ttl = expiry
+	}
+	res, err := db.ExecContext(ctx, `INSERT INTO approvals (kind, title, detail, scope, scope_label, payload, status, created_at, expires_at)
 		VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
-		r.Kind, r.Title, r.Detail, r.Scope, r.ScopeLabel, payload, stamp(now), stamp(now.Add(expiry)))
+		r.Kind, r.Title, r.Detail, r.Scope, r.ScopeLabel, payload, stamp(now), stamp(now.Add(ttl)))
 	if err != nil {
 		return Approval{}, fmt.Errorf("insert approval: %w", err)
 	}
@@ -313,16 +337,47 @@ func (s *Service) Request(ctx context.Context, r Request) (Approval, error) {
 	if err != nil {
 		return Approval{}, fmt.Errorf("insert approval: %w", err)
 	}
-	a, err := s.get(ctx, id)
+	a, err := s.scan(db.QueryRowContext(ctx, `SELECT `+columns+` FROM approvals WHERE id = ?`, id))
 	if err != nil {
-		return Approval{}, err
-	}
-	s.poke()
-	s.publish(a)
-	if r.Notify {
-		s.notify(ctx, a)
+		return Approval{}, fmt.Errorf("get approval %d: %w", id, err)
 	}
 	return a, nil
+}
+
+// announce tells the expiry loop and the clients about a new pending approval.
+func (s *Service) announce(ctx context.Context, a Approval, notify bool) {
+	s.poke()
+	s.publish(a)
+	if notify {
+		s.notify(ctx, a)
+	}
+}
+
+// Prepare stores a pending approval inside the caller's transaction, so it
+// lands together with the caller's own rows or not at all. It never consults
+// standing rules, so the request must have no Scope. Call the returned
+// announce once the transaction has committed, and not if it rolled back.
+func (s *Service) Prepare(ctx context.Context, tx *sql.Tx, r Request) (Approval, func(), error) {
+	if _, ok := s.executor(r.Kind); !ok {
+		return Approval{}, nil, fmt.Errorf("approvals: no executor registered for kind %q", r.Kind)
+	}
+	if r.Scope != "" {
+		return Approval{}, nil, errors.New("approvals: a prepared request can't have a scope")
+	}
+	r.Title = strings.TrimSpace(r.Title)
+	if r.Title == "" {
+		return Approval{}, nil, errors.New("approvals: a request needs a title")
+	}
+	r.ScopeLabel = ""
+	payload := string(r.Payload)
+	if payload == "" {
+		payload = "null"
+	}
+	a, err := s.insertPending(ctx, tx, r, payload, s.now())
+	if err != nil {
+		return Approval{}, nil, err
+	}
+	return a, func() { s.announce(context.WithoutCancel(ctx), a, r.Notify) }, nil
 }
 
 // runByRule runs a request a standing rule covers and records it as decided.
@@ -383,14 +438,21 @@ func clip(s string) string {
 }
 
 // Decide records the owner's decision on a pending approval and, unless it is
-// a denial, runs the action. The claim is a single guarded UPDATE, so two
-// devices or a double tap can never run an action twice; the loser gets
-// ErrNotPending.
-func (s *Service) Decide(ctx context.Context, id int64, decision string) (Approval, error) {
+// a denial, runs the action. A denial may carry a note saying why. The claim
+// is a single guarded UPDATE, so two devices or a double tap can never run an
+// action twice; the loser gets ErrNotPending.
+func (s *Service) Decide(ctx context.Context, id int64, decision, note string) (Approval, error) {
 	switch decision {
 	case DecisionOnce, DecisionAlways, DecisionDeny:
 	default:
 		return Approval{}, httpx.BadRequest("decision must be once, always or deny")
+	}
+	note = strings.TrimSpace(note)
+	if note != "" && decision != DecisionDeny {
+		return Approval{}, httpx.BadRequest("a note only goes with deny")
+	}
+	if utf8.RuneCountInString(note) > maxNote {
+		return Approval{}, httpx.BadRequest("the note can be at most %d characters", maxNote)
 	}
 	var scope, scopeLabel, payload string
 	err := s.db.QueryRowContext(ctx, `SELECT scope, scope_label, payload FROM approvals WHERE id = ?`, id).Scan(&scope, &scopeLabel, &payload)
@@ -411,8 +473,8 @@ func (s *Service) Decide(ctx context.Context, id int64, decision string) (Approv
 	if decision == DecisionDeny {
 		claimed = StatusDenied
 	}
-	res, err := s.db.ExecContext(ctx, `UPDATE approvals SET status = ?, decided_by = 'owner', decided_at = ?
-		WHERE id = ? AND status = 'pending' AND expires_at > ?`, claimed, stamp(now), id, stamp(now))
+	res, err := s.db.ExecContext(ctx, `UPDATE approvals SET status = ?, decided_by = 'owner', decided_at = ?, note = ?
+		WHERE id = ? AND status = 'pending' AND expires_at > ?`, claimed, stamp(now), nullable(note), id, stamp(now))
 	if err != nil {
 		return Approval{}, fmt.Errorf("claim approval %d: %w", id, err)
 	}
@@ -603,4 +665,11 @@ func (s *Service) DeleteRule(ctx context.Context, id int64) error {
 	}
 	s.events.Invalidate(proto.DomainApprovals)
 	return nil
+}
+
+func nullable(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

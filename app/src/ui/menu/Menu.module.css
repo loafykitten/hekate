@@ -116,7 +116,9 @@
   order: 2;
   display: grid;
   flex: none;
-  grid-template-columns: repeat(7, 1fr);
+  /* Sized to the labels, so a long one ("Reminders") takes the room a short one ("Mail") leaves. */
+  grid-template-columns: repeat(8, auto);
+  justify-content: space-between;
   padding: 4px calc(var(--space-1) + var(--safe-right)) calc(4px + var(--safe-bottom)) calc(var(--space-1) + var(--safe-left));
   border-top: 1px solid var(--hairline);
   background: rgba(18, 15, 28, 0.6);
@@ -130,12 +132,12 @@
   justify-content: center;
   gap: 3px;
   min-height: 56px;
-  padding: 6px 0;
+  padding: 6px 3px;
   border: 0;
   border-radius: var(--radius-md);
   background: none;
   color: var(--fg-subtle);
-  font-size: 0.6875rem;
+  font-size: 0.65rem;
   font-weight: var(--weight-medium);
   letter-spacing: 0.01em;
   cursor: pointer;

@@ -5,6 +5,7 @@ describe("invalidationKeys", () => {
   it("maps each domain to its query key prefix", () => {
     expect(invalidationKeys(["tasks"])).toEqual([["tasks"]]);
     expect(invalidationKeys(["mail", "approvals"])).toEqual([["mail"], ["approvals"]]);
+    expect(invalidationKeys(["changes"])).toEqual([["changes"]]);
     expect(invalidationKeys(["tasks", "reminders", "calendar", "memory", "weather"])).toEqual([["tasks"], ["reminders"], ["calendar"], ["memory"], ["weather"]]);
   });
 
@@ -28,5 +29,6 @@ describe("invalidationKeys", () => {
     expect(prefixOf(keys.weather("Lisbon"))).toEqual(["weather"]);
     for (const key of [keys.mailStatus, keys.mailSummary, keys.mailMessages("q", "", ""), keys.mailMessage("1"), keys.mailRules]) expect(prefixOf(key)).toEqual(["mail"]);
     for (const key of [keys.approvals("pending"), keys.approval("1"), keys.approvalRules]) expect(prefixOf(key)).toEqual(["approvals"]);
+    expect(prefixOf(keys.changes)).toEqual(["changes"]);
   });
 });

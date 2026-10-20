@@ -162,6 +162,7 @@ export interface Approval {
   status: ApprovalStatus;
   result: string | null;
   decided_by: string | null; // owner | rule
+  note: string | null; // the owner's reason for a denial, if they gave one
   created_at: string;
   expires_at: string | null;
   decided_at: string | null;
@@ -172,6 +173,27 @@ export interface ApprovalRule {
   scope_label: string;
   uses: number;
   created_at: string;
+}
+
+export const CHANGE_STATUSES = ["proposed", "denied", "expired", "queued", "working", "merged", "rejected", "failed"] as const;
+export type ChangeStatus = (typeof CHANGE_STATUSES)[number];
+export interface ChangeRequest {
+  id: string;
+  title: string;
+  what: string; // what to build, in her words
+  why: string;
+  kind: string; // feature | fix | improvement; kept as sent so a newer kind still shows
+  revises: string | null; // id of the denied proposal this replaces
+  status: ChangeStatus;
+  approval_id: string | null;
+  feedback: string | null; // the owner's note when denied
+  stage: string; // the worker's latest step, e.g. "Building"
+  issue_url: string | null;
+  pr_url: string | null;
+  result: string | null; // once finished: what happened
+  created_at: string;
+  updated_at: string;
+  finished_at: string | null;
 }
 
 export interface WebResult {
@@ -382,9 +404,39 @@ export function asApproval(v: unknown): Approval | undefined {
     status: v.status as ApprovalStatus,
     result: strOrNull(v.result),
     decided_by: strOrNull(v.decided_by),
+    note: strOrNull(v.note),
     created_at: strOr(v.created_at),
     expires_at: strOrNull(v.expires_at),
     decided_at: strOrNull(v.decided_at),
+  };
+}
+
+// Only links to GitHub are ever shown for a change (the worker files the issue and PR there).
+export function githubUrl(v: unknown): string | null {
+  return isStr(v) && v.startsWith("https://github.com/") ? v : null;
+}
+
+export function asChangeRequest(v: unknown): ChangeRequest | undefined {
+  if (!isRec(v)) return undefined;
+  const id = idOf(v.id);
+  if (id === undefined || !isStr(v.title) || !(CHANGE_STATUSES as readonly string[]).includes(v.status as string)) return undefined;
+  return {
+    id,
+    title: v.title,
+    what: strOr(v.what),
+    why: strOr(v.why),
+    kind: strOr(v.kind),
+    revises: idOf(v.revises) ?? null,
+    status: v.status as ChangeStatus,
+    approval_id: idOf(v.approval_id) ?? null,
+    feedback: strOrNull(v.feedback),
+    stage: strOr(v.stage),
+    issue_url: githubUrl(v.issue_url),
+    pr_url: githubUrl(v.pr_url),
+    result: strOrNull(v.result),
+    created_at: strOr(v.created_at),
+    updated_at: strOr(v.updated_at),
+    finished_at: strOrNull(v.finished_at),
   };
 }
 

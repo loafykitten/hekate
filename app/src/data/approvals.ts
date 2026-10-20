@@ -33,6 +33,8 @@ export function applyApproval(qc: QueryClient, a: Approval) {
   qc.setQueryData<Approval | null>(keys.approval(a.id), (cur) => (cur ? freshest(cur, a) : a));
   qc.setQueryData<Approval[]>(keys.approvals("pending"), (cur) => cur && patchPending(cur, a));
   qc.setQueryData<Approval[]>(keys.approvals("recent"), (cur) => cur && patchRecent(cur, a));
+  // A change request reads its status and the owner's reason from its approval.
+  if (a.kind === "change_request") void qc.invalidateQueries({ queryKey: keys.changes });
 }
 
 // "mail_trash" -> "Trash mail"; unknown kinds read as plain words.

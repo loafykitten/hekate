@@ -74,6 +74,32 @@ be wrong. The override reason is posted on the PR for the record.
   Every attempt is appended to `deploy.log` (JSON lines), which Hekate can read about itself.
 - Manual controls on the homelab: `deploy/hekatectl status|logs|rollback|pause|resume`.
 
+## Change requests: the worker
+
+Renamon proposes changes with `propose_change`; the owner approves them in the app (see
+`PLAN.md`, "Next"). Approved ones are built by `scripts/change-worker/` on the development
+machine, which reaches Hekate over the tailnet like any of the owner's devices:
+
+- `watch.sh` (launchd, every 90 s) claims the oldest queued change, one at a time.
+- `run.sh ID` makes a worktree of `origin/main` on `change/ID` and runs a headless Claude Code
+  session (`build-prompt.md`, auto permission mode, Opus at high effort). That session files a
+  sanitized issue, builds the change, opens the PR and runs `ai-review.sh --astra` (up to three
+  rounds). A second, fresh session (`merge-prompt.md`, no file edits) checks CI, the review, the
+  diff's scope and privacy, then merges or closes the PR. `run.sh` confirms the PR state with
+  GitHub before reporting the outcome.
+- Progress and outcomes go to Hekate (`report.sh`, the `/api/changes` endpoints in
+  `PROTOCOL.md`); the owner sees them in the app and by push.
+
+Setup, once: create `~/.config/hekate/change-worker.env` with `HEKATE_URL=https://hekate.<domain>`
+(optionally `CHANGE_WORKER_BUDGET_USD=` to cap each session), make sure `gh` and `codex` are
+logged in, then run `scripts/change-worker/install.sh` (`--remove` to uninstall). Logs and
+per-change transcripts are in `~/.local/state/hekate-change-worker/`. The launchd job runs the
+scripts from this checkout, so keep it on `main`.
+
+After changing the worker, run `scripts/change-worker/test.sh`. It runs each outcome (merged,
+rejected, a PR that won't close, GitHub down, a run cut off) against a real local Hekate with
+fake `gh` and `claude`, so nothing reaches GitHub.
+
 ## Secrets and private details
 
 The repo is public. Never commit:

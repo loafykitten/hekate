@@ -19,6 +19,7 @@ import (
 	"github.com/loafykitten/hekate/service/internal/approvals"
 	"github.com/loafykitten/hekate/service/internal/buildinfo"
 	"github.com/loafykitten/hekate/service/internal/calendar"
+	"github.com/loafykitten/hekate/service/internal/changes"
 	"github.com/loafykitten/hekate/service/internal/config"
 	"github.com/loafykitten/hekate/service/internal/llm"
 	"github.com/loafykitten/hekate/service/internal/logging"
@@ -162,6 +163,16 @@ func run() error {
 	toolList = slices.Concat(toolList, mailSvc.Tools())
 	sources = append(sources, agent.Source{Name: "Mail", Source: mailSvc})
 	api = append(api, mailSvc.Routes)
+
+	// Changes she proposes to Hekate itself, built by the worker on the
+	// development machine once the owner allows them.
+	changeSvc, err := changes.New(changes.Options{Store: db, Approvals: approvalSvc, Location: cfg.Location, Events: hub, Push: pushSvc, Logger: logger.Logger})
+	if err != nil {
+		return fmt.Errorf("build changes: %w", err)
+	}
+	toolList = slices.Concat(toolList, changeSvc.Tools())
+	sources = append(sources, agent.Source{Name: "Your change requests", Source: changeSvc})
+	api = append(api, changeSvc.Routes)
 
 	tools, err := agent.NewRegistry(toolList...)
 	if err != nil {

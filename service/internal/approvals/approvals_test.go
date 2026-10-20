@@ -2,6 +2,7 @@ package approvals
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -182,7 +183,7 @@ func (f *fixture) request(t *testing.T, scope string) Approval {
 
 func (f *fixture) decide(t *testing.T, a Approval, decision string) Approval {
 	t.Helper()
-	got, err := f.svc.Decide(t.Context(), mustID(a.ID), decision)
+	got, err := f.svc.Decide(t.Context(), mustID(a.ID), decision, "")
 	if err != nil {
 		t.Fatalf("Decide(%s, %s): %v", a.ID, decision, err)
 	}
@@ -239,7 +240,7 @@ func TestNoScopeNoRule(t *testing.T) {
 	if a.ScopeLabel != nil {
 		t.Errorf("scope_label = %v", a.ScopeLabel)
 	}
-	_, err := f.svc.Decide(t.Context(), mustID(a.ID), DecisionAlways)
+	_, err := f.svc.Decide(t.Context(), mustID(a.ID), DecisionAlways, "")
 	var he *httpx.Error
 	if !errors.As(err, &he) || he.Status != http.StatusBadRequest {
 		t.Fatalf("always without scope = %v", err)
@@ -308,8 +309,41 @@ func TestDeny(t *testing.T) {
 	if got.Status != StatusDenied || got.Result != nil || str(got.DecidedBy) != DecidedByOwner || f.runs.Load() != 0 {
 		t.Fatalf("denied = %+v, runs %d", got, f.runs.Load())
 	}
-	if _, err := f.svc.Decide(t.Context(), mustID(a.ID), DecisionOnce); !errors.Is(err, ErrNotPending) {
+	if _, err := f.svc.Decide(t.Context(), mustID(a.ID), DecisionOnce, ""); !errors.Is(err, ErrNotPending) {
 		t.Errorf("deciding twice = %v", err)
+	}
+}
+
+func TestDenyNote(t *testing.T) {
+	f := newFixture(t)
+	a := f.request(t, "")
+	if _, err := f.svc.Decide(t.Context(), mustID(a.ID), DecisionOnce, "why not"); err == nil {
+		t.Error("allowed with a note")
+	}
+	if _, err := f.svc.Decide(t.Context(), mustID(a.ID), DecisionDeny, strings.Repeat("a", maxNote+1)); err == nil {
+		t.Error("took a note over the limit")
+	}
+	got, err := f.svc.Decide(t.Context(), mustID(a.ID), DecisionDeny, "  I still read these.  ")
+	if err != nil || got.Status != StatusDenied || str(got.Note) != "I still read these." {
+		t.Fatalf("denied = %+v, %v", got, err)
+	}
+	ctxText, err := f.svc.PromptContext(t.Context(), f.clock.Now())
+	if err != nil || !strings.Contains(ctxText, `(the owner's reason: "I still read these.")`) {
+		t.Errorf("context = %q, %v", ctxText, err)
+	}
+	if b := f.request(t, ""); b.Note != nil {
+		t.Errorf("a new approval has a note: %+v", b)
+	}
+}
+
+func TestRequestTTL(t *testing.T) {
+	f := newFixture(t)
+	a, err := f.svc.Request(t.Context(), Request{Kind: "mail_trash", Title: "Wait a week?", TTL: 7 * 24 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := f.clock.Now().Add(7 * 24 * time.Hour).Format(time.RFC3339); a.ExpiresAt != want {
+		t.Errorf("expires_at = %s, want %s", a.ExpiresAt, want)
 	}
 }
 
@@ -358,7 +392,7 @@ func TestExecutorOutlivesTheCaller(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	go func() { time.Sleep(10 * time.Millisecond); cancel() }()
 	// The caller's context ends mid-run; the action and its record must not.
-	got, err := f.svc.Decide(ctx, mustID(a.ID), DecisionOnce)
+	got, err := f.svc.Decide(ctx, mustID(a.ID), DecisionOnce, "")
 	if err != nil || got.Status != StatusDone || str(got.Result) != "finished" {
 		t.Fatalf("decide = %+v, %v", got, err)
 	}
@@ -416,7 +450,7 @@ func TestDecideRunsOnce(t *testing.T) {
 	var ok, conflict atomic.Int32
 	for range n {
 		wg.Go(func() {
-			_, err := f.svc.Decide(t.Context(), mustID(a.ID), DecisionOnce)
+			_, err := f.svc.Decide(t.Context(), mustID(a.ID), DecisionOnce, "")
 			switch {
 			case err == nil:
 				ok.Add(1)
@@ -437,7 +471,7 @@ func TestDecideAfterExpiryIsRefused(t *testing.T) {
 	f := newFixture(t)
 	a := f.request(t, "")
 	f.clock.advance(25 * time.Hour) // nobody ran the expiry loop
-	if _, err := f.svc.Decide(t.Context(), mustID(a.ID), DecisionOnce); !errors.Is(err, ErrNotPending) {
+	if _, err := f.svc.Decide(t.Context(), mustID(a.ID), DecisionOnce, ""); !errors.Is(err, ErrNotPending) {
 		t.Fatalf("decide after expiry = %v", err)
 	}
 	if f.runs.Load() != 0 {
@@ -649,5 +683,44 @@ func TestRestartFailsInterruptedActions(t *testing.T) {
 	got, err := f.svc.Get(t.Context(), id)
 	if err != nil || got.Status != StatusFailed || str(got.Result) != interruptedResult {
 		t.Fatalf("after restart = %+v, %v", got, err)
+	}
+}
+
+func TestPrepare(t *testing.T) {
+	f := newFixture(t)
+	db := f.svc.db
+	begin := func() *sql.Tx {
+		tx, err := db.BeginTx(t.Context(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tx
+	}
+	req := Request{Kind: "mail_trash", Title: "Move them?", Payload: json.RawMessage(`{"n":1}`)}
+
+	tx := begin()
+	if _, _, err := f.svc.Prepare(t.Context(), tx, Request{Kind: "mail_trash", Title: "x", Scope: "from:@example.com"}); err == nil {
+		t.Error("prepared a request with a scope")
+	}
+	// Rolled back: nothing stored, nothing announced.
+	if _, _, err := f.svc.Prepare(t.Context(), tx, req); err != nil {
+		t.Fatal(err)
+	}
+	_ = tx.Rollback()
+	if list, _ := f.svc.List(t.Context(), ListPending); len(list) != 0 || len(f.bcast.msgs) != 0 {
+		t.Fatalf("after rollback: %d pending, %d broadcasts", len(list), len(f.bcast.msgs))
+	}
+
+	tx = begin()
+	a, announce, err := f.svc.Prepare(t.Context(), tx, req)
+	if err != nil || a.Status != StatusPending {
+		t.Fatalf("Prepare = %+v, %v", a, err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	announce()
+	if list, _ := f.svc.List(t.Context(), ListPending); len(list) != 1 || len(f.bcast.msgs) != 1 {
+		t.Errorf("after commit: %d pending, %d broadcasts", len(list), len(f.bcast.msgs))
 	}
 }

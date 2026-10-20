@@ -388,7 +388,7 @@ func TestEditsMadeMeanwhileWin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(summary, "(2 left alone: edited meanwhile)") {
+	if !strings.Contains(summary, "(1 left alone: changed meanwhile) (1 retirements held back: an update didn't happen)") {
 		t.Errorf("summary = %q", summary)
 	}
 	if m, _ := f.mem.Get(ctx, a); m.Content != "Lives on Maple Street" {
@@ -444,5 +444,44 @@ func TestUnfinishedReflectionDoesNotAdvance(t *testing.T) {
 	start, err := f.svc.windowStart(ctx, f.now)
 	if err != nil || !start.Equal(f.now.Add(-defaultWindow)) {
 		t.Errorf("an unfinished reflection moved the window: %v %v", start, err)
+	}
+}
+
+func TestASaveNeverTouchesAMemorySavedMeanwhile(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "I started cello lessons", "Lovely.")
+	model := &editingModel{fakeModel: &fakeModel{reply: `{"save": [{"kind": "fact", "content": "Plays the cello", "importance": 5,
+		"follow_up_at": "2026-11-01", "reason": "x"}], "diary": "d"}`}}
+	model.during = func() { f.remember("fact", "Plays the cello") } // the owner saved it while she thought
+	f.svc.llm = model
+	summary, err := f.svc.Reflect(ctx)
+	if err != nil || !strings.Contains(summary, "Saved 0") || !strings.Contains(summary, "(1 left alone: changed meanwhile)") {
+		t.Fatalf("summary = %q %v", summary, err)
+	}
+	found, _ := f.mem.Search(ctx, "cello", "", 5)
+	if len(found) != 1 || found[0].Importance != 3 || found[0].FollowUpAt != nil {
+		t.Errorf("the owner's memory was changed: %+v", found)
+	}
+	days, _ := f.svc.Journal(ctx, 0)
+	if n := len(days[0].Reflections[0].Changes); n != 0 {
+		t.Errorf("recorded %d changes", n)
+	}
+}
+
+func TestMergeKeepsSourcesWhenTheDestinationUpdateIsRefused(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	dest := f.remember("preference", "Likes tea")
+	src := f.remember("preference", "Likes oolong in the morning")
+	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "hi", "hello")
+	f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(dest, 10) + `, "kind": "wish", "content": "Likes tea, oolong in the morning", "reason": "merge"}],
+		"retire": [{"id": ` + strconv.FormatInt(src, 10) + `, "reason": "merged"}], "diary": "d"}`
+	summary, err := f.svc.Reflect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.mem.Get(ctx, src); err != nil {
+		t.Errorf("the merge source was retired though the merge failed (%q): %v", summary, err)
 	}
 }

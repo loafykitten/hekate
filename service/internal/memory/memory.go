@@ -151,16 +151,7 @@ func (s *Service) display(stored string) string {
 func (s *Service) changed() { s.events.Invalidate(proto.DomainMemory) }
 
 // Get returns one memory.
-func (s *Service) Get(ctx context.Context, id int64) (Memory, error) {
-	m, err := s.scan(s.db.QueryRowContext(ctx, `SELECT `+columns+` FROM memories WHERE id = ? AND deleted_at IS NULL`, id))
-	if errors.Is(err, sql.ErrNoRows) {
-		return Memory{}, httpx.NotFound("there is no memory with id %d", id)
-	}
-	if err != nil {
-		return Memory{}, fmt.Errorf("get memory %d: %w", id, err)
-	}
-	return m, nil
-}
+func (s *Service) Get(ctx context.Context, id int64) (Memory, error) { return s.get(ctx, s.db, id) }
 
 func checkKind(kind string) error {
 	if !slices.Contains(kinds, kind) {
@@ -258,6 +249,15 @@ func (s *Service) Save(ctx context.Context, n NewMemory) (m Memory, existed bool
 // longer what the caller last saw.
 var ErrChanged = errors.New("the memory changed since it was read")
 
+// ErrExists is returned by Insert when a live memory already holds that text.
+var ErrExists = errors.New("a memory with that text already exists")
+
+// Recorder runs inside the transaction of a memory change, under the service's
+// lock: what it writes commits with the change or not at all, and nothing (a
+// forget, another edit) can come between them. before is nil for a new memory,
+// after is nil for a retired one.
+type Recorder func(ctx context.Context, tx *sql.Tx, before, after *Memory) error
+
 // Unchanged reports whether two snapshots of a memory are the same version.
 func Unchanged(a, b Memory) bool {
 	fa, fb := "", ""
@@ -270,6 +270,38 @@ func Unchanged(a, b Memory) bool {
 	return a.ID == b.ID && a.Kind == b.Kind && a.Content == b.Content && a.Importance == b.Importance && fa == fb && a.UpdatedAt == b.UpdatedAt
 }
 
+type rowQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// get reads a live memory through db or a transaction.
+func (s *Service) get(ctx context.Context, q rowQuerier, id int64) (Memory, error) {
+	m, err := s.scan(q.QueryRowContext(ctx, `SELECT `+columns+` FROM memories WHERE id = ? AND deleted_at IS NULL`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Memory{}, httpx.NotFound("there is no memory with id %d", id)
+	}
+	if err != nil {
+		return Memory{}, fmt.Errorf("get memory %d: %w", id, err)
+	}
+	return m, nil
+}
+
+// inTx runs fn in a transaction, committing when it returns nil.
+func (s *Service) inTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
 // Update changes a memory.
 func (s *Service) Update(ctx context.Context, id int64, p Patch) (Memory, error) {
 	s.mu.Lock()
@@ -278,12 +310,13 @@ func (s *Service) Update(ctx context.Context, id int64, p Patch) (Memory, error)
 	if err != nil {
 		return Memory{}, err
 	}
-	return s.update(ctx, id, cur, p)
+	return s.update(ctx, id, cur, p, nil)
 }
 
 // UpdateIfUnchanged changes a memory only if it is still the version seen;
-// otherwise it returns ErrChanged and changes nothing.
-func (s *Service) UpdateIfUnchanged(ctx context.Context, id int64, seen Memory, p Patch) (Memory, error) {
+// otherwise it returns ErrChanged and changes nothing. rec, if set, records
+// the change in the same transaction.
+func (s *Service) UpdateIfUnchanged(ctx context.Context, id int64, seen Memory, p Patch, rec Recorder) (Memory, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cur, err := s.Get(ctx, id)
@@ -293,10 +326,10 @@ func (s *Service) UpdateIfUnchanged(ctx context.Context, id int64, seen Memory, 
 	if !Unchanged(cur, seen) {
 		return Memory{}, ErrChanged
 	}
-	return s.update(ctx, id, cur, p)
+	return s.update(ctx, id, cur, p, rec)
 }
 
-func (s *Service) update(ctx context.Context, id int64, cur Memory, p Patch) (Memory, error) {
+func (s *Service) update(ctx context.Context, id int64, cur Memory, p Patch, rec Recorder) (Memory, error) {
 	var err error
 	kind, content, importance := cur.Kind, cur.Content, cur.Importance
 	if p.Kind != nil {
@@ -326,21 +359,96 @@ func (s *Service) update(ctx context.Context, id int64, cur Memory, p Patch) (Me
 			return Memory{}, err
 		}
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE memories SET kind = ?, content = ?, importance = ?, follow_up_at = ?, updated_at = ?
-		WHERE id = ? AND deleted_at IS NULL`, kind, content, importance, followUp, stamp(s.now()), id); err != nil {
-		return Memory{}, fmt.Errorf("update memory %d: %w", id, err)
+	var after Memory
+	err = s.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE memories SET kind = ?, content = ?, importance = ?, follow_up_at = ?, updated_at = ?
+			WHERE id = ? AND deleted_at IS NULL`, kind, content, importance, followUp, stamp(s.now()), id); err != nil {
+			return fmt.Errorf("update memory %d: %w", id, err)
+		}
+		if after, err = s.get(ctx, tx, id); err != nil {
+			return err
+		}
+		if rec != nil {
+			return rec(ctx, tx, &cur, &after)
+		}
+		return nil
+	})
+	if err != nil {
+		return Memory{}, err
 	}
 	s.changed()
-	return s.Get(ctx, id)
+	return after, nil
 }
 
-// Forget deletes a memory for good, including its search index entry.
+// Insert saves a new memory, or returns ErrExists when a live one already
+// holds the same text (unlike Save, it never touches an existing memory).
+// rec, if set, records it in the same transaction.
+func (s *Service) Insert(ctx context.Context, n NewMemory, rec Recorder) (Memory, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := checkKind(n.Kind); err != nil {
+		return Memory{}, err
+	}
+	content, err := checkContent(n.Content)
+	if err != nil {
+		return Memory{}, err
+	}
+	importance := n.Importance
+	if importance == 0 {
+		importance = DefaultImportance
+	}
+	if err := checkImportance(importance); err != nil {
+		return Memory{}, err
+	}
+	followUp, err := s.followUp(n.FollowUpAt)
+	if err != nil {
+		return Memory{}, err
+	}
+	var m Memory
+	err = s.inTx(ctx, func(tx *sql.Tx) error {
+		var id int64
+		err := tx.QueryRowContext(ctx, `SELECT id FROM memories WHERE deleted_at IS NULL AND lower(content) = lower(?) LIMIT 1`, content).Scan(&id)
+		switch {
+		case err == nil:
+			return ErrExists
+		case !errors.Is(err, sql.ErrNoRows):
+			return fmt.Errorf("look for a duplicate memory: %w", err)
+		}
+		now := stamp(s.now())
+		res, err := tx.ExecContext(ctx, `INSERT INTO memories (kind, content, importance, follow_up_at, source_turn_id, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`, n.Kind, content, importance, followUp, n.SourceTurn, now, now)
+		if err != nil {
+			return fmt.Errorf("insert memory: %w", err)
+		}
+		if id, err = res.LastInsertId(); err != nil {
+			return fmt.Errorf("insert memory: %w", err)
+		}
+		if m, err = s.get(ctx, tx, id); err != nil {
+			return err
+		}
+		if rec != nil {
+			return rec(ctx, tx, nil, &m)
+		}
+		return nil
+	})
+	if err != nil {
+		return Memory{}, err
+	}
+	s.changed()
+	return m, nil
+}
+
+// Forget deletes a memory for good, including its search index entry and the
+// copies reflection kept of it. A retired memory can be forgotten too.
 func (s *Service) Forget(ctx context.Context, id int64) (Memory, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	m, err := s.Get(ctx, id)
+	m, err := s.scan(s.db.QueryRowContext(ctx, `SELECT `+columns+` FROM memories WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Memory{}, httpx.NotFound("there is no memory with id %d", id)
+	}
 	if err != nil {
-		return Memory{}, err
+		return Memory{}, fmt.Errorf("get memory %d: %w", id, err)
 	}
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM memories WHERE id = ?`, id); err != nil {
 		return Memory{}, fmt.Errorf("forget memory %d: %w", id, err)
@@ -358,12 +466,12 @@ func (s *Service) Retire(ctx context.Context, id int64) (Memory, error) {
 	if err != nil {
 		return Memory{}, err
 	}
-	return s.retire(ctx, id, m)
+	return s.retire(ctx, id, m, nil)
 }
 
 // RetireIfUnchanged retires a memory only if it is still the version seen;
-// otherwise it returns ErrChanged.
-func (s *Service) RetireIfUnchanged(ctx context.Context, id int64, seen Memory) (Memory, error) {
+// otherwise it returns ErrChanged. rec, if set, records it in the same transaction.
+func (s *Service) RetireIfUnchanged(ctx context.Context, id int64, seen Memory, rec Recorder) (Memory, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m, err := s.Get(ctx, id)
@@ -373,30 +481,51 @@ func (s *Service) RetireIfUnchanged(ctx context.Context, id int64, seen Memory) 
 	if !Unchanged(m, seen) {
 		return Memory{}, ErrChanged
 	}
-	return s.retire(ctx, id, m)
+	return s.retire(ctx, id, m, rec)
 }
 
-func (s *Service) retire(ctx context.Context, id int64, m Memory) (Memory, error) {
-	if _, err := s.db.ExecContext(ctx, `UPDATE memories SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL`, stamp(s.now()), id); err != nil {
-		return Memory{}, fmt.Errorf("retire memory %d: %w", id, err)
+func (s *Service) retire(ctx context.Context, id int64, m Memory, rec Recorder) (Memory, error) {
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE memories SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL`, stamp(s.now()), id); err != nil {
+			return fmt.Errorf("retire memory %d: %w", id, err)
+		}
+		if rec != nil {
+			return rec(ctx, tx, &m, nil)
+		}
+		return nil
+	})
+	if err != nil {
+		return Memory{}, err
 	}
 	s.changed()
 	return m, nil
 }
 
 // Restore brings back a retired memory. A memory that was never retired is
-// returned as it is; one that was forgotten is gone.
-func (s *Service) Restore(ctx context.Context, id int64) (Memory, error) {
+// returned as it is; one that was forgotten is gone. rec, if set, runs in the
+// same transaction.
+func (s *Service) Restore(ctx context.Context, id int64, rec Recorder) (Memory, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	res, err := s.db.ExecContext(ctx, `UPDATE memories SET deleted_at = NULL, updated_at = ? WHERE id = ? AND deleted_at IS NOT NULL`, stamp(s.now()), id)
+	var m Memory
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE memories SET deleted_at = NULL, updated_at = ? WHERE id = ? AND deleted_at IS NOT NULL`, stamp(s.now()), id); err != nil {
+			return fmt.Errorf("restore memory %d: %w", id, err)
+		}
+		var err error
+		if m, err = s.get(ctx, tx, id); err != nil {
+			return err
+		}
+		if rec != nil {
+			return rec(ctx, tx, nil, &m)
+		}
+		return nil
+	})
 	if err != nil {
-		return Memory{}, fmt.Errorf("restore memory %d: %w", id, err)
+		return Memory{}, err
 	}
-	if n, _ := res.RowsAffected(); n > 0 {
-		s.changed()
-	}
-	return s.Get(ctx, id)
+	s.changed()
+	return m, nil
 }
 
 // List returns memories, newest first, optionally of one kind.

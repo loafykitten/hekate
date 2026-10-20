@@ -2,6 +2,7 @@ package reflection
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,13 +19,15 @@ const (
 	ActionRetire = "retire"
 )
 
-// apply carries out a plan through the memory service and records each change
-// that took effect, so it can be undone, then writes the diary entry and marks
-// the reflection finished (the next one reads on from where it stopped). Each
-// change applies only to the memory as the model saw it: one the owner edited
-// meanwhile is left alone, as are changes the memory service refuses (an
-// unknown id, a bad kind or date). Once changes start, cancellation waits until
-// they're recorded.
+// apply carries out a plan through the memory service, recording each change
+// in the same transaction so it can be undone, then writes the diary entry and
+// marks the reflection finished (the next one reads on from where it stopped).
+// Each change applies only to the memory as the model saw it: one the owner
+// edited meanwhile is left alone, as are changes the memory service refuses (an
+// unknown id, a bad kind or date). Merges are an update plus retirements, so if
+// an update to a known memory doesn't happen, nothing is retired: the
+// information stays live.
+// Once changes start, cancellation waits until they're done.
 func (s *Service) apply(ctx context.Context, in *input, p plan) (string, error) {
 	ctx = context.WithoutCancel(ctx)
 	res, err := s.db.ExecContext(ctx, `INSERT INTO reflections (day, window_start, window_end, summary, created_at) VALUES (?, ?, ?, ?, ?)`,
@@ -36,23 +39,27 @@ func (s *Service) apply(ctx context.Context, in *input, p plan) (string, error) 
 	if err != nil {
 		return "", fmt.Errorf("record the reflection: %w", err)
 	}
-	var saved, updated, retired, refused, stale int
-	record := func(action string, id int64, before, after *memory.Memory, reason string) error {
-		b, a := "", ""
-		if before != nil {
-			raw, _ := json.Marshal(before)
-			b = string(raw)
+	var saved, updated, retired, refused, stale, held int
+	updateFailed := false // an update to a memory she knows didn't happen
+	recorder := func(action, reason string) memory.Recorder {
+		return func(ctx context.Context, tx *sql.Tx, before, after *memory.Memory) error {
+			id := ""
+			b, a := "", ""
+			if before != nil {
+				raw, _ := json.Marshal(before)
+				b, id = string(raw), before.ID
+			}
+			if after != nil {
+				raw, _ := json.Marshal(after)
+				a, id = string(raw), after.ID
+			}
+			_, err := tx.ExecContext(ctx, `INSERT INTO reflection_changes (reflection_id, action, memory_id, before, after, reason)
+				VALUES (?, ?, ?, ?, ?, ?)`, rid, action, id, b, a, clip(oneLine(reason), maxReason))
+			if err != nil {
+				return fmt.Errorf("record a reflection change: %w", err)
+			}
+			return nil
 		}
-		if after != nil {
-			raw, _ := json.Marshal(after)
-			a = string(raw)
-		}
-		_, err := s.db.ExecContext(ctx, `INSERT INTO reflection_changes (reflection_id, action, memory_id, before, after, reason)
-			VALUES (?, ?, ?, ?, ?, ?)`, rid, action, id, b, a, clip(oneLine(reason), maxReason))
-		if err != nil {
-			return fmt.Errorf("record a reflection change: %w", err)
-		}
-		return nil
 	}
 	// latest is each memory as it stands after this plan's own changes.
 	latest := make(map[int64]memory.Memory, len(in.byID))
@@ -60,26 +67,23 @@ func (s *Service) apply(ctx context.Context, in *input, p plan) (string, error) 
 		latest[id] = m
 	}
 	failed := func(what string, id int64, err error) {
-		if errors.Is(err, memory.ErrChanged) {
+		if errors.Is(err, memory.ErrChanged) || errors.Is(err, memory.ErrExists) {
 			stale++
 			return
 		}
 		s.log.Warn("reflection: a change was refused", "change", what, "memory_id", id, "error", err)
 		refused++
 	}
-	update := func(id int64, patch memory.Patch, reason string) error {
+	update := func(id int64, patch memory.Patch, reason string) {
 		before := latest[id]
-		after, err := s.mem.UpdateIfUnchanged(ctx, id, before, patch)
+		after, err := s.mem.UpdateIfUnchanged(ctx, id, before, patch, recorder(ActionUpdate, reason))
 		if err != nil {
 			failed(ActionUpdate, id, err)
-			return nil
+			updateFailed = true
+			return
 		}
 		latest[id] = after
-		if same(before, after) {
-			return nil
-		}
 		updated++
-		return record(ActionUpdate, id, &before, &after, reason)
 	}
 
 	for _, u := range p.Update {
@@ -89,26 +93,25 @@ func (s *Service) apply(ctx context.Context, in *input, p plan) (string, error) 
 			refused++
 			continue
 		}
-		if err := update(id, patch, u.Reason); err != nil {
-			return "", err
-		}
+		update(id, patch, u.Reason)
 	}
 	for _, r := range p.Retire {
 		id := int64(r.ID)
 		before, ok := latest[id]
-		if !ok {
+		switch {
+		case !ok:
 			refused++
 			continue
+		case updateFailed:
+			held++ // it may be half of a merge whose other half didn't happen
+			continue
 		}
-		if _, err := s.mem.RetireIfUnchanged(ctx, id, before); err != nil {
+		if _, err := s.mem.RetireIfUnchanged(ctx, id, before, recorder(ActionRetire, r.Reason)); err != nil {
 			failed(ActionRetire, id, err)
 			continue
 		}
 		delete(latest, id)
 		retired++
-		if err := record(ActionRetire, id, &before, nil, r.Reason); err != nil {
-			return "", err
-		}
 	}
 	for _, sv := range p.Save {
 		// Saving what she already remembers refreshes that memory: make it an update.
@@ -122,26 +125,19 @@ func (s *Service) apply(ctx context.Context, in *input, p plan) (string, error) 
 				patch.FollowUpAt = &sv.FollowUpAt
 			}
 			if patch != (memory.Patch{}) {
-				if err := update(id, patch, sv.Reason); err != nil {
-					return "", err
-				}
+				update(id, patch, sv.Reason)
 			}
 			continue
 		}
-		m, existed, err := s.mem.Save(ctx, memory.NewMemory{Kind: sv.Kind, Content: sv.Content, Importance: sv.Importance, FollowUpAt: sv.FollowUpAt})
+		m, err := s.mem.Insert(ctx, memory.NewMemory{Kind: sv.Kind, Content: sv.Content, Importance: sv.Importance, FollowUpAt: sv.FollowUpAt},
+			recorder(ActionSave, sv.Reason))
 		if err != nil {
 			failed(ActionSave, 0, err)
 			continue
 		}
-		if existed {
-			continue // saved by someone else while she thought; not hers to record
-		}
 		id, _ := strconv.ParseInt(m.ID, 10, 64)
 		latest[id] = m
 		saved++
-		if err := record(ActionSave, id, nil, &m, sv.Reason); err != nil {
-			return "", err
-		}
 	}
 	if err := s.writeDiary(ctx, in.day, p.Diary); err != nil {
 		return "", err
@@ -152,7 +148,10 @@ func (s *Service) apply(ctx context.Context, in *input, p plan) (string, error) 
 		summary += fmt.Sprintf(" (%d changes refused)", refused)
 	}
 	if stale > 0 {
-		summary += fmt.Sprintf(" (%d left alone: edited meanwhile)", stale)
+		summary += fmt.Sprintf(" (%d left alone: changed meanwhile)", stale)
+	}
+	if held > 0 {
+		summary += fmt.Sprintf(" (%d retirements held back: an update didn't happen)", held)
 	}
 	stored := p.Summary
 	if stored == "" {
@@ -174,18 +173,6 @@ func findContent(mems map[int64]memory.Memory, content string) (int64, bool) {
 		}
 	}
 	return 0, false
-}
-
-// same reports whether two snapshots of a memory hold the same fields.
-func same(a, b memory.Memory) bool {
-	fa, fb := "", ""
-	if a.FollowUpAt != nil {
-		fa = *a.FollowUpAt
-	}
-	if b.FollowUpAt != nil {
-		fb = *b.FollowUpAt
-	}
-	return a.Kind == b.Kind && strings.TrimSpace(a.Content) == strings.TrimSpace(b.Content) && a.Importance == b.Importance && fa == fb
 }
 
 // writeDiary stores the day's entry, replacing one written earlier that day.

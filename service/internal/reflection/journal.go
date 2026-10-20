@@ -208,19 +208,34 @@ func (s *Service) Undo(ctx context.Context, changeID int64) (Change, error) {
 	}
 	var mid int64
 	_, _ = fmt.Sscan(c.MemoryID, &mid)
+	now := stamp(s.now())
+	// Marking it undone happens in the memory change's own transaction.
+	mark := func(ctx context.Context, tx *sql.Tx, _, _ *memory.Memory) error {
+		res, err := tx.ExecContext(ctx, `UPDATE reflection_changes SET undone_at = ? WHERE id = ? AND undone_at IS NULL`, now, changeID)
+		if err != nil {
+			return fmt.Errorf("record the undo: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return httpx.Conflict("that change was already undone")
+		}
+		return nil
+	}
 	edited := httpx.Conflict("that memory was edited since; change it in Memories instead, so the newer edit isn't lost")
 	switch c.Action {
 	case ActionSave:
 		if c.After == nil {
 			return Change{}, httpx.Conflict("there's nothing recorded to undo")
 		}
-		if _, err := s.mem.RetireIfUnchanged(ctx, mid, *c.After); err != nil {
-			switch {
-			case errors.Is(err, memory.ErrChanged):
-				return Change{}, edited
-			case !isNotFound(err): // already gone: nothing left to undo
-				return Change{}, err
+		_, err := s.mem.RetireIfUnchanged(ctx, mid, *c.After, mark)
+		switch {
+		case errors.Is(err, memory.ErrChanged):
+			return Change{}, edited
+		case isNotFound(err): // already gone: nothing left to undo but the record
+			if _, err := s.db.ExecContext(ctx, `UPDATE reflection_changes SET undone_at = ? WHERE id = ? AND undone_at IS NULL`, now, changeID); err != nil {
+				return Change{}, fmt.Errorf("record the undo: %w", err)
 			}
+		case err != nil:
+			return Change{}, err
 		}
 	case ActionUpdate:
 		if c.Before == nil || c.After == nil {
@@ -231,7 +246,7 @@ func (s *Service) Undo(ctx context.Context, changeID int64) (Change, error) {
 		if b.FollowUpAt != nil {
 			follow = *b.FollowUpAt
 		}
-		if _, err := s.mem.UpdateIfUnchanged(ctx, mid, *c.After, memory.Patch{Content: &b.Content, Kind: &b.Kind, Importance: &b.Importance, FollowUpAt: &follow}); err != nil {
+		if _, err := s.mem.UpdateIfUnchanged(ctx, mid, *c.After, memory.Patch{Content: &b.Content, Kind: &b.Kind, Importance: &b.Importance, FollowUpAt: &follow}, mark); err != nil {
 			switch {
 			case errors.Is(err, memory.ErrChanged):
 				return Change{}, edited
@@ -241,7 +256,7 @@ func (s *Service) Undo(ctx context.Context, changeID int64) (Change, error) {
 			return Change{}, err
 		}
 	case ActionRetire:
-		if _, err := s.mem.Restore(ctx, mid); err != nil {
+		if _, err := s.mem.Restore(ctx, mid, mark); err != nil {
 			if isNotFound(err) {
 				return Change{}, httpx.Conflict("that memory was forgotten since, so it can't come back")
 			}
@@ -249,10 +264,6 @@ func (s *Service) Undo(ctx context.Context, changeID int64) (Change, error) {
 		}
 	default:
 		return Change{}, fmt.Errorf("unknown reflection change %q", c.Action)
-	}
-	now := stamp(s.now())
-	if _, err := s.db.ExecContext(ctx, `UPDATE reflection_changes SET undone_at = ? WHERE id = ?`, now, changeID); err != nil {
-		return Change{}, fmt.Errorf("record the undo: %w", err)
 	}
 	c.UndoneAt = &now
 	s.events.Invalidate(DomainJournal)

@@ -256,6 +256,18 @@ echo "HEKATE_URL=http://127.0.0.1:$port" >"$tmp/config/hekate/change-worker.env"
 tick; expect "$id" rejected CLOSED
 [[ "$(field "$id" result)" == "Out of scope." ]] || fail "result $(field "$id" result)"
 
+scenario="a run left a broken saved outcome: ignored, and the queue carries on"
+id="$(queue)"
+api POST "/api/changes/$id/claim" >/dev/null # claimed, then the machine died mid-write
+mkdir -p "$tmp/state/hekate-change-worker/runs/$id" && printf '{"outcome":"rej' >"$tmp/state/hekate-change-worker/runs/$id/outcome.json"
+next="$(queue)"; build_opens "$next"
+tick
+if [[ "$(field "$id" status)" == failed && "$(field "$next" status)" == merged ]]; then
+  echo "ok: $scenario"
+else
+  fail "statuses: $(field "$id" status) and $(field "$next" status)"
+fi
+
 scenario="build crashes with GitHub down: stays working"
 id="$(queue)"; touch "$fake/build.fail" "$fake/gh-down"
 tick; expect "$id" working

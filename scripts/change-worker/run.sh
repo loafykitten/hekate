@@ -40,7 +40,8 @@ finish() {
   # Kept until it's reported, so watch.sh can report it if this run can't (see settle there).
   # (Links go in one per line: jq would read "--issue" given as an argument as its own option.)
   jq -n --arg outcome "$outcome" --arg result "$result" --argjson links "$(if [[ $# -gt 0 ]]; then printf '%s\n' "$@" | jq -R . | jq -s .; else echo '[]'; fi)" \
-    '{outcome: $outcome, result: $result, links: $links}' >"$run/outcome.json"
+    '{outcome: $outcome, result: $result, links: $links}' >"$run/outcome.json.tmp"
+  mv "$run/outcome.json.tmp" "$run/outcome.json" # whole or not at all, even if the run dies here
   if [[ "$outcome" != merged ]]; then
     if ! merged="$(settle_prs "$branch")"; then
       log "change $id: cannot confirm its PR is closed; leaving it for watch.sh"

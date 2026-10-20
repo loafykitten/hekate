@@ -43,8 +43,12 @@ settle_prs() {
   # gh deletes the local branch before the remote one, so a failure there leaves the remote
   # branch behind, and a retry would rebuild it from main and fail to push. Its commits stay
   # reachable through the closed PR (refs/pull/N/head).
-  if git -C "$repo" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
-    git -C "$repo" push --quiet origin --delete "$branch" >&2 || return 1
-  fi
+  local found=0
+  git -C "$repo" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1 || found=$?
+  case "$found" in
+    0) git -C "$repo" push --quiet origin --delete "$branch" >&2 || return 1 ;;
+    2) ;; # no such branch
+    *) return 1 ;; # couldn't ask: try again later
+  esac
   jq -r '[.[] | select(.state == "MERGED")][0].url // empty' <<<"$prs"
 }

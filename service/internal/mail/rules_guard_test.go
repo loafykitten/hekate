@@ -66,3 +66,44 @@ func TestDeletedRuleDoesNotRunWhileQueued(t *testing.T) {
 		t.Errorf("message = %+v, want it left in the inbox", m)
 	}
 }
+
+// An exception added while a rule's action waits for the account protects the
+// mail it covers, and leaves that mail for the other rules.
+func TestExceptionAddedWhileQueuedProtectsMail(t *testing.T) {
+	f := newFixture(t, func(o *fixtureOpts) { o.noModel = true })
+	ctx := t.Context()
+	if _, err := f.svc.CreateRule(ctx, RuleSpec{From: "@shop.example.net", Action: "trash"}); err != nil {
+		t.Fatal(err)
+	}
+	f.deliver("INBOX", mailSpec{subject: "Your transaction", from: "Shop <deals@shop.example.net>"})
+	f.deliver("INBOX", mailSpec{subject: "Sale", from: "Shop <deals@shop.example.net>"})
+	a := f.svc.byName["personal"]
+	if _, err := f.svc.syncInbox(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+
+	a.mu.Lock()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if _, err := f.svc.applyRules(ctx, a); err != nil {
+			t.Error(err)
+		}
+	}()
+	time.Sleep(200 * time.Millisecond) // the rule has picked its mail and waits for the lock
+	if _, err := f.svc.CreateRule(ctx, RuleSpec{From: "@shop.example.net", Action: "trash", Except: []ExceptSpec{{Subject: "transaction"}}}); err != nil {
+		t.Fatal(err)
+	}
+	a.mu.Unlock()
+	<-done
+
+	if m := f.bySubject("Your transaction"); m.Folder != "INBOX" {
+		t.Errorf("message = %+v, want it left in the inbox", m)
+	}
+	if m := f.bySubject("Sale"); m.Folder != "Trash" {
+		t.Errorf("message = %+v, want it trashed", m)
+	}
+	if r, _ := f.svc.rowByID(ctx, f.id("Your transaction")); r.RulesApplied {
+		t.Error("spared mail was settled before the other rules saw it")
+	}
+}

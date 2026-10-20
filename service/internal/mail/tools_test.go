@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -54,6 +55,7 @@ func TestToolsAreWellFormed(t *testing.T) {
 		"mail_summary": agent.EffectRead, "mail_search": agent.EffectRead, "mail_read": agent.EffectRead,
 		"mail_archive": agent.EffectExternal, "mail_move": agent.EffectExternal, "mail_mark": agent.EffectExternal,
 		"mail_trash": agent.EffectExternal, "mail_unsubscribe": agent.EffectExternal, "mail_rule_propose": agent.EffectExternal,
+		"mail_rules": agent.EffectRead,
 	}
 	for name, eff := range effects {
 		tl, ok := reg.Get(name)
@@ -351,7 +353,7 @@ func TestRuleProposeTool(t *testing.T) {
 		t.Error("a proposal made in conversation must not also notify")
 	}
 	if r.Kind != "mail_rule_create" || r.Title != "Archive mail from shop.example.net?" || r.Detail != "You never open these." || r.Scope != "" ||
-		spec != (RuleSpec{From: "@shop.example.net", Action: "archive"}) {
+		!reflect.DeepEqual(spec, RuleSpec{From: "@shop.example.net", Action: "archive"}) {
 		t.Errorf("request %+v spec %+v", r, spec)
 	}
 	if !strings.Contains(res.Content, "Asked Rika") || res.Card.Kind != "approval" {
@@ -367,6 +369,8 @@ func TestRuleProposeTool(t *testing.T) {
 		t.Error("approval did not create the rule")
 	}
 	for _, bad := range []string{
+		`{"from":"@shop.example.net","action":"archive","except":[{}],"reason":"x"}`,
+		`{"from":"@shop.example.net","action":"archive","except":[{"category":"spam"}],"reason":"x"}`,
 		`{"action":"archive","reason":"x"}`,
 		`{"from":"@shop.example.net","action":"nuke","reason":"x"}`,
 		`{"from":"@shop.example.net","action":"move","reason":"x"}`,
@@ -378,6 +382,48 @@ func TestRuleProposeTool(t *testing.T) {
 	}
 }
 
+func TestRuleProposeWithExceptions(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	if res := f.mustCall("mail_rules", `{}`); res.Content != "There are no mail rules yet." {
+		t.Errorf("no rules: %q", res.Content)
+	}
+	f.mustCall("mail_rule_propose", `{"category":"promo","action":"trash","reason":"Promos pile up."}`)
+	if _, err := f.appr.run(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	// She sees the rule and its spec, ready to propose again with exceptions.
+	res := f.mustCall("mail_rules", `{}`)
+	if !strings.Contains(res.Content, `Trash promo mail | spec {"category":"promo","action":"trash"} | 0 hits`) {
+		t.Errorf("mail_rules = %q", res.Content)
+	}
+	f.mustCall("mail_rule_propose", `{"category":"promo","action":"trash","except":[{"subject":" Transaction "}],"reason":"Keep payment notices."}`)
+	r := f.appr.requests()[1]
+	if r.Title != "Trash promo mail, unless the subject contains “transaction”?" ||
+		r.Detail != `Replaces the rule "Trash promo mail". Keep payment notices.` {
+		t.Errorf("request %+v", r)
+	}
+	out, err := f.appr.run(ctx, 1)
+	if err != nil || out != "Updated the rule: Trash promo mail, unless the subject contains “transaction”" {
+		t.Errorf("run = %q, %v", out, err)
+	}
+	rules, _ := f.svc.Rules(ctx)
+	if len(rules) != 1 || len(rules[0].Except) != 1 || *rules[0].Except[0].Subject != "transaction" {
+		t.Errorf("rules = %+v", rules)
+	}
+
+	// Proposing what already exists asks nothing.
+	res = f.mustCall("mail_rule_propose", `{"category":"promo","action":"trash","except":[{"subject":"TRANSACTION"}],"reason":"x"}`)
+	if len(f.appr.requests()) != 2 || !strings.HasPrefix(res.Content, "That rule already exists") {
+		t.Errorf("duplicate proposal: %q", res.Content)
+	}
+	res = f.mustCall("mail_rules", `{}`)
+	if !strings.Contains(res.Content, `spec {"category":"promo","action":"trash","except":[{"subject":"transaction"}]}`) {
+		t.Errorf("mail_rules = %q", res.Content)
+	}
+}
+
 func TestExecutorsRejectBadPayloads(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
@@ -385,7 +431,7 @@ func TestExecutorsRejectBadPayloads(t *testing.T) {
 		KindTrash:       {`{}`, `{"ids":[]}`, `{"ids":[1],"extra":true}`, `null`, `"text"`},
 		KindBulk:        {`{"action":"explode","ids":[1]}`, `{"action":"archive","ids":[]}`},
 		KindUnsubscribe: {`{"id":424242}`, `{"url":"https://example.org"}`},
-		KindRuleCreate:  {`{"action":"archive"}`, `{"from":"x","action":"archive"}`},
+		KindRuleCreate:  {`{"action":"archive"}`, `{"from":"x","action":"archive"}`, `{"from":"@example.org","action":"archive","except":[{"subject":"\n"}]}`},
 	} {
 		for _, p := range payloads {
 			exec := f.appr.execs[kind]

@@ -159,3 +159,148 @@ func TestSenderMatches(t *testing.T) {
 		t.Error("label verb")
 	}
 }
+
+func TestRuleExceptionValidationAndLabels(t *testing.T) {
+	f := newFixture(t)
+	long := strings.Repeat("x", maxSubject+1)
+	bad := [][]ExceptSpec{
+		{{}},                    // nothing to match
+		{{Subject: "   "}},      // blank words
+		{{From: "example.com"}}, // not an address
+		{{Category: "spam"}},    // unknown category
+		{{Subject: long}},       // too long
+		{{Subject: "a\x00b"}},   // control character
+		make([]ExceptSpec, maxExceptions+1),
+	}
+	for i := range bad[len(bad)-1] {
+		bad[len(bad)-1][i] = ExceptSpec{Subject: strings.Repeat("w", i+1)}
+	}
+	for _, ex := range bad {
+		if _, err := f.svc.CreateRule(t.Context(), RuleSpec{Category: "promo", Action: "trash", Except: ex}); err == nil {
+			t.Errorf("accepted exceptions %+v", ex)
+		}
+	}
+	r, err := f.svc.CreateRule(t.Context(), RuleSpec{Category: "promo", Action: "trash", Except: []ExceptSpec{
+		{Subject: "  Your   TRANSACTION "},
+		{From: "Billing@Example.org", Category: "Receipt"},
+		{Subject: "your transaction"}, // the same as the first, once folded
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Trash promo mail, unless the subject contains “your transaction” or it's receipt mail from billing@example.org"
+	if r.Label != want {
+		t.Errorf("label = %q\nwant    %q", r.Label, want)
+	}
+	if len(r.Except) != 2 || *r.Except[0].Subject != "your transaction" || r.Except[0].From != nil ||
+		*r.Except[1].From != "billing@example.org" || *r.Except[1].Category != "receipt" || r.Except[1].Subject != nil {
+		t.Errorf("except = %+v", r.Except)
+	}
+	both := RuleSpec{From: "@example.org", Action: "archive", Except: []ExceptSpec{{Category: "important", Subject: "invoice"}}}
+	if got := both.label(); got != "Archive mail from example.org, unless it's important mail and the subject contains “invoice”" {
+		t.Errorf("label = %q", got)
+	}
+}
+
+func TestRuleExceptionsProtectMail(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	if _, err := f.svc.CreateRule(ctx, RuleSpec{Category: "promo", Action: "trash", Except: []ExceptSpec{
+		{Subject: "transaction"},
+		{From: "@bank.example.com"},
+		{From: "@shop.example.net", Subject: "order"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	// A later rule still sees mail the first one spared.
+	if _, err := f.svc.CreateRule(ctx, RuleSpec{Category: "promo", Action: "mark_read"}); err != nil {
+		t.Fatal(err)
+	}
+	f.deliver("INBOX", mailSpec{subject: "Big sale", from: "Shop <deals@shop.example.net>"})
+	f.deliver("INBOX", mailSpec{subject: "Sale fees on your TRANSACTION", from: "Shop <deals@shop.example.net>"})
+	f.deliver("INBOX", mailSpec{subject: "Card sale", from: "Bank <offers@mail.bank.example.com>"})
+	f.deliver("INBOX", mailSpec{subject: "Sale: your order shipped", from: "Shop <deals@shop.example.net>"})
+	f.deliver("INBOX", mailSpec{subject: "Sale: your order shipped too", from: "Other <deals@other.example.net>"})
+	f.sweep()
+
+	if m := f.bySubject("Big sale"); m.Folder != "Trash" {
+		t.Errorf("unexcepted promo: %+v", m)
+	}
+	for _, sub := range []string{"Sale fees on your TRANSACTION", "Card sale", "Sale: your order shipped"} {
+		if m := f.bySubject(sub); m.Folder != "INBOX" || m.Unread {
+			t.Errorf("%q should be spared by the trash rule and marked read by the next: %+v", sub, m)
+		}
+	}
+	if m := f.bySubject("Sale: your order shipped too"); m.Folder != "Trash" {
+		t.Errorf("an exception needing sender and subject matched on one: %+v", m)
+	}
+	rules, _ := f.svc.Rules(ctx)
+	if rules[0].Hits != 2 || rules[1].Hits != 3 {
+		t.Errorf("hits = %d, %d", rules[0].Hits, rules[1].Hits)
+	}
+}
+
+// Changing a rule's exceptions keeps it (and its hits) and changes what it does
+// to new mail.
+func TestRuleExceptionsReplaceOnTheSameRule(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	first, err := f.svc.CreateRule(ctx, RuleSpec{From: "@example.org", Action: "archive"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.deliver("INBOX", mailSpec{subject: "Weekly digest"})
+	f.sweep()
+	updated, err := f.svc.CreateRule(ctx, RuleSpec{From: "@example.org", Action: "archive", Except: []ExceptSpec{{Subject: "urgent"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.ID != first.ID || updated.Hits != 1 || updated.Label != "Archive mail from example.org, unless the subject contains “urgent”" {
+		t.Errorf("updated = %+v", updated)
+	}
+	if again, _ := f.svc.CreateRule(ctx, RuleSpec{From: "@example.org", Action: "archive", Except: []ExceptSpec{{Subject: "Urgent"}}}); again.ID != first.ID {
+		t.Error("an identical rule was created twice")
+	}
+	f.deliver("INBOX", mailSpec{subject: "Urgent: call back"})
+	f.deliver("INBOX", mailSpec{subject: "Another digest"})
+	f.sweep()
+	if m := f.bySubject("Urgent: call back"); m.Folder != "INBOX" {
+		t.Errorf("excepted mail moved: %+v", m)
+	}
+	if m := f.bySubject("Another digest"); m.Folder != "Archive" {
+		t.Errorf("rule stopped working: %+v", m)
+	}
+	// Proposing it without exceptions takes them away again.
+	cleared, err := f.svc.CreateRule(ctx, RuleSpec{From: "@example.org", Action: "archive"})
+	if err != nil || cleared.ID != first.ID || len(cleared.Except) != 0 || cleared.Label != "Archive mail from example.org" {
+		t.Errorf("cleared = %+v, %v", cleared, err)
+	}
+	if rules, _ := f.svc.Rules(ctx); len(rules) != 1 {
+		t.Errorf("rules = %+v", rules)
+	}
+}
+
+// Without a category, a category exception holds the rule back rather than
+// letting it guess.
+func TestCategoryExceptionHoldsUnclassifiedMail(t *testing.T) {
+	f := newFixture(t, func(o *fixtureOpts) { o.noModel = true })
+	if _, err := f.svc.CreateRule(t.Context(), RuleSpec{From: "@example.org", Action: "archive", Except: []ExceptSpec{{Category: "important"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.CreateRule(t.Context(), RuleSpec{From: "@example.net", Action: "archive", Except: []ExceptSpec{{Subject: "keep"}}}); err != nil {
+		t.Fatal(err)
+	}
+	f.deliver("INBOX", mailSpec{subject: "Could be anything"})
+	f.deliver("INBOX", mailSpec{subject: "Archive me", from: "N <n@example.net>"})
+	f.deliver("INBOX", mailSpec{subject: "Please keep", from: "N <n@example.net>"})
+	f.sweep()
+	if m := f.bySubject("Could be anything"); m.Folder != "INBOX" {
+		t.Errorf("unclassified mail went past a category exception: %+v", m)
+	}
+	if m := f.bySubject("Archive me"); m.Folder != "Archive" {
+		t.Errorf("subject exceptions need no model: %+v", m)
+	}
+	if m := f.bySubject("Please keep"); m.Folder != "INBOX" {
+		t.Errorf("subject exception without a model: %+v", m)
+	}
+}

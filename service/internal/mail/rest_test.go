@@ -192,6 +192,9 @@ func TestRESTRules(t *testing.T) {
 	}
 	got := rules[0].(map[string]any)
 	match := got["match"].(map[string]any)
+	if ex, ok := got["except"].([]any); !ok || len(ex) != 0 {
+		t.Errorf("except = %v, want []", got["except"])
+	}
 	if got["id"] != rule.ID || match["from"] != "@example.org" || match["category"] != nil || got["action"] != "archive" ||
 		got["folder"] != nil || got["label"] != "Archive mail from example.org" || got["hits"] != float64(0) || got["last_hit_at"] != nil || got["created_at"] == nil {
 		t.Errorf("rule JSON = %v", got)

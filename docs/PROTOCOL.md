@@ -217,9 +217,12 @@ never stored.
 {
   "id": "4",
   "match": { "from": "@example.com", "category": null },  // from: an address or "@domain"; every set field must match
+  "except": [                        // checked first: mail matching any exception is left alone by this rule (later rules still see it)
+    { "from": null, "category": null, "subject": "transaction" }  // every set field must match; subject: words it contains, case-insensitive;
+  ],                                 // a category exception also holds back mail that has no category
   "action": "archive",               // archive | trash | mark_read | move
   "folder": null,                    // for move
-  "label": "Archive mail from example.com",
+  "label": "Archive mail from example.com, unless the subject contains “transaction”",
   "hits": 12, "last_hit_at": "…", "created_at": "…"
 }
 ```

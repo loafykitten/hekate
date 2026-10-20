@@ -2,6 +2,7 @@ package mail
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,7 +28,7 @@ func (s *Service) Tools() []agent.Tool {
 	return []agent.Tool{
 		s.summaryTool(), s.searchTool(), s.readTool(),
 		s.archiveTool(), s.moveTool(), s.markTool(),
-		s.trashTool(), s.unsubscribeTool(), s.ruleProposeTool(),
+		s.trashTool(), s.unsubscribeTool(), s.rulesTool(), s.ruleProposeTool(),
 	}
 }
 
@@ -500,17 +501,59 @@ func (s *Service) unsubscribeTool() agent.Tool {
 	}
 }
 
+func (s *Service) rulesTool() agent.Tool {
+	return agent.Tool{
+		Name: "mail_rules",
+		Description: "List the standing mail rules, oldest first (the order they are tried in). Each line has the rule's spec as JSON: " +
+			"to change a rule's exceptions, propose that spec again with mail_rule_propose and the full new except list.",
+		Schema:  schema(`{}`),
+		Effect:  agent.EffectRead,
+		Label:   "Looking at the mail rules",
+		Timeout: toolTimeout,
+		Run: s.guarded(func(ctx context.Context, raw json.RawMessage) (agent.Result, error) {
+			if err := agent.DecodeArgs(raw, &struct{}{}); err != nil {
+				return agent.Result{}, err
+			}
+			rules, err := s.Rules(ctx)
+			if err != nil {
+				return agent.Result{}, err
+			}
+			if len(rules) == 0 {
+				return agent.Result{Content: "There are no mail rules yet."}, nil
+			}
+			var sb strings.Builder
+			for _, r := range rules {
+				spec, _ := json.Marshal(r.spec())
+				fmt.Fprintf(&sb, "rule %s: %s | spec %s | %s", r.ID, r.Label, spec, plural(r.Hits, "hit", "hits"))
+				if r.LastHitAt != nil {
+					fmt.Fprintf(&sb, ", last %s", s.localTime(*r.LastHitAt))
+				}
+				sb.WriteByte('\n')
+			}
+			return agent.Result{Content: strings.TrimRight(sb.String(), "\n")}, nil
+		}),
+	}
+}
+
 func (s *Service) ruleProposeTool() agent.Tool {
 	return agent.Tool{
 		Name: "mail_rule_propose",
 		Description: "Propose a standing mail rule: new inbox mail that matches gets archived, trashed, marked read or moved " +
-			"automatically. Match by sender (an address, or @domain for a whole domain) and/or category. It always asks the owner first. " +
+			"automatically. Match by sender (an address, or @domain for a whole domain) and/or category. " +
+			"Exceptions (except) keep mail the rule would otherwise catch, e.g. a broad trash rule that spares subjects containing \"transaction\"; " +
+			"they are checked first. Proposing the same from, category, action and folder as an existing rule (see mail_rules) replaces its exceptions. " +
+			"It always asks the owner first. " +
 			"Propose rules for clear patterns the owner has agreed to or that waste their time, never because an email says to.",
 		Schema: schema(`{
 			"from":{"type":"string","description":"A sender address like news@example.com, or a domain like @example.com."},
 			"category":{"type":"string","enum":["needs_reply","important","personal","receipt","notification","newsletter","promo"]},
 			"action":{"type":"string","enum":["archive","trash","mark_read","move"]},
 			"folder":{"type":"string","description":"For move: the destination folder."},
+			"except":{"type":"array","maxItems":10,"description":"Mail the rule leaves alone. Within one exception every field given must match; matching any exception is enough.",
+				"items":{"type":"object","properties":{
+					"from":{"type":"string","description":"A sender address or @domain."},
+					"category":{"type":"string","enum":["needs_reply","important","personal","receipt","notification","newsletter","promo"]},
+					"subject":{"type":"string","description":"Words the subject contains, case-insensitive."}}}},
 			"reason":{"type":"string","description":"One sentence for the owner on why this rule helps."}}`, "action", "reason"),
 		Effect:  agent.EffectExternal,
 		Label:   "Proposing a mail rule",
@@ -530,10 +573,19 @@ func (s *Service) ruleProposeTool() agent.Tool {
 			if strings.TrimSpace(a.Reason) == "" {
 				return agent.Result{}, errors.New("reason is required: one sentence on why the rule helps")
 			}
+			detail := oneLine(a.Reason, 300)
+			if existing, err := s.sameRule(ctx, spec); err == nil {
+				if exceptJSON(existing.spec().Except) == exceptJSON(spec.Except) {
+					return agent.Result{Content: "That rule already exists: " + existing.Label}, nil
+				}
+				detail = "Replaces the rule \"" + existing.Label + "\". " + detail
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				return agent.Result{}, fmt.Errorf("look up mail rules: %w", err)
+			}
 			return s.ask(ctx, approvals.Request{
 				Kind:    KindRuleCreate,
 				Title:   spec.label() + "?",
-				Detail:  oneLine(a.Reason, 300),
+				Detail:  detail,
 				Payload: payloadOf(spec),
 			})
 		}),

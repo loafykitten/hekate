@@ -122,7 +122,7 @@ what was already said in history.
 | Tasks & lists | `task_list`, `task_create`, `task_update`, `task_complete` (one-off and RRULE repeating; named lists like groceries) | local |
 | Reminders | `reminder_list`, `reminder_create`, `reminder_update`, `reminder_cancel` (one-off and repeating; delivered by push and in app) | local |
 | Calendar | `calendar_events`, `event_create`, `event_update`, `event_delete` | CalDAV; deleting events she didn't create asks first |
-| Mail | `mail_search`, `mail_read`, `mail_summary`, `mail_move`, `mail_archive`, `mail_mark`, `mail_trash`, `mail_unsubscribe`, `mail_rule_propose` | IMAP; trash, unsubscribe and bulk actions ask first |
+| Mail | `mail_search`, `mail_read`, `mail_summary`, `mail_move`, `mail_archive`, `mail_mark`, `mail_trash`, `mail_unsubscribe`, `mail_rules`, `mail_rule_propose` | IMAP; trash, unsubscribe, bulk actions and rules ask first |
 | Web | `web_search` (Brave), `web_read` (fetch + readability) | read |
 | World | `weather` (Open-Meteo), `time_in` | read |
 | Self | `self_status`, `self_logs`, `self_usage`, `self_activity`, `idea_log` | read / local |
@@ -165,7 +165,8 @@ reviewed and revoked in the menu.
   a threshold and never repeats a nudge.
 - **Mail sweep** (every 10 min): classifies new mail (needs reply / important / personal /
   receipt / notification / newsletter / promo), applies the owner's standing rules, and keeps
-  noise stats. A weekly **noise report** proposes new rules ("You never open these 3 senders.
+  noise stats. A rule can carry exceptions ("unless the subject contains …"), checked first, so
+  a broad cleanup rule never sweeps up mail the owner wants kept. A weekly **noise report** proposes new rules ("You never open these 3 senders.
   Archive them automatically?").
 - **Evening check-in** (optional): a light "how did today go?" that feeds the diary.
 

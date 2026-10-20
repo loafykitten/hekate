@@ -30,6 +30,7 @@ import (
 	"github.com/loafykitten/hekate/service/internal/push"
 	"github.com/loafykitten/hekate/service/internal/reflection"
 	"github.com/loafykitten/hekate/service/internal/reminders"
+	"github.com/loafykitten/hekate/service/internal/routines"
 	"github.com/loafykitten/hekate/service/internal/server"
 	"github.com/loafykitten/hekate/service/internal/store"
 	"github.com/loafykitten/hekate/service/internal/tasks"
@@ -211,6 +212,17 @@ func run() error {
 	toolList = slices.Concat(toolList, reflectSvc.Tools())
 	sources = append(sources, agent.Source{Name: "Your diary", Source: reflectSvc})
 	api = append(api, reflectSvc.Routes)
+	// Proactive routines: the heartbeat nudges during waking hours.
+	routineSvc, err := routines.New(routines.Options{
+		Store: db, Jobs: runner, Tasks: taskSvc, Calendar: calSvc, Mail: mailSvc, FollowUps: memSvc,
+		Location: cfg.Location, Events: hub, Push: notifier, Logger: logger.Logger,
+	})
+	if err != nil {
+		return fmt.Errorf("build routines: %w", err)
+	}
+	runner.Add(routineSvc.HeartbeatJobDef())
+	toolList = slices.Concat(toolList, routineSvc.Tools())
+	api = append(api, routineSvc.Routes)
 
 	tools, err := agent.NewRegistry(toolList...)
 	if err != nil {

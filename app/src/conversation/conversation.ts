@@ -33,7 +33,9 @@ export interface Notice {
 }
 
 function noticeSection(kind: string): Notice["section"] {
-  return kind === "reminder" ? "reminders" : kind === "approval" ? "today" : kind === "change" ? "changes" : undefined;
+  if (kind === "reminder") return "reminders";
+  if (kind === "approval" || kind === "nudge") return "today";
+  return kind === "change" ? "changes" : undefined;
 }
 
 export const NOTICE_MS = 12_000;
@@ -440,7 +442,7 @@ export class Conversation {
     this.live = [];
     this.historyEpoch++;
     this.emit();
-    this.emitInvalidate(["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes", "ideas", "journal"]);
+    this.emitInvalidate(["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes", "ideas", "journal", "routines"]);
   }
 
   private onTranscript(id: string, text: string, superseded = false) {

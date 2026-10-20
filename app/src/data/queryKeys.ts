@@ -22,9 +22,10 @@ export const keys = {
   changes: ["changes", "list"] as const,
   ideas: ["ideas", "list"] as const,
   journal: ["journal", "list"] as const,
+  routines: ["routines"] as const,
 };
 
-export const DOMAINS = ["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes", "ideas", "journal"] as const;
+export const DOMAINS = ["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes", "ideas", "journal", "routines"] as const;
 export type Domain = (typeof DOMAINS)[number];
 
 // The query keys an `invalidate` event refreshes. Unknown domains are ignored (a newer service

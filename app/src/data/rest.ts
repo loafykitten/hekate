@@ -5,6 +5,7 @@ import {
   asIdea,
   asJournalDay,
   asReflectionChange,
+  asRoutineSettings,
   asCoreEntry,
   asEvent,
   asMailBody,
@@ -25,6 +26,7 @@ import {
   type Idea,
   type IdeaStatus,
   type JournalDay,
+  type RoutineSettings,
   type CalendarEvent,
   type CoreEntry,
   type MailBody,
@@ -208,6 +210,13 @@ export const memoryApi = {
 export const journalApi = {
   list: async (signal?: AbortSignal): Promise<JournalDay[]> => many(await request("GET", "/journal", { signal }), "days", asJournalDay),
   undo: async (changeId: string) => one(await request("POST", `/reflections/changes/${encodeURIComponent(changeId)}/undo`), asReflectionChange),
+};
+
+// --- routines ------------------------------------------------------------------------------
+
+export const routinesApi = {
+  get: async (signal?: AbortSignal): Promise<RoutineSettings> => one(await request("GET", "/routines", { signal }), asRoutineSettings),
+  patch: async (fields: Partial<RoutineSettings>) => one(await request("PATCH", "/routines", { body: fields }), asRoutineSettings),
 };
 
 // --- ideas ---------------------------------------------------------------------------------

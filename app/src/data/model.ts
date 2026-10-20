@@ -121,7 +121,7 @@ export interface Message {
 
 export interface MailRule {
   id: string;
-  match: { from: string | null; category: string | null };
+  match: { from: string | null; category: string | null; subject: string | null; body: string | null };
   action: string; // archive | trash | mark_read | move
   folder: string | null;
   label: string;
@@ -351,7 +351,7 @@ export function asMailRule(v: unknown): MailRule | undefined {
   const match = isRec(v.match) ? v.match : {};
   return {
     id,
-    match: { from: strOrNull(match.from), category: strOrNull(match.category) },
+    match: { from: strOrNull(match.from), category: strOrNull(match.category), subject: strOrNull(match.subject), body: strOrNull(match.body) },
     action: strOr(v.action),
     folder: strOrNull(v.folder),
     label: v.label,

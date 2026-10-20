@@ -216,10 +216,15 @@ never stored.
 // MailRule: applied by the sweep to new inbox mail
 {
   "id": "4",
-  "match": { "from": "@example.com", "category": null },  // from: an address or "@domain"; every set field must match
-  "action": "archive",               // archive | trash | mark_read | move
+  "match": {                         // every set field must match
+    "from": "@example.com",          // an address or "@domain" (covers subdomains)
+    "category": null,
+    "subject": "upgrade",            // a phrase the subject must contain, any case; null for none
+    "body": null                     // a phrase the body must contain, any case; null for none
+  },                                 // a rule always has from or category; subject and body only narrow it
+  "action": "trash",                 // archive | trash | mark_read | move
   "folder": null,                    // for move
-  "label": "Archive mail from example.com",
+  "label": "Trash mail from example.com with \"upgrade\" in the subject",
   "hits": 12, "last_hit_at": "…", "created_at": "…"
 }
 ```
@@ -235,6 +240,11 @@ never stored.
 | `POST /api/mail/messages/{id}/read` | `{ unread: false \| true }` (required) | `Message`; 404 when it's gone from the server |
 | `GET /api/mail/rules` | | `{ rules: [MailRule] }` |
 | `DELETE /api/mail/rules/{id}` | | 204 |
+
+Rules look at each new inbox message once, after it's classified (without waiting when there's
+no model or classification gave up). The oldest rule that matches acts. For a rule with body words the sweep reads the first 64 KB of
+the message from IMAP, only when everything else in the rule already matches, and keeps the text
+in memory for that check alone; mail it can't read right then waits for the next sweep.
 
 A message keeps its `id` when it moves between folders. Mail that someone else moved or deleted
 is marked as having left the inbox (`folder: "other"`) and answers 404 to reads and actions; such

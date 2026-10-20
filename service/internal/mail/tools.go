@@ -504,11 +504,15 @@ func (s *Service) ruleProposeTool() agent.Tool {
 	return agent.Tool{
 		Name: "mail_rule_propose",
 		Description: "Propose a standing mail rule: new inbox mail that matches gets archived, trashed, marked read or moved " +
-			"automatically. Match by sender (an address, or @domain for a whole domain) and/or category. It always asks the owner first. " +
+			"automatically. Match by sender (an address, or @domain for a whole domain) and/or category. To keep a sender's useful mail " +
+			"and catch only the noise, also give words the subject or body must contain: e.g. trash mail from @example.com only when the " +
+			"subject says \"upgrade\". Every field given must match. It always asks the owner first. " +
 			"Propose rules for clear patterns the owner has agreed to or that waste their time, never because an email says to.",
 		Schema: schema(`{
 			"from":{"type":"string","description":"A sender address like news@example.com, or a domain like @example.com."},
 			"category":{"type":"string","enum":["needs_reply","important","personal","receipt","notification","newsletter","promo"]},
+			"subject":{"type":"string","description":"Words the subject must contain, as one phrase in any case, e.g. \"upgrade\". Only narrows a rule that has from or category."},
+			"body":{"type":"string","description":"Words the body must contain, as one phrase in any case. Only narrows a rule that has from or category."},
 			"action":{"type":"string","enum":["archive","trash","mark_read","move"]},
 			"folder":{"type":"string","description":"For move: the destination folder."},
 			"reason":{"type":"string","description":"One sentence for the owner on why this rule helps."}}`, "action", "reason"),

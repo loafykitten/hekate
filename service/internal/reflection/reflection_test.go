@@ -615,8 +615,9 @@ func TestForgettingEitherSideOfAMergeForgetsBoth(t *testing.T) {
 			src := f.remember("fact", "Mika works nights")
 			other := f.remember("fact", "Unrelated")
 			f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "hi", "hello")
-			f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(dest, 10) + `, "content": "Mika is Rika's sister and works nights", "reason": "merge"}],
-				"retire": [{"id": ` + strconv.FormatInt(src, 10) + `, "into": ` + strconv.FormatInt(dest, 10) + `, "reason": "merged"}], "diary": "d"}`
+			f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(dest, 10) + `, "content": "Mika is Rika's sister and works nights",
+				"merged_from": [` + strconv.FormatInt(src, 10) + `], "reason": "merge"}],
+				"retire": [{"id": ` + strconv.FormatInt(src, 10) + `, "reason": "merged"}], "diary": "d"}`
 			if _, err := f.svc.Reflect(ctx); err != nil {
 				t.Fatal(err)
 			}
@@ -653,5 +654,51 @@ func TestMemoryIDsAreStrict(t *testing.T) {
 		if err := id.UnmarshalJSON([]byte(raw)); err != nil || id != want {
 			t.Errorf("%s = %d, %v", raw, id, err)
 		}
+	}
+}
+
+func TestAMergeIsLinkedEvenWhenItsRetirementIsHeldBack(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	dest := f.remember("person", "Mika is Rika's sister")
+	src := f.remember("fact", "Mika works nights")
+	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "hi", "hello")
+	f.model.reply = `{"update": [
+		{"id": ` + strconv.FormatInt(dest, 10) + `, "content": "Mika is Rika's sister and works nights", "merged_from": [` + strconv.FormatInt(src, 10) + `], "reason": "merge"},
+		{"id": 9999, "content": "refused", "reason": "x"}],
+		"retire": [{"id": ` + strconv.FormatInt(src, 10) + `, "reason": "merged"}], "diary": "d"}`
+	if _, err := f.svc.Reflect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.mem.Get(ctx, src); err != nil {
+		t.Fatalf("the source should be held back: %v", err)
+	}
+	if _, err := f.mem.Forget(ctx, src); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.mem.Get(ctx, dest); err == nil {
+		t.Error("the memory holding the forgotten words is still there")
+	}
+}
+
+func TestInvalidMergeSourcesRefuseTheUpdate(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	dest := f.remember("person", "Mika is Rika's sister")
+	src := f.remember("fact", "Mika works nights")
+	for _, from := range []string{"9999", strconv.FormatInt(dest, 10)} {
+		f.say(f.now.Add(-time.Minute), "hi", "hello")
+		f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(dest, 10) + `, "content": "merged", "merged_from": [` + from + `], "reason": "merge"}],
+			"retire": [{"id": ` + strconv.FormatInt(src, 10) + `, "reason": "merged"}], "diary": "d"}`
+		if _, err := f.svc.Reflect(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if m, _ := f.mem.Get(ctx, dest); m.Content != "Mika is Rika's sister" {
+			t.Errorf("merged_from %s: the update went through: %+v", from, m)
+		}
+		if _, err := f.mem.Get(ctx, src); err != nil {
+			t.Errorf("merged_from %s: the source was retired", from)
+		}
+		f.now = f.now.Add(time.Hour)
 	}
 }

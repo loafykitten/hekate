@@ -95,9 +95,19 @@ func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (
 		}
 		return nil
 	}
-	update := func(id int64, patch memory.Patch, reason string) error {
+	// update applies one update. Merged sources are linked in the same
+	// transaction, so forgetting one of them later forgets this one too.
+	update := func(id int64, patch memory.Patch, reason string, mergedFrom []int64) error {
 		before := latest[id]
-		after, err := s.mem.UpdateIfUnchanged(ctx, id, before, patch, recorder(ActionUpdate, reason))
+		link := func(tx *sql.Tx) error {
+			for _, src := range mergedFrom {
+				if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO memory_merges (source_id, into_id) VALUES (?, ?)`, src, id); err != nil {
+					return fmt.Errorf("record a merge: %w", err)
+				}
+			}
+			return nil
+		}
+		after, err := s.mem.UpdateIfUnchanged(ctx, id, before, patch, recorder(ActionUpdate, reason, link))
 		if err != nil {
 			updateFailed = true
 			return failed(ActionUpdate, id, err)
@@ -110,12 +120,21 @@ func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (
 	for _, u := range p.Update {
 		id := int64(u.ID)
 		patch := memory.Patch{Content: u.Content, Kind: u.Kind, Importance: u.Importance, FollowUpAt: u.FollowUpAt}
-		if _, ok := latest[id]; !ok || (patch == memory.Patch{}) {
+		var sources []int64
+		valid := true
+		for _, m := range u.MergedFrom {
+			src := int64(m)
+			if _, ok := latest[src]; !ok || src == id {
+				valid = false // a merge from something she doesn't know, or from itself
+			}
+			sources = append(sources, src)
+		}
+		if _, ok := latest[id]; !ok || !valid || (patch == memory.Patch{}) {
 			refused++
 			updateFailed = true // a merge's destination may be the one that's wrong
 			continue
 		}
-		if err := update(id, patch, u.Reason); err != nil {
+		if err := update(id, patch, u.Reason, sources); err != nil {
 			return "", err
 		}
 	}
@@ -130,19 +149,7 @@ func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (
 			held++ // it may be half of a merge whose other half didn't happen
 			continue
 		}
-		var link []func(*sql.Tx) error
-		if r.Into != nil {
-			if _, ok := latest[int64(*r.Into)]; ok && int64(*r.Into) != id {
-				into := int64(*r.Into)
-				link = append(link, func(tx *sql.Tx) error {
-					if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO memory_merges (source_id, into_id) VALUES (?, ?)`, id, into); err != nil {
-						return fmt.Errorf("record a merge: %w", err)
-					}
-					return nil
-				})
-			}
-		}
-		if _, err := s.mem.RetireIfUnchanged(ctx, id, before, recorder(ActionRetire, r.Reason, link...)); err != nil {
+		if _, err := s.mem.RetireIfUnchanged(ctx, id, before, recorder(ActionRetire, r.Reason)); err != nil {
 			if err := failed(ActionRetire, id, err); err != nil {
 				return "", err
 			}
@@ -163,7 +170,7 @@ func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (
 				patch.FollowUpAt = &sv.FollowUpAt
 			}
 			if patch != (memory.Patch{}) {
-				if err := update(id, patch, sv.Reason); err != nil {
+				if err := update(id, patch, sv.Reason, nil); err != nil {
 					return "", err
 				}
 			}

@@ -35,14 +35,14 @@ type updateOp struct {
 	Content    *string `json:"content"`
 	Kind       *string `json:"kind"`
 	Importance *int    `json:"importance"`
-	FollowUpAt *string `json:"follow_up_at"`
-	Reason     string  `json:"reason"`
+	FollowUpAt *string  `json:"follow_up_at"`
+	MergedFrom []flexID `json:"merged_from"` // a merge: the memories whose words this one now holds
+	Reason     string   `json:"reason"`
 }
 
 type retireOp struct {
-	ID     flexID  `json:"id"`
-	Into   *flexID `json:"into"` // a merge: the memory it was merged into
-	Reason string  `json:"reason"`
+	ID     flexID `json:"id"`
+	Reason string `json:"reason"`
 }
 
 // flexID accepts a memory id as a number or a string, as models write both.

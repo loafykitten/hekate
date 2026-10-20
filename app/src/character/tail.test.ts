@@ -75,6 +75,14 @@ describe("TailMotion", () => {
     expect(Math.abs(lag.at(-1)!)).toBeLessThan(0.01);
   });
 
+  it("holds against part of a hip tilt", () => {
+    const [level] = simulate(new TailMotion(8, seeded()), 0.01);
+    const [leaning] = simulate(new TailMotion(8, seeded()), 0.01, 1 / 60, () => ({ ...still, baseLean: -0.4 }));
+    // Leaning back by 0.4 rad lifts the base by half that, so the tail drops only half as far.
+    expect(leaning[0].pitch - level[0].pitch).toBeCloseTo(0.2, 5);
+    expect(leaning[7].pitch).toBeCloseTo(level[7].pitch, 5);
+  });
+
   it("flicks now and then", () => {
     // Over two minutes there are several flicks; each shows as a quick change at the tip.
     const frames = simulate(new TailMotion(8, seeded(7)), 120);

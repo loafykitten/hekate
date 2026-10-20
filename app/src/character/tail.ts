@@ -6,6 +6,7 @@
 // - Sway and lift: slow travelling waves, larger toward the tip, built from a few incommensurate
 //   frequencies so they never visibly repeat. Their phases are integrated, so speeding up while
 //   she talks never makes the tail jump.
+// - Holding: the base resists part of a hip tilt, as a real tail is carried, not just dragged.
 // - Follow-through: each bone has a damped spring. When the body turns or tips, the tail lags
 //   and then settles; now and then a small flick is kicked into the tip.
 
@@ -22,6 +23,9 @@ export interface TailInput {
   // radians. The springs push the other way, so the tail lags behind the body.
   baseTurn: number;
   baseTip: number;
+  // How far her hips are tilted from her usual stance, about her side-to-side axis (+ would lift
+  // the tail). The base holds against part of it, so leaning back doesn't drag the tail down.
+  baseLean?: number;
 }
 
 const deg = Math.PI / 180;
@@ -53,6 +57,8 @@ const MAX_OFFSET = 0.2; // per bone; offsets add up along the tail
 // How much of the body's motion each bone resists, base to tip.
 const DRAG_BASE = 0.15;
 const DRAG_TIP = 0.9;
+// Share of a hip tilt the base holds against.
+const HOLD = 0.5;
 // Flicks: seconds between them, and the kick (rad/s) at the tip.
 const FLICK_MIN = 7;
 const FLICK_MAX = 18;
@@ -95,7 +101,7 @@ export class TailMotion {
   }
 
   // Advances the motion and returns each bone's angles, base first. The array is reused.
-  update({ dt, liveliness, baseTurn, baseTip }: TailInput): readonly TailAngles[] {
+  update({ dt, liveliness, baseTurn, baseTip, baseLean = 0 }: TailInput): readonly TailAngles[] {
     const n = this.bones;
     if (n === 0) return this.out;
     dt = Math.min(Math.max(dt, 0), 0.1); // a stalled tab must not fling the springs
@@ -137,7 +143,7 @@ export class TailMotion {
       const rest = (DROOP_BASE + (DROOP_TIP - DROOP_BASE) * s) * (n === 1 ? 0 : scale);
       const sway = (SWAY / n) * amp * reach * wobble(this.swayPhase - i * (SWAY_LAG / n));
       const lift = (LIFT / n) * amp * reach * wobble(this.liftPhase - i * (LIFT_LAG / n) + 2);
-      this.out[i].pitch = rest + lift + sp.pitch;
+      this.out[i].pitch = rest + lift + sp.pitch - (i === 0 ? HOLD * baseLean : 0);
       this.out[i].yaw = drift + sway + sp.yaw;
     }
     return this.out;

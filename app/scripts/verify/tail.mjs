@@ -55,19 +55,29 @@ await page.evaluate(() => (window.hekate.root.rotation.y = 0));
 report("idle", idle);
 
 if (withGestures) {
-  const names = await page.evaluate(() => [...new Set([...window.hekate.gestures, ...window.hekate.rig.clips.fidgets])]);
+  const clips = await page.evaluate(() => [
+    ...window.hekate.rig.clips.gestures.map((name) => ({ name, fidget: false })),
+    ...window.hekate.rig.clips.fidgets.map((name) => ({ name, fidget: true })),
+  ]);
   const all = [];
-  for (const name of names) {
-    await page.evaluate((n) => window.hekate.playGesture(n), name);
+  for (const { name, fidget } of clips) {
+    // playOneShot is private; it's the path both gestures and fidgets take.
+    if (!(await page.evaluate(({ name, fidget }) => window.hekate.playOneShot(name, fidget), { name, fidget }))) {
+      console.log(`  ${name}: did not start`);
+      continue;
+    }
+    // Sample the whole clip and the return to the loop after it (capped at 12 s).
     const during = [];
-    for (let k = 0; k < 14; k++) {
+    let after = 0;
+    for (let k = 0; k < 48 && after < 4; k++) {
       during.push(await sample());
+      if (!(await page.evaluate(() => window.hekate.playing))) after++;
       await page.waitForTimeout(250);
     }
     all.push(...during);
-    report(`  ${name}`, during);
+    report(`  ${name}${fidget ? " (fidget)" : ""}`, during);
   }
-  report(`gestures (${names.length})`, all);
+  report(`all clips (${clips.length})`, all);
 }
 
 console.log(`screenshots in ${out}`);

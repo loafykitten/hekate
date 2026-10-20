@@ -68,6 +68,7 @@ function toonify(mesh: THREE.Mesh, outline: CharacterRig["outline"]) {
 
 const _q = new THREE.Quaternion();
 const _dq = new THREE.Quaternion();
+const _qi = new THREE.Quaternion();
 
 // Crossfade lengths (seconds), eased. Gestures start and end in a different stance than a calm
 // idle (e.g. hands clasped vs. at the sides), so these are long enough to read as a deliberate
@@ -155,6 +156,7 @@ export class Character {
   private readonly tailParent: THREE.Object3D | undefined;
   private readonly tailParentQ = new THREE.Quaternion();
   private tailPrimed = false; // tailParentQ is read on the first frame, once a clip has posed her
+  private readonly tailStance = new THREE.Quaternion(); // the tail parent's pose in her frame, first frame
 
   private constructor(root: THREE.Object3D, animations: THREE.AnimationClip[], readonly rig: CharacterRig) {
     this.root = root;
@@ -448,8 +450,16 @@ export class Character {
     // The tail lags behind whatever the body did this frame (the clip, or the stage turning her).
     let baseTurn = 0;
     let baseTip = 0;
+    let baseLean = 0;
     if (this.tailParent) {
       this.tailParent.updateWorldMatrix(true, false);
+      // Her hips relative to her own frame, against how she first stood.
+      this.root.getWorldQuaternion(_dq).invert();
+      this.tailParent.getWorldQuaternion(_q).premultiply(_dq);
+      if (!this.tailPrimed) this.tailStance.copy(_q);
+      _dq.copy(_q).multiply(_qi.copy(this.tailStance).invert());
+      baseLean = 2 * Math.sign(_dq.w) * _dq.x;
+
       this.tailParent.getWorldQuaternion(_q);
       if (this.tailPrimed) {
         _dq.copy(_q).multiply(this.tailParentQ.invert());
@@ -461,7 +471,7 @@ export class Character {
       this.tailParentQ.copy(_q);
       this.tailPrimed = true;
     }
-    const tail = this.tailMotion.update({ dt, liveliness: this.engaged, baseTurn, baseTip });
+    const tail = this.tailMotion.update({ dt, liveliness: this.engaged, baseTurn, baseTip, baseLean });
     p.tail.forEach((n, i) => this.layer(n, [["pitch", tail[i].pitch], ["yaw", tail[i].yaw]]));
 
     for (const w of this.rig.mouth) this.setMorph(w.name, w.weight * talking);

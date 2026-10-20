@@ -299,6 +299,11 @@ func newFixture(t *testing.T, opts ...func(*fixtureOpts)) *fixture {
 	f.appr = &fakeApprovals{t: t, store: f.store, clock: f.clock, auto: map[string]bool{}}
 
 	accounts := fo.accounts
+	for i := range accounts {
+		if accounts[i].Host == "" {
+			accounts[i].Host = f.addr // the test server, which tests can't know yet
+		}
+	}
 	if accounts == nil {
 		accounts = []config.MailAccount{{Name: "personal", User: testUser, Pass: testPass, Host: f.addr, Archive: "Archive"}}
 	}

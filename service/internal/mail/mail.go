@@ -59,10 +59,11 @@ func validCategory(c string) bool {
 
 // Rule actions.
 const (
-	ActionArchive  = "archive"
-	ActionTrash    = "trash"
-	ActionMarkRead = "mark_read"
-	ActionMove     = "move"
+	ActionArchive     = "archive"
+	ActionTrash       = "trash"
+	ActionMarkRead    = "mark_read"
+	ActionMove        = "move"
+	ActionUnsubscribe = "unsubscribe" // one-click (RFC 8058); files nothing, so other rules still apply
 )
 
 // Approval kinds this package registers.
@@ -89,6 +90,7 @@ const (
 	maxBodyRunes     = 8000                // body text handed out
 	excerptRunes     = 300                 // card excerpt
 	retainGone       = 60 * 24 * time.Hour // how long rows for mail that left the inbox are kept
+	unsubEvery       = 7 * 24 * time.Hour  // an unsubscribe rule asks a sender's list at most this often
 	opTimeout        = 60 * time.Second    // every IMAP operation
 	probeTimeout     = 10 * time.Second    // the check on an idle connection
 	loginTimeout     = 30 * time.Second

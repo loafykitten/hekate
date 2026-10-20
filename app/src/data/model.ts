@@ -123,7 +123,7 @@ export interface MailRule {
   id: string;
   match: { from: string | null; category: string | null; subject: string | null; body: string | null };
   except: { from: string | null; category: string | null; subject: string | null }[]; // mail the rule spares
-  action: string; // archive | trash | mark_read | move
+  action: string; // archive | trash | mark_read | move | unsubscribe
   folder: string | null;
   label: string;
   hits: number;

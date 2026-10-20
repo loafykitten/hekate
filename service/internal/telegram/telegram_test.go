@@ -273,3 +273,27 @@ func TestErrorsNeverCarryTheToken(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+func TestSendsDontHangOnAStalledTelegram(t *testing.T) {
+	stall := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-stall:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(func() { close(stall); srv.Close() })
+	db, err := store.Open(t.Context(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	s := New(Options{Token: token, ChatID: owner, Store: db, BaseURL: srv.URL, HTTPClient: srv.Client(), SendTimeout: 200 * time.Millisecond})
+	start := time.Now()
+	if _, err := s.Fallback(fakePush{}).Send(t.Context(), push.Payload{Title: "Reminder"}, push.UrgencyNormal); err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Errorf("the backup send blocked for %s", took)
+	}
+}

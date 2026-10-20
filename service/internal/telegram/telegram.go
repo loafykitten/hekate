@@ -48,6 +48,8 @@ type Options struct {
 	BaseURL    string
 	HTTPClient *http.Client
 	Now        func() time.Time
+	// SendTimeout bounds one outgoing message; default 15 s.
+	SendTimeout time.Duration
 }
 
 // Decider settles approvals; approvals.Service satisfies it.
@@ -64,12 +66,16 @@ type Service struct {
 	base    string
 	client  *http.Client
 	now     func() time.Time
+	sendFor time.Duration
 	decider Decider
 }
 
 // New builds the service. Set a Decider before Run for the approval buttons.
 func New(o Options) *Service {
-	s := &Service{token: o.Token, chat: o.ChatID, store: o.Store, log: o.Logger, base: o.BaseURL, client: o.HTTPClient, now: o.Now}
+	s := &Service{token: o.Token, chat: o.ChatID, store: o.Store, log: o.Logger, base: o.BaseURL, client: o.HTTPClient, now: o.Now, sendFor: o.SendTimeout}
+	if s.sendFor <= 0 {
+		s.sendFor = sendTimeout
+	}
 	if s.log == nil {
 		s.log = slog.New(slog.DiscardHandler)
 	}
@@ -156,6 +162,8 @@ func (s *Service) Send(ctx context.Context, text string, approvalID int64) error
 	if !s.Configured() {
 		return errors.New("telegram is not configured")
 	}
+	ctx, cancel := context.WithTimeout(ctx, s.sendFor)
+	defer cancel()
 	params := map[string]any{"chat_id": s.chat, "text": clip(text)}
 	if approvalID > 0 {
 		id := strconv.FormatInt(approvalID, 10)
@@ -206,6 +214,7 @@ func (f fallback) Send(ctx context.Context, p push.Payload, urgency push.Urgency
 	if p.Body != "" {
 		text += "\n" + p.Body
 	}
+	// Sent even if the caller is giving up, but never longer than a send takes.
 	if terr := f.tg.Send(context.WithoutCancel(ctx), text, approvalID); terr != nil {
 		f.tg.log.Error("cannot send the telegram backup", "error", terr)
 	}
@@ -286,11 +295,13 @@ func (s *Service) handle(ctx context.Context, u update) {
 			return
 		}
 		reply := s.decideButton(ctx, cb.Data)
-		if err := s.call(ctx, "answerCallbackQuery", map[string]any{"callback_query_id": cb.ID, "text": reply}, nil); err != nil {
+		actx, cancel := context.WithTimeout(ctx, s.sendFor)
+		defer cancel()
+		if err := s.call(actx, "answerCallbackQuery", map[string]any{"callback_query_id": cb.ID, "text": reply}, nil); err != nil {
 			s.log.Warn("cannot answer a telegram button", "error", err)
 		}
 		// The buttons have done their job either way.
-		if err := s.call(ctx, "editMessageReplyMarkup", map[string]any{
+		if err := s.call(actx, "editMessageReplyMarkup", map[string]any{
 			"chat_id": s.chat, "message_id": cb.Message.MessageID, "reply_markup": keyboard{Rows: [][]button{}},
 		}, nil); err != nil {
 			s.log.Warn("cannot clear telegram buttons", "error", err)
@@ -355,6 +366,8 @@ func (s *Service) decide(ctx context.Context, id int64, decision, note string) s
 
 // say replies in the chat, quoting the message it answers.
 func (s *Service) say(ctx context.Context, text string, replyTo int64) {
+	ctx, cancel := context.WithTimeout(ctx, s.sendFor)
+	defer cancel()
 	params := map[string]any{"chat_id": s.chat, "text": clip(text)}
 	if replyTo > 0 {
 		params["reply_parameters"] = map[string]any{"message_id": replyTo, "allow_sending_without_reply": true}

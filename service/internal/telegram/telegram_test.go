@@ -213,7 +213,7 @@ func TestReplyDeniesWithReason(t *testing.T) {
 		t.Errorf("last = %+v", last[len(last)-1])
 	}
 	d.err = approvals.ErrNotPending
-	if got := s.decide(t.Context(), 7, approvals.DecisionDeny, ""); !strings.Contains(got, "already decided") {
+	if got, settled := s.decide(t.Context(), 7, approvals.DecisionDeny, ""); !strings.Contains(got, "already decided") || !settled {
 		t.Errorf("not pending = %q", got)
 	}
 }
@@ -320,5 +320,8 @@ func TestLongResultsStillAcknowledgeTheButton(t *testing.T) {
 	answers := b.sent("answerCallbackQuery")
 	if len(answers) != 1 || len([]rune(answers[0].params["text"].(string))) > 200 {
 		t.Errorf("answer = %+v", answers)
+	}
+	if n := len(b.sent("editMessageReplyMarkup")); n != 0 {
+		t.Errorf("a failed decision took the buttons away (%d edits)", n)
 	}
 }

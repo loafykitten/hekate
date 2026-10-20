@@ -294,7 +294,7 @@ func (s *Service) handle(ctx context.Context, u update) {
 		if cb.From.ID != s.chat || cb.Message == nil || cb.Message.Chat.ID != s.chat {
 			return
 		}
-		reply := s.decideButton(ctx, cb.Data)
+		reply, settled := s.decideButton(ctx, cb.Data)
 		actx, cancel := context.WithTimeout(ctx, s.sendFor)
 		defer cancel()
 		// Telegram takes at most 200 characters here; the full reply follows in the chat.
@@ -305,11 +305,14 @@ func (s *Service) handle(ctx context.Context, u update) {
 		if err := s.call(actx, "answerCallbackQuery", map[string]any{"callback_query_id": cb.ID, "text": ack}, nil); err != nil {
 			s.log.Warn("cannot answer a telegram button", "error", err)
 		}
-		// The buttons have done their job either way.
-		if err := s.call(actx, "editMessageReplyMarkup", map[string]any{
-			"chat_id": s.chat, "message_id": cb.Message.MessageID, "reply_markup": keyboard{Rows: [][]button{}},
-		}, nil); err != nil {
-			s.log.Warn("cannot clear telegram buttons", "error", err)
+		// Once it's decided (here or elsewhere) the buttons have done their job;
+		// after a failure that might pass, they stay for another try.
+		if settled {
+			if err := s.call(actx, "editMessageReplyMarkup", map[string]any{
+				"chat_id": s.chat, "message_id": cb.Message.MessageID, "reply_markup": keyboard{Rows: [][]button{}},
+			}, nil); err != nil {
+				s.log.Warn("cannot clear telegram buttons", "error", err)
+			}
 		}
 		s.say(ctx, reply, cb.Message.MessageID)
 	case u.Message != nil:
@@ -319,7 +322,8 @@ func (s *Service) handle(ctx context.Context, u update) {
 		}
 		if m.ReplyTo != nil {
 			if id, ok := s.approvalFor(ctx, m.ReplyTo.MessageID); ok {
-				s.say(ctx, s.decide(ctx, id, approvals.DecisionDeny, m.Text), m.MessageID)
+				reply, _ := s.decide(ctx, id, approvals.DecisionDeny, m.Text)
+				s.say(ctx, reply, m.MessageID)
 				return
 			}
 		}
@@ -327,23 +331,25 @@ func (s *Service) handle(ctx context.Context, u update) {
 	}
 }
 
-// decideButton runs an "approval:<id>:<decision>" button.
-func (s *Service) decideButton(ctx context.Context, data string) string {
+// decideButton runs an "approval:<id>:<decision>" button. settled reports
+// whether the approval is now decided, so its buttons can go.
+func (s *Service) decideButton(ctx context.Context, data string) (reply string, settled bool) {
 	parts := strings.Split(data, ":")
 	if len(parts) != 3 || parts[0] != "approval" || (parts[2] != approvals.DecisionOnce && parts[2] != approvals.DecisionDeny) {
-		return "I don't know that button."
+		return "I don't know that button.", false
 	}
 	id, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil || id <= 0 {
-		return "I don't know that button."
+		return "I don't know that button.", false
 	}
 	return s.decide(ctx, id, parts[2], "")
 }
 
-// decide settles an approval and says how it went.
-func (s *Service) decide(ctx context.Context, id int64, decision, note string) string {
+// decide settles an approval and says how it went; settled is false only when
+// it failed in a way another try might not.
+func (s *Service) decide(ctx context.Context, id int64, decision, note string) (reply string, settled bool) {
 	if s.decider == nil {
-		return "Approvals aren't available right now."
+		return "Approvals aren't available right now.", false
 	}
 	note = strings.TrimSpace(note)
 	if utf8.RuneCountInString(note) > 500 {
@@ -352,20 +358,20 @@ func (s *Service) decide(ctx context.Context, id int64, decision, note string) s
 	a, err := s.decider.Decide(ctx, id, decision, note)
 	switch {
 	case errors.Is(err, approvals.ErrNotPending):
-		return "That one was already decided, or it expired."
+		return "That one was already decided, or it expired.", true
 	case err != nil:
 		s.log.Error("telegram decision failed", "approval", id, "error", err)
-		return "That didn't go through: " + err.Error()
+		return "That didn't go through: " + err.Error(), false
 	case a.Status == approvals.StatusDenied && note != "":
-		return "Denied, with your reason."
+		return "Denied, with your reason.", true
 	case a.Status == approvals.StatusDenied:
-		return "Denied."
+		return "Denied.", true
 	case a.Status == approvals.StatusDone && a.Result != nil:
-		return "Allowed: " + *a.Result
+		return "Allowed: " + *a.Result, true
 	case a.Status == approvals.StatusFailed && a.Result != nil:
-		return "Allowed, but it failed: " + *a.Result
+		return "Allowed, but it failed: " + *a.Result, true
 	default:
-		return "Allowed."
+		return "Allowed.", true
 	}
 }
 

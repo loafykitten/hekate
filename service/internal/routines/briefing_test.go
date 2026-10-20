@@ -195,3 +195,27 @@ func TestBriefingSurvivesAFailingSource(t *testing.T) {
 		t.Errorf("input:\n%s", in)
 	}
 }
+
+func TestSwitchingTheBriefingOffStopsTodaysToo(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	perf := &fakePerformer{}
+	f.svc.llm = &fakeModel{reply: "Morning."}
+	f.svc.SetPerformer(perf)
+	if _, err := f.svc.WriteBriefing(ctx); err != nil {
+		t.Fatal(err)
+	}
+	off := false
+	if _, err := f.svc.Update(ctx, Patch{Briefing: &off}); err != nil {
+		t.Fatal(err)
+	}
+	if f.svc.BriefingWaiting(ctx) {
+		t.Error("a switched-off briefing is still offered")
+	}
+	if err := f.svc.PlayBriefing(ctx, "c1", "b1", false, false); !errors.Is(err, ErrNoBriefing) || len(perf.got) != 0 {
+		t.Errorf("automatic play when switched off: %v", err)
+	}
+	if err := f.svc.PlayBriefing(ctx, "c1", "b2", false, true); err != nil || len(perf.got) != 1 {
+		t.Errorf("asked for: %v", err)
+	}
+}

@@ -1,16 +1,17 @@
 import { useState } from "react";
 import { canRetry, changeKindLabel, changeStatusLabel, changeStatusTone, changeSummary } from "../../data/changes";
-import { useChanges, useNow, useRetryChange } from "../../data/hooks";
-import type { ChangeRequest } from "../../data/model";
+import { useChanges, useIdeas, useNow, useRetryChange, useSetIdeaStatus } from "../../data/hooks";
+import type { ChangeRequest, Idea } from "../../data/model";
 import { relativeTime } from "../../data/time";
 import { ChevronIcon } from "../icons";
-import { Button, StateMessage } from "../kit/kit";
+import { Button, SectionTitle, StateMessage } from "../kit/kit";
 import styles from "./changes.module.css";
 import { useMenuActive } from "./MenuContext";
 
 // What Renamon has proposed to change about Hekate herself, and how each one is going. Deciding
 // happens on the approval card; this is where you follow it afterwards, and send a change that
-// failed or was turned down back for another try.
+// failed or was turned down back for another try. Below them, the smaller ideas she noted about
+// herself (idea_log): notes to read, mark done or dismiss, nothing gets built from them.
 
 function ChangeRow({ change, now, open, onToggle }: { change: ChangeRequest; now: number; open: boolean; onToggle: () => void }) {
   const summary = changeSummary(change);
@@ -84,9 +85,54 @@ function ChangeRow({ change, now, open, onToggle }: { change: ChangeRequest; now
   );
 }
 
-export function ChangesSection() {
+function IdeaRow({ idea, now }: { idea: Idea; now: number }) {
+  const set = useSetIdeaStatus();
+  const busy = set.isPending;
+  return (
+    <div className={styles.row}>
+      <div className={styles.idea}>
+        <span className={styles.title}>{idea.text}</span>
+        <span className={styles.meta}>
+          <span className={styles.kind}>{changeKindLabel(idea.kind)}</span>
+          <span className={styles.when}>{relativeTime(idea.created_at, now)}</span>
+        </span>
+      </div>
+      <div className={styles.links}>
+        <Button compact busy={busy && set.variables?.status === "done"} disabled={busy} onClick={() => set.mutate({ id: idea.id, status: "done" })} aria-label={`Mark “${idea.text}” done`}>
+          Done
+        </Button>
+        <Button compact disabled={busy} onClick={() => set.mutate({ id: idea.id, status: "dismissed" })} aria-label={`Dismiss “${idea.text}”`}>
+          Dismiss
+        </Button>
+      </div>
+      {set.isError && (
+        <p className={styles.error} role="alert">
+          Couldn't update it: {set.error.message}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function Ideas({ now }: { now: number }) {
   const active = useMenuActive();
-  const now = useNow();
+  const query = useIdeas(active);
+  const ideas = query.data ?? [];
+  if (query.isPending || (query.isError && !query.data) || ideas.length === 0) return null;
+  return (
+    <section>
+      <SectionTitle>Her ideas</SectionTitle>
+      <div className={styles.group}>
+        {ideas.map((i) => (
+          <IdeaRow key={i.id} idea={i} now={now} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function Changes({ now }: { now: number }) {
+  const active = useMenuActive();
   const [openId, setOpenId] = useState<string>();
   const query = useChanges(active);
   const changes = query.data ?? [];
@@ -111,6 +157,16 @@ export function ChangesSection() {
       {changes.map((c) => (
         <ChangeRow key={c.id} change={c} now={now} open={openId === c.id} onToggle={() => setOpenId(openId === c.id ? undefined : c.id)} />
       ))}
+    </div>
+  );
+}
+
+export function ChangesSection() {
+  const now = useNow();
+  return (
+    <div className={styles.stack}>
+      <Changes now={now} />
+      <Ideas now={now} />
     </div>
   );
 }

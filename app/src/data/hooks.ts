@@ -1,12 +1,13 @@
 import { keepPreviousData, MutationCache, QueryCache, QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { applyApproval, freshest } from "./approvals";
-import { asApproval, type Approval, type CalendarEvent, type Message, type Task } from "./model";
+import { asApproval, type Approval, type CalendarEvent, type IdeaStatus, type Message, type Task } from "./model";
 import { DOMAINS, keys, type Domain } from "./queryKeys";
 import {
   ApiError,
   approvalsApi,
   changesApi,
+  ideasApi,
   calendarApi,
   fetchWeather,
   mailApi,
@@ -346,4 +347,14 @@ export function useChanges(enabled = true) {
 
 export function useRetryChange() {
   return useDomainMutation(["changes"], (id: string) => changesApi.retry(id));
+}
+
+// --- ideas ---------------------------------------------------------------------------------
+
+export function useIdeas(enabled = true) {
+  return useQuery({ queryKey: keys.ideas, queryFn: ({ signal }) => ideasApi.list(signal), enabled });
+}
+
+export function useSetIdeaStatus() {
+  return useDomainMutation(["ideas"], ({ id, status }: { id: string; status: IdeaStatus }) => ideasApi.setStatus(id, status));
 }

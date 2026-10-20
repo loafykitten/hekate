@@ -21,6 +21,8 @@ import (
 	"github.com/loafykitten/hekate/service/internal/calendar"
 	"github.com/loafykitten/hekate/service/internal/changes"
 	"github.com/loafykitten/hekate/service/internal/config"
+	"github.com/loafykitten/hekate/service/internal/inspect"
+	"github.com/loafykitten/hekate/service/internal/jobs"
 	"github.com/loafykitten/hekate/service/internal/llm"
 	"github.com/loafykitten/hekate/service/internal/logging"
 	"github.com/loafykitten/hekate/service/internal/mail"
@@ -180,6 +182,22 @@ func run() error {
 	sources = append(sources, agent.Source{Name: "Your change requests", Source: changeSvc})
 	api = append(api, changeSvc.Routes)
 
+	// Scheduled routines, and what she can see of herself.
+	runner, err := jobs.New(jobs.Options{Store: db, Logger: logger.Logger})
+	if err != nil {
+		return fmt.Errorf("build routines: %w", err)
+	}
+	selfSvc, err := inspect.New(inspect.Options{
+		Store: db, Jobs: runner, Ring: logger.Ring, DeployLog: cfg.DeployLog,
+		Checks:  healthChecks(llmClient, synth != nil, stt, calSvc, mailSvc, pushSvc, tg, webSvc),
+		Version: buildinfo.Version + " (" + buildinfo.Commit + ")", Location: cfg.Location, Events: hub, Logger: logger.Logger,
+	})
+	if err != nil {
+		return fmt.Errorf("build self-inspection: %w", err)
+	}
+	toolList = slices.Concat(toolList, selfSvc.Tools())
+	api = append(api, selfSvc.Routes)
+
 	tools, err := agent.NewRegistry(toolList...)
 	if err != nil {
 		return fmt.Errorf("register tools: %w", err)
@@ -211,6 +229,7 @@ func run() error {
 	background.Go(func() { approvalSvc.Run(ctx) })
 	background.Go(func() { mailSvc.Run(ctx) })
 	background.Go(func() { tg.Run(ctx) })
+	background.Go(func() { runner.Run(ctx) })
 
 	srv := server.New(server.Options{
 		Logger:       logger.Logger,

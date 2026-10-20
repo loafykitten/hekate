@@ -237,6 +237,19 @@ func (s *Store) AddUsage(ctx context.Context, u Usage) error {
 	return nil
 }
 
+// AddBackgroundUsage records an LLM request made outside a conversation turn;
+// source names the work (mail, reflection, briefing). u.TurnID is ignored.
+func (s *Store) AddBackgroundUsage(ctx context.Context, source string, u Usage) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO background_usage (source, model, tier, input_tokens, output_tokens, cached_tokens, cost_usd, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		source, u.Model, u.Tier, u.InputTokens, u.OutputTokens, u.CachedTokens, u.CostUSD, ts(time.Now()))
+	if err != nil {
+		return fmt.Errorf("add background usage: %w", err)
+	}
+	return nil
+}
+
 // AddActivity records a tool call. Arguments are truncated to MaxActivityArgs.
 func (s *Store) AddActivity(ctx context.Context, a Activity) error {
 	if len(a.Args) > MaxActivityArgs {

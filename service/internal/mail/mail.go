@@ -120,7 +120,7 @@ func errServer() *httpx.Error {
 
 // Chat is the part of the LLM client the classifier needs; *llm.Client satisfies it.
 type Chat interface {
-	Stream(ctx context.Context, req llm.Request) (*llm.Stream, error)
+	Complete(ctx context.Context, req llm.Request) (string, *llm.Result, error)
 	Configured() bool
 }
 

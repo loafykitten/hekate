@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { canRetry, changeKindLabel, changeStatusLabel, changeStatusTone, changeSummary } from "./changes";
-import { asChangeRequest, type ChangeRequest } from "./model";
+import { asChangeRequest, asIdea, type ChangeRequest } from "./model";
 
 const raw = {
   id: "3",
@@ -94,5 +94,14 @@ describe("retrying", () => {
     const c = asChangeRequest({ ...raw, attempts: 1, previous_result: "Three rounds weren't enough.", previous_pr_url: "https://github.com/example/hekate/pull/15" });
     expect(c).toMatchObject({ attempts: 1, previous_result: "Three rounds weren't enough.", previous_pr_url: "https://github.com/example/hekate/pull/15" });
     expect(asChangeRequest({ ...raw, previous_pr_url: "https://evil.example/pr" })?.previous_pr_url).toBeNull();
+  });
+});
+
+describe("asIdea", () => {
+  it("keeps a well-formed idea and refuses a broken one", () => {
+    const idea = asIdea({ id: 4, text: "A tool to read tracking pages", kind: "tool", status: "open", created_at: "2026-10-20T09:00:00Z", updated_at: "2026-10-20T09:00:00Z" });
+    expect(idea).toMatchObject({ id: "4", text: "A tool to read tracking pages", kind: "tool", status: "open" });
+    expect(asIdea({ id: 5, text: "x", status: "someday" })).toBeUndefined();
+    expect(asIdea({ id: 6, status: "open" })).toBeUndefined();
   });
 });

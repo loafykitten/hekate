@@ -2,6 +2,7 @@ import {
   asApproval,
   asApprovalRule,
   asChangeRequest,
+  asIdea,
   asCoreEntry,
   asEvent,
   asMailBody,
@@ -19,6 +20,8 @@ import {
   type Approval,
   type ApprovalRule,
   type ChangeRequest,
+  type Idea,
+  type IdeaStatus,
   type CalendarEvent,
   type CoreEntry,
   type MailBody,
@@ -195,6 +198,13 @@ export const memoryApi = {
   putCore: async (key: string, value: string) =>
     one(await request("PUT", `/memory/core/${encodeURIComponent(key)}`, { body: { value } }), asCoreEntry),
   removeCore: async (key: string) => void (await request("DELETE", `/memory/core/${encodeURIComponent(key)}`)),
+};
+
+// --- ideas ---------------------------------------------------------------------------------
+
+export const ideasApi = {
+  list: async (signal?: AbortSignal): Promise<Idea[]> => many(await request("GET", "/ideas", { signal }), "ideas", asIdea),
+  setStatus: async (id: string, status: IdeaStatus) => one(await request("PATCH", `/ideas/${encodeURIComponent(id)}`, { body: { status } }), asIdea),
 };
 
 // --- changes -------------------------------------------------------------------------------

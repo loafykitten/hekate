@@ -73,6 +73,35 @@ func New(cfg Config) *Client {
 // Configured reports whether an API key is set.
 func (c *Client) Configured() bool { return c != nil && c.key != "" }
 
+// Complete runs a completion to the end and returns its text, for work that
+// doesn't stream to anyone (classification, reflection). The result carries
+// usage; it is nil only when the stream ended without reporting it.
+func (c *Client) Complete(ctx context.Context, req Request) (string, *Result, error) {
+	stream, err := c.Stream(ctx, req)
+	if err != nil {
+		return "", nil, err
+	}
+	defer func() { _ = stream.Close() }()
+	var text strings.Builder
+	var res *Result
+	for {
+		ev, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return text.String(), res, nil
+		}
+		if err != nil {
+			return "", res, fmt.Errorf("read the model's answer: %w", err)
+		}
+		switch ev.Kind {
+		case EventText:
+			text.WriteString(ev.Text)
+		case EventDone:
+			res = ev.Result
+		case EventToolCall:
+		}
+	}
+}
+
 // Stream starts a completion. It returns once the provider has sent its first
 // event, so failures that happen before any output (and are worth a retry) are
 // retried here; after that, errors surface from Recv.

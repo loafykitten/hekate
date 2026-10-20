@@ -3,9 +3,7 @@ package mail
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"time"
 
@@ -48,7 +46,7 @@ type verdict struct {
 func (s *Service) classify(ctx context.Context, batch []pending) (map[int64]verdict, error) {
 	ctx, cancel := context.WithTimeout(ctx, classifyTimeout)
 	defer cancel()
-	stream, err := s.llm.Stream(ctx, llm.Request{
+	text, res, err := s.llm.Complete(ctx, llm.Request{
 		Model:  s.model.Name,
 		Effort: s.model.Effort,
 		Messages: []llm.Message{
@@ -57,43 +55,19 @@ func (s *Service) classify(ctx context.Context, batch []pending) (map[int64]verd
 		},
 		MaxTokens: 4000,
 	})
+	agent.RecordBackgroundUsage(ctx, s.store, "mail", res, s.log)
 	if err != nil {
 		return nil, fmt.Errorf("ask the model: %w", err)
 	}
-	defer func() { _ = stream.Close() }()
-	var text strings.Builder
-	var res *llm.Result
-	for {
-		ev, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("read the model's answer: %w", err)
-		}
-		switch ev.Kind {
-		case llm.EventText:
-			text.WriteString(ev.Text)
-		case llm.EventDone:
-			res = ev.Result
-		case llm.EventToolCall:
-		}
-	}
 	if res != nil {
-		// The usage table is keyed by conversation turn, which background work
-		// doesn't have, so the cost is logged instead.
-		args := []any{"model", res.Model, "tier", res.ServiceTier, "input_tokens", res.Usage.PromptTokens,
-			"output_tokens", res.Usage.CompletionTokens, "cached_tokens", res.Usage.CachedTokens, "messages", len(batch)}
-		if res.CostUSD != nil {
-			args = append(args, "cost_usd", *res.CostUSD)
-		}
-		s.log.Info("mail classification", args...)
+		s.log.Info("mail classification", "model", res.Model, "input_tokens", res.Usage.PromptTokens,
+			"output_tokens", res.Usage.CompletionTokens, "messages", len(batch))
 	}
 	ids := make(map[int64]bool, len(batch))
 	for _, p := range batch {
 		ids[p.id] = true
 	}
-	return parseVerdicts(text.String(), ids), nil
+	return parseVerdicts(text, ids), nil
 }
 
 // classifyInput lays out a batch for the model. Everything about the emails,

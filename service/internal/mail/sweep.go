@@ -293,7 +293,7 @@ func (s *Service) upsertInbox(ctx context.Context, account string, validity uint
 	res, err := s.db.ExecContext(ctx, `INSERT INTO mail_messages
 		(account, folder, uidvalidity, uid, message_id, from_name, from_addr, subject, date, unread, list_id, unsub_url, has_post, first_seen_at)
 		VALUES (?, 'INBOX', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		account, validity, h.uid, h.messageID, oneLine(h.fromName, 200), h.fromAddr, oneLine(h.subject, 500), stamp(h.date), h.unread,
+		account, validity, h.uid, h.messageID, oneLine(h.fromName, 200), h.fromAddr, oneLine(h.subject, maxCachedSubject), stamp(h.date), h.unread,
 		h.listID, h.unsubURL, h.oneClick, now)
 	if err != nil {
 		return 0, false, fmt.Errorf("cache mail: %w", err)

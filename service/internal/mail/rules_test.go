@@ -304,3 +304,28 @@ func TestCategoryExceptionHoldsUnclassifiedMail(t *testing.T) {
 		t.Errorf("subject exception without a model: %+v", m)
 	}
 }
+
+// A subject too long for the cache is clipped; words past the cut might be
+// there, so a subject exception spares the message.
+func TestSubjectExceptionSparesClippedSubjects(t *testing.T) {
+	f := newFixture(t, func(o *fixtureOpts) { o.noModel = true })
+	if _, err := f.svc.CreateRule(t.Context(), RuleSpec{From: "@example.org", Action: "trash", Except: []ExceptSpec{{Subject: "transaction"}}}); err != nil {
+		t.Fatal(err)
+	}
+	long := strings.Repeat("word ", maxCachedSubject/5) + "transaction"
+	f.deliver("INBOX", mailSpec{subject: long})
+	f.deliver("INBOX", mailSpec{subject: "Short"})
+	f.sweep()
+	var clipped Message
+	for _, m := range f.inbox() {
+		if strings.HasPrefix(m.Subject, "word word") {
+			clipped = m
+		}
+	}
+	if clipped.ID == "" || strings.Contains(clipped.Subject, "transaction") {
+		t.Fatalf("want the long subject clipped before the word and left in the inbox, got %+v", clipped)
+	}
+	if m := f.bySubject("Short"); m.Folder != "Trash" {
+		t.Errorf("short subject: %+v", m)
+	}
+}

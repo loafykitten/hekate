@@ -60,8 +60,9 @@ type ExceptSpec struct {
 }
 
 const (
-	maxExceptions = 10
-	maxSubject    = 100 // characters of subject words in one exception
+	maxExceptions    = 10
+	maxSubject       = 100 // characters of subject words in one exception
+	maxCachedSubject = 500 // characters of a subject the cache keeps; longer ones are clipped with "…"
 )
 
 func nullable(s string) *string {
@@ -144,6 +145,12 @@ func (e ExceptSpec) normalize() (ExceptSpec, error) {
 		return e, httpx.BadRequest("an exception's subject words must be plain text of at most %d characters", maxSubject)
 	}
 	return e, nil
+}
+
+// subjectClipped reports whether a cached subject was cut short, so words past
+// the cut can't be ruled out.
+func subjectClipped(s string) bool {
+	return strings.HasSuffix(s, "…") && utf8.RuneCountInString(s) > maxCachedSubject
 }
 
 // subjectWords folds text for subject matching: lower case, single spaces.
@@ -385,8 +392,9 @@ func (r Rule) matches(m row) bool {
 }
 
 // matches reports whether an exception covers a message: every set field must
-// match. Mail with no category counts as matching a category, so a rule never
-// acts on a guess about what the mail is.
+// match. Mail with no category counts as matching a category, and a subject
+// the cache clipped counts as containing the words, so a rule never acts on a
+// guess about what the mail is.
 func (e RuleException) matches(m row) bool {
 	if e.Category != nil && m.Category.Valid && m.Category.String != *e.Category {
 		return false
@@ -394,7 +402,7 @@ func (e RuleException) matches(m row) bool {
 	if e.From != nil && !senderMatches(*e.From, m.FromAddr) {
 		return false
 	}
-	if e.Subject != nil && !strings.Contains(subjectWords(m.Subject), *e.Subject) {
+	if e.Subject != nil && !strings.Contains(subjectWords(m.Subject), *e.Subject) && !subjectClipped(m.Subject) {
 		return false
 	}
 	return true

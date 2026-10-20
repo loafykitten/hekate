@@ -33,6 +33,13 @@ CREATE TABLE memory_merges (
 );
 CREATE INDEX memory_merges_into ON memory_merges(into_id);
 
+-- One-way fingerprints of forgotten memories' wording (never the text), so
+-- reflection, which rereads the conversation they came from, can't save them again.
+CREATE TABLE memory_forgotten (
+    fingerprint  TEXT PRIMARY KEY, -- sha256 of the normalized content
+    forgotten_at TEXT NOT NULL
+);
+
 -- Forgetting a memory for good also forgets the copies reflection kept of it.
 CREATE TRIGGER memories_forget_reflection_copies AFTER DELETE ON memories BEGIN
     DELETE FROM reflection_changes WHERE memory_id = old.id;

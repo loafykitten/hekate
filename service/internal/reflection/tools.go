@@ -75,11 +75,11 @@ func describeChange(c Change) string {
 	var out string
 	switch {
 	case c.Action == ActionSave && c.After != nil:
-		out = fmt.Sprintf("saved %q", c.After.Content)
+		out = fmt.Sprintf("saved memory %s, %q", c.MemoryID, c.After.Content)
 	case c.Action == ActionUpdate && c.After != nil:
 		out = fmt.Sprintf("updated memory %s to %q", c.MemoryID, c.After.Content)
 	case c.Action == ActionRetire && c.Before != nil:
-		out = fmt.Sprintf("retired %q", c.Before.Content)
+		out = fmt.Sprintf("retired memory %s, %q", c.MemoryID, c.Before.Content)
 	default:
 		out = c.Action + " memory " + c.MemoryID
 	}

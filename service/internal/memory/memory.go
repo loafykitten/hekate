@@ -4,7 +4,9 @@ package memory
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -261,6 +263,32 @@ var ErrChanged = errors.New("the memory changed since it was read")
 // earlier reading to refuse a change planned before a memory was forgotten.
 func (s *Service) Forgets() int64 { return s.forgets.Load() }
 
+// ErrForgotten is returned when reflection would save or write words the owner
+// had forgotten (see Fingerprint).
+var ErrForgotten = errors.New("the owner had that forgotten")
+
+// Fingerprint is a one-way digest of a memory's wording, case and spacing
+// aside. Forgetting keeps the fingerprints of what it deletes, never the text.
+func Fingerprint(content string) string {
+	norm := strings.ToLower(strings.Join(strings.Fields(content), " "))
+	norm = strings.TrimRight(norm, ".!?;: ")
+	sum := sha256.Sum256([]byte(norm))
+	return hex.EncodeToString(sum[:])
+}
+
+// wasForgotten reports whether content matches something forgotten.
+func wasForgotten(ctx context.Context, q rowQuerier, content string) (bool, error) {
+	var one int
+	err := q.QueryRowContext(ctx, `SELECT 1 FROM memory_forgotten WHERE fingerprint = ?`, Fingerprint(content)).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check forgotten memories: %w", err)
+	}
+	return true, nil
+}
+
 // ErrExists is returned by Insert when a live memory already holds that text.
 var ErrExists = errors.New("a memory with that text already exists")
 
@@ -340,6 +368,13 @@ func (s *Service) UpdateIfUnchanged(ctx context.Context, id int64, seen Memory, 
 	if !Unchanged(cur, seen) {
 		return Memory{}, ErrChanged
 	}
+	if p.Content != nil {
+		if gone, err := wasForgotten(ctx, s.db, *p.Content); err != nil {
+			return Memory{}, err
+		} else if gone {
+			return Memory{}, ErrForgotten
+		}
+	}
 	return s.update(ctx, id, cur, p, rec)
 }
 
@@ -395,8 +430,9 @@ func (s *Service) update(ctx context.Context, id int64, cur Memory, p Patch, rec
 }
 
 // Insert saves a new memory, or returns ErrExists when a live one already
-// holds the same text (unlike Save, it never touches an existing memory).
-// rec, if set, records it in the same transaction.
+// holds the same text (unlike Save, it never touches an existing memory), or
+// ErrForgotten when the owner had it forgotten. rec, if set, records it in the
+// same transaction.
 func (s *Service) Insert(ctx context.Context, n NewMemory, rec Recorder) (Memory, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -427,6 +463,11 @@ func (s *Service) Insert(ctx context.Context, n NewMemory, rec Recorder) (Memory
 			return ErrExists
 		case !errors.Is(err, sql.ErrNoRows):
 			return fmt.Errorf("look for a duplicate memory: %w", err)
+		}
+		if gone, err := wasForgotten(ctx, tx, content); err != nil {
+			return err
+		} else if gone {
+			return ErrForgotten
 		}
 		now := stamp(s.now())
 		res, err := tx.ExecContext(ctx, `INSERT INTO memories (kind, content, importance, follow_up_at, source_turn_id, created_at, updated_at)
@@ -490,7 +531,18 @@ func (s *Service) Forget(ctx context.Context, id int64) (Memory, error) {
 		if err := rows.Err(); err != nil {
 			return fmt.Errorf("find memory %d's merges: %w", id, err)
 		}
+		now := stamp(s.now())
 		for _, g := range group {
+			var content string
+			if err := tx.QueryRowContext(ctx, `SELECT content FROM memories WHERE id = ?`, g).Scan(&content); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					continue
+				}
+				return fmt.Errorf("forget memory %d: %w", g, err)
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO memory_forgotten (fingerprint, forgotten_at) VALUES (?, ?)`, Fingerprint(content), now); err != nil {
+				return fmt.Errorf("forget memory %d: %w", g, err)
+			}
 			if _, err := tx.ExecContext(ctx, `DELETE FROM memories WHERE id = ?`, g); err != nil {
 				return fmt.Errorf("forget memory %d: %w", g, err)
 			}

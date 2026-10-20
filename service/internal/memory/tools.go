@@ -167,11 +167,12 @@ func (s *Service) updateTool() agent.Tool {
 
 func (s *Service) forgetTool() agent.Tool {
 	return agent.Tool{
-		Name:        "memory_forget",
-		Description: "Forget a memory for good. Do it right away when the owner asks you to forget something; find its id with memory_search if you do not have it.",
-		Schema:      json.RawMessage(`{"type":"object","required":["id"],"properties":{"id":{"type":"string","description":"The memory id, as shown in memory results."}}}`),
-		Effect:      agent.EffectLocal,
-		Label:       "Forgetting it",
+		Name: "memory_forget",
+		Description: "Forget a memory for good. Do it right away when the owner asks you to forget something; find its id with memory_search if you do not have it. " +
+			"It also works on memories your reflection retired (their ids are in diary_read). What you forget, your nightly reflection won't save again.",
+		Schema: json.RawMessage(`{"type":"object","required":["id"],"properties":{"id":{"type":"string","description":"The memory id, as shown in memory results."}}}`),
+		Effect: agent.EffectLocal,
+		Label:  "Forgetting it",
 		Run: func(ctx context.Context, raw json.RawMessage) (agent.Result, error) {
 			var a struct {
 				ID agent.ID `json:"id"`

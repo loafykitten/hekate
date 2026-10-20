@@ -359,7 +359,11 @@ the day. With no conversation since, nothing runs. Every change is recorded and 
 A change applies only to the memory as she read it: one the owner edited while she was thinking
 is left alone. The next reflection reads on from the last one that finished. Forgetting a memory
 also deletes the copies reflections kept of it, and a memory merged with others is forgotten with
-all of them (each holds the others' words); her diary entries are her own words and stay.
+all of them (each holds the others' words); her diary entries are her own words and stay. A merge
+is declared on the kept memory (`merged_from`). Forgetting keeps a one-way fingerprint of each
+deleted memory's wording (never the text), and reflection won't save or write those words again,
+though the conversation they came from stays. Retired memories can be forgotten with `DELETE
+/api/memory/{id}` too (the Diary offers it).
 
 ```jsonc
 // JournalDay

@@ -307,7 +307,7 @@ func TestDiaryToolContextAndREST(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err := f.svc.readDiary(ctx, "")
-	if err != nil || !strings.Contains(out, "Your diary, 2026-10-19:\nA gentle day.") || !strings.Contains(out, `saved "Had lunch with Mika" (nice day)`) {
+	if err != nil || !strings.Contains(out, "Your diary, 2026-10-19:\nA gentle day.") || !strings.Contains(out, `saved memory 1, "Had lunch with Mika" (nice day)`) {
 		t.Errorf("diary_read:\n%s %v", out, err)
 	}
 	if out, _ := f.svc.readDiary(ctx, "2026-10-01"); !strings.Contains(out, "no diary entry for 2026-10-01") {
@@ -700,5 +700,36 @@ func TestInvalidMergeSourcesRefuseTheUpdate(t *testing.T) {
 			t.Errorf("merged_from %s: the source was retired", from)
 		}
 		f.now = f.now.Add(time.Hour)
+	}
+}
+
+func TestForgottenWordsAreNotSavedAgain(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	gone := f.remember("fact", "Owes Mika fifty dollars")
+	keep := f.remember("fact", "Likes tea")
+	if _, err := f.mem.Forget(ctx, gone); err != nil { // forgotten in the menu, before the reflection
+		t.Fatal(err)
+	}
+	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "I still owe Mika fifty dollars", "Noted.")
+	f.model.reply = `{"save": [{"kind": "fact", "content": "owes mika fifty dollars.", "reason": "said so"}],
+		"update": [{"id": ` + strconv.FormatInt(keep, 10) + `, "content": "Owes Mika fifty dollars", "reason": "x"}], "diary": "d"}`
+	summary, err := f.svc.Reflect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(summary, "(2 not saved: the owner had them forgotten)") {
+		t.Errorf("summary = %q", summary)
+	}
+	if found, _ := f.mem.Search(ctx, "fifty", "", 5); len(found) != 0 {
+		t.Errorf("a forgotten memory came back: %+v", found)
+	}
+	var stored string
+	if err := f.store.DB().QueryRowContext(ctx, `SELECT fingerprint FROM memory_forgotten`).Scan(&stored); err != nil || strings.Contains(stored, "fifty") || len(stored) != 64 {
+		t.Errorf("the fingerprint holds the text, or is missing: %q %v", stored, err)
+	}
+	// The owner saying it again in conversation still saves it: only reflection is held back.
+	if _, existed, err := f.mem.Save(ctx, memory.NewMemory{Kind: "fact", Content: "Owes Mika fifty dollars"}); err != nil || existed {
+		t.Errorf("an explicit save: %v %v", existed, err)
 	}
 }

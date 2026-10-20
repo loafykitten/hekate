@@ -42,7 +42,7 @@ func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (
 	if err != nil {
 		return "", fmt.Errorf("record the reflection: %w", err)
 	}
-	var saved, updated, retired, refused, stale, held int
+	var saved, updated, retired, refused, stale, held, forgottenHeld int
 	updateFailed := p.updatesCut // an update in the plan didn't happen
 	recorder := func(action, reason string, also ...func(*sql.Tx) error) memory.Recorder {
 		return func(ctx context.Context, tx *sql.Tx, before, after *memory.Memory) error {
@@ -85,6 +85,8 @@ func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (
 		switch {
 		case errors.Is(err, memory.ErrChanged), errors.Is(err, memory.ErrExists):
 			stale++
+		case errors.Is(err, memory.ErrForgotten):
+			forgottenHeld++
 		case errors.As(err, &he) && he.Status < 500:
 			s.log.Warn("reflection: a change was refused", "change", what, "memory_id", id, "error", err)
 			refused++
@@ -198,6 +200,9 @@ func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (
 	}
 	if stale > 0 {
 		summary += fmt.Sprintf(" (%d left alone: changed meanwhile)", stale)
+	}
+	if forgottenHeld > 0 {
+		summary += fmt.Sprintf(" (%d not saved: the owner had them forgotten)", forgottenHeld)
 	}
 	if held > 0 {
 		summary += fmt.Sprintf(" (%d retirements held back: an update didn't happen)", held)

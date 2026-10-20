@@ -786,3 +786,55 @@ func TestForgettingBlocksEarlierWordingsToo(t *testing.T) {
 		t.Errorf("rewriting into the earlier wording: %v", err)
 	}
 }
+
+func TestUndoingALaterMergeClearsLaterCopies(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	dest := f.remember("person", "Mika is Rika's sister")
+	src := f.remember("fact", "Mika works nights")
+	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "hi", "hello")
+	f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(dest, 10) + `, "content": "Mika is Rika's sister and works nights",
+		"merged_from": [` + strconv.FormatInt(src, 10) + `], "reason": "merge"}], "diary": "d"}`
+	if _, err := f.svc.Reflect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f.now = f.now.Add(24 * time.Hour)
+	f.say(f.now.Add(-time.Hour), "hi", "hello")
+	f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(dest, 10) + `, "importance": 5, "reason": "matters"}], "diary": "d"}`
+	if _, err := f.svc.Reflect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	days, _ := f.svc.Journal(ctx, 0)
+	later, merge := days[0].Reflections[0].Changes[0], days[1].Reflections[0].Changes[0]
+	for _, c := range []Change{later, merge} {
+		if _, err := f.svc.Undo(ctx, mustID(t, c.ID)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := f.mem.Forget(ctx, src); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := f.store.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM reflection_changes WHERE before LIKE '%nights%' OR after LIKE '%nights%'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("copies of the forgotten words left: %d %v", n, err)
+	}
+}
+
+func TestUndoWorksForARememberedAgainMemory(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	old := f.remember("fact", "Owes Mika fifty dollars")
+	if _, err := f.mem.Forget(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	again := f.remember("fact", "Owes Mika fifty dollars") // the owner asked her to remember it again
+	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "hi", "hello")
+	f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(again, 10) + `, "importance": 4, "reason": "x"}], "diary": "d"}`
+	if summary, err := f.svc.Reflect(ctx); err != nil || !strings.Contains(summary, "updated 1") {
+		t.Fatalf("an importance change to a remembered-again memory: %q %v", summary, err)
+	}
+	days, _ := f.svc.Journal(ctx, 0)
+	if _, err := f.svc.Undo(ctx, mustID(t, days[0].Reflections[0].Changes[0].ID)); err != nil {
+		t.Errorf("undo: %v", err)
+	}
+}

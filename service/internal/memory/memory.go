@@ -357,9 +357,20 @@ func (s *Service) Update(ctx context.Context, id int64, p Patch) (Memory, error)
 }
 
 // UpdateIfUnchanged changes a memory only if it is still the version seen;
-// otherwise it returns ErrChanged and changes nothing. rec, if set, records
-// the change in the same transaction.
+// otherwise it returns ErrChanged and changes nothing. New wording the owner
+// had forgotten is refused with ErrForgotten. rec, if set, records the change
+// in the same transaction. It's how reflection changes memories.
 func (s *Service) UpdateIfUnchanged(ctx context.Context, id int64, seen Memory, p Patch, rec Recorder) (Memory, error) {
+	return s.updateIfUnchanged(ctx, id, seen, p, rec, true)
+}
+
+// RevertIfUnchanged is UpdateIfUnchanged for putting back an earlier version
+// on the owner's request (an undo): the wording isn't checked against what was forgotten.
+func (s *Service) RevertIfUnchanged(ctx context.Context, id int64, seen Memory, p Patch, rec Recorder) (Memory, error) {
+	return s.updateIfUnchanged(ctx, id, seen, p, rec, false)
+}
+
+func (s *Service) updateIfUnchanged(ctx context.Context, id int64, seen Memory, p Patch, rec Recorder, checkForgotten bool) (Memory, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cur, err := s.Get(ctx, id)
@@ -369,7 +380,7 @@ func (s *Service) UpdateIfUnchanged(ctx context.Context, id int64, seen Memory, 
 	if !Unchanged(cur, seen) {
 		return Memory{}, ErrChanged
 	}
-	if p.Content != nil {
+	if checkForgotten && p.Content != nil && Fingerprint(*p.Content) != Fingerprint(cur.Content) {
 		if gone, err := wasForgotten(ctx, s.db, *p.Content); err != nil {
 			return Memory{}, err
 		} else if gone {

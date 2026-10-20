@@ -232,6 +232,10 @@ func (s *Service) Undo(ctx context.Context, changeID int64) (Change, error) {
 			if _, err := tx.ExecContext(ctx, `UPDATE reflection_changes SET after = '' WHERE id = ?`, changeID); err != nil {
 				return fmt.Errorf("undo a merge: %w", err)
 			}
+			// Later records of this memory may hold the merged words too.
+			if _, err := tx.ExecContext(ctx, `UPDATE reflection_changes SET before = '', after = '' WHERE memory_id = ? AND id > ?`, mid, changeID); err != nil {
+				return fmt.Errorf("undo a merge: %w", err)
+			}
 		}
 		return nil
 	}
@@ -261,7 +265,7 @@ func (s *Service) Undo(ctx context.Context, changeID int64) (Change, error) {
 		if b.FollowUpAt != nil {
 			follow = *b.FollowUpAt
 		}
-		if _, err := s.mem.UpdateIfUnchanged(ctx, mid, *c.After, memory.Patch{Content: &b.Content, Kind: &b.Kind, Importance: &b.Importance, FollowUpAt: &follow}, mark); err != nil {
+		if _, err := s.mem.RevertIfUnchanged(ctx, mid, *c.After, memory.Patch{Content: &b.Content, Kind: &b.Kind, Importance: &b.Importance, FollowUpAt: &follow}, mark); err != nil {
 			switch {
 			case errors.Is(err, memory.ErrChanged):
 				return Change{}, edited

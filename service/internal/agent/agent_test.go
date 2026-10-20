@@ -820,14 +820,21 @@ func TestAnOpenerMakesTheFirstCall(t *testing.T) {
 			}}, nil
 		},
 	}
-	opener := func(_ context.Context, text string) (string, bool) {
-		return "brief", strings.Contains(text, "good morning")
+	settled := make(chan bool, 2)
+	opener := func(_ context.Context, text string) (Opening, bool) {
+		return Opening{Tool: "brief", Settle: func(given bool) { settled <- given }}, strings.Contains(text, "good morning")
 	}
-	e := newEnv(t, func(int, llmReq) (int, []string) {
+	e := newEnv(t, func(n int, _ llmReq) (int, []string) {
+		if n == 2 {
+			return 500, nil
+		}
 		return 200, say("Morning, Rika. Take an umbrella to the dentist.")
 	}, envOpts{tools: []Tool{brief}, opener: opener})
 	e.agent.Say("c", "i", "good morning!", false)
 	ev := e.hub.waitTurnEnd(t, 1)
+	if given := <-settled; !given {
+		t.Error("a briefing given in full was settled as not given")
+	}
 
 	// The model is asked once, with the opener's call and its result already in.
 	reqs := e.llm.requests()
@@ -859,5 +866,12 @@ func TestAnOpenerMakesTheFirstCall(t *testing.T) {
 	e.hub.waitTurnEnd(t, 2)
 	if m := e.llm.requests()[1].Messages; m[len(m)-1]["role"] != "user" {
 		t.Errorf("an unopened turn starts with %v", m[len(m)-1])
+	}
+
+	// A reply that fails is settled as not given, so the opener can try again.
+	e.agent.Say("c", "k", "good morning?", false)
+	e.hub.waitTurnEnd(t, 3)
+	if given := <-settled; given {
+		t.Error("a failed briefing was settled as given")
 	}
 }

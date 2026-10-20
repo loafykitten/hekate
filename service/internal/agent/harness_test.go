@@ -259,7 +259,7 @@ type env struct {
 }
 
 type envOpts struct {
-	opener  func(ctx context.Context, userText string) (string, bool)
+	opener  func(ctx context.Context, userText string) (Opening, bool)
 	synth   voice.Synthesizer
 	tools   []Tool
 	sources []Source

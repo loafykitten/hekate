@@ -57,6 +57,7 @@ func TestBriefingGathersTheNextDay(t *testing.T) {
 	f.cal.events = []calendar.Event{
 		{UID: "d", Title: "Dentist", Start: at(20, 15, 0), End: at(20, 16, 0), Location: "12 Main St"},
 		{UID: "e", Title: "Early call", Start: at(21, 10, 0), End: at(21, 10, 30)},
+		{UID: "m", Title: "Market", AllDay: true, Start: "2026-10-21", End: "2026-10-22"},
 	}
 	f.tasks.list = []tasks.Task{{ID: "1", Title: "Pay rent", Due: str("2026-10-19")}}
 	gist := "Renewal terms"
@@ -65,7 +66,7 @@ func TestBriefingGathersTheNextDay(t *testing.T) {
 
 	out, kinds := briefing(t, f)
 	for _, want := range []string{"Give this as your morning briefing", "Today is Tuesday, October 20, 2026. It's 14:00 now.", "Rain",
-		"15:00–16:00 Dentist at 12 Main St", "Wed 10:00–10:30 Early call", "Pay rent (due 2026-10-19)", "18:00 Take the bins out",
+		"15:00–16:00 Dentist at 12 Main St", "Wed 10:00–10:30 Early call", "All day Wed Oct 21: Market", "Pay rent (due 2026-10-19)", "18:00 Take the bins out",
 		"Wed 09:00 Call the vet", "Landlord: Lease (Renewal terms)", "<<<MAIL ", "Ask how Mika's visit went"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("result lacks %q:\n%s", want, out)
@@ -92,24 +93,36 @@ func TestBriefingSurvivesAFailingSource(t *testing.T) {
 func TestTheDaysFirstGoodMorningOpensWithTheBriefing(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
-	open := func(text string) bool {
-		tool, ok := f.svc.Opener(ctx, text)
-		if ok && tool != BriefingTool {
-			t.Fatalf("opener tool = %q", tool)
+	open := func(text string) func(bool) {
+		op, ok := f.svc.Opener(ctx, text)
+		if !ok {
+			return nil
 		}
-		return ok
+		if op.Tool != BriefingTool || op.Settle == nil {
+			t.Fatalf("opening = %+v", op)
+		}
+		return op.Settle
 	}
-	if open("morning! what's the weather?") || open("good evening") {
+	if open("morning! what's the weather?") != nil || open("good evening") != nil {
 		t.Error("only \"good morning\" starts the briefing")
 	}
-	if !open("Good  Morning, Renamon.") {
-		t.Error("the day's first good morning didn't start it")
+	settle := open("Good  Morning, Renamon.")
+	if settle == nil {
+		t.Fatal("the day's first good morning didn't start it")
 	}
-	if open("good morning again") {
+	if open("good morning") != nil {
+		t.Error("a second good morning started another while the first was under way")
+	}
+	settle(false) // cut short or failed: the day isn't used up
+	if settle = open("good morning, take two"); settle == nil {
+		t.Fatal("a failed briefing can't be tried again")
+	}
+	settle(true)
+	if open("good morning again") != nil {
 		t.Error("a second good morning the same day started it again")
 	}
 	f.now = time.Date(2026, 10, 21, 13, 50, 0, 0, f.loc) // the next day
-	if !open("good morning") {
+	if open("good morning") == nil {
 		t.Error("the next day's first good morning didn't start it")
 	}
 }

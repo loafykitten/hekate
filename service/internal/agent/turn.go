@@ -49,6 +49,7 @@ type turnRun struct {
 	usage    proto.TurnUsage
 	lastUsed string
 	firstSeg time.Duration
+	settle   func(given bool) // the opener's, told how the turn ended
 }
 
 func (a *Agent) runTurn(t *turn, prev *turn) {
@@ -184,11 +185,12 @@ func (r *turnRun) open(ctx context.Context) (int, error) {
 	if r.a.opener == nil {
 		return 0, nil
 	}
-	name, ok := r.a.opener(ctx, r.t.userText)
+	op, ok := r.a.opener(ctx, r.t.userText)
 	if !ok {
 		return 0, nil
 	}
-	call := llm.ToolCall{ID: "call_open", Name: name, Arguments: "{}"}
+	r.settle = op.Settle
+	call := llm.ToolCall{ID: "call_open", Name: op.Tool, Arguments: "{}"}
 	rd := &roundRec{index: 0, model: r.model.Name, calls: []llm.ToolCall{call}, results: map[string]string{}, stored: map[string]string{}}
 	r.rounds = append(r.rounds, rd)
 	r.msgs = append(r.msgs, llm.Message{Role: llm.RoleAssistant, ToolCalls: rd.calls})
@@ -196,7 +198,7 @@ func (r *turnRun) open(ctx context.Context) (int, error) {
 	if !o.executed {
 		return 0, ctx.Err()
 	}
-	r.log.Info("turn opened with a call", "tool", name)
+	r.log.Info("turn opened with a call", "tool", op.Tool)
 	rd.results[call.ID] = o.content
 	if o.stored != "" {
 		rd.stored[call.ID] = o.stored
@@ -466,6 +468,9 @@ func (r *turnRun) end(ctx context.Context, loopErr error) {
 
 	if errCode != "" {
 		a.hub.Broadcast(proto.NewError(errCode, errMsg, t.inputID))
+	}
+	if r.settle != nil {
+		r.settle(status == proto.StatusDone)
 	}
 	a.hub.Broadcast(proto.NewTurnEnd(t.id, status, text, r.lastUsed, r.usage))
 	t.fin = &finished{rounds: r.rounds, segs: segs, kept: keep, model: r.lastUsed, usage: r.usage, at: time.Now()}

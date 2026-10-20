@@ -407,8 +407,9 @@ input) each local day that contains "good morning" (any case) opens its turn wit
 `morning_briefing` call the service makes itself, before the model is asked, so her reply is the
 catch-up. The tool gathers the weather at home, the calendar for the next 24 hours, tasks due today
 or late, reminders in the next 24 hours, mail that needs the owner and follow-ups due today, and
-shows up to three cards (`activity` and `card` as for any tool). Later greetings that day are just
-greetings; she can call the tool herself any time she's asked for the briefing or what's on today.
+shows up to three cards (`activity` and `card` as for any tool). The day counts once that reply
+was given in full (not failed or interrupted); later greetings that day are just greetings. She
+can call the tool herself any time she's asked for the briefing or what's on today.
 
 ```jsonc
 // RoutineSettings

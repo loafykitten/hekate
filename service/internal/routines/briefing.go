@@ -48,28 +48,46 @@ const greeting = "good morning"
 
 // Opener starts the turn with the briefing when the owner says good morning
 // for the first time today (their local day): the reply is then the morning
-// catch-up. Later greetings that day are just greetings; asking for the
-// briefing still works any time through the tool.
-func (s *Service) Opener(ctx context.Context, userText string) (string, bool) {
+// catch-up. The day counts once the reply was given in full; if it fails or is
+// cut short, the next good morning tries again. Later greetings that day are
+// just greetings; asking for the briefing still works any time through the tool.
+func (s *Service) Opener(ctx context.Context, userText string) (agent.Opening, bool) {
 	if !strings.Contains(strings.ToLower(oneLine(userText)), greeting) {
-		return "", false
+		return agent.Opening{}, false
 	}
 	day := s.now().In(s.loc).Format(time.DateOnly)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.briefing == day {
+		return agent.Opening{}, false // one is under way
+	}
 	last, err := s.st.GetSetting(ctx, briefedKey)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.log.Warn("briefing: can't tell whether it was given today", "error", err)
-		return "", false
+		return agent.Opening{}, false
 	}
 	if last == day {
-		return "", false
+		return agent.Opening{}, false
 	}
+	s.briefing = day
+	return agent.Opening{Tool: BriefingTool, Settle: func(given bool) { s.settleBriefing(day, given) }}, true
+}
+
+// settleBriefing records the day's briefing as given, or frees the day for another try.
+func (s *Service) settleBriefing(day string, given bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.briefing == day {
+		s.briefing = ""
+	}
+	if !given {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	if err := s.st.SetSetting(ctx, briefedKey, day); err != nil {
 		s.log.Warn("briefing: can't record that it was given", "error", err)
-		return "", false
 	}
-	return BriefingTool, true
 }
 
 // briefingTool gathers the day when the owner asks for it: nothing is written
@@ -263,7 +281,11 @@ func (s *Service) clock(t, today time.Time) string {
 
 func (s *Service) describeEvent(e calendar.Event, today time.Time) string {
 	if e.AllDay {
-		return "All day: " + oneLine(e.Title)
+		day := "today"
+		if d, err := time.ParseInLocation(time.DateOnly, e.Start, s.loc); err == nil && d.Format(time.DateOnly) != today.Format(time.DateOnly) {
+			day = d.Format("Mon Jan 2")
+		}
+		return "All day " + day + ": " + oneLine(e.Title)
 	}
 	out := oneLine(e.Title)
 	if start, err := time.Parse(time.RFC3339, e.Start); err == nil {

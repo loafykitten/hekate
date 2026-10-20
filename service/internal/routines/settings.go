@@ -83,7 +83,8 @@ type Service struct {
 	log       *slog.Logger
 	now       func() time.Time
 
-	mu sync.Mutex // settings read-modify-write, and claiming the day's briefing
+	mu       sync.Mutex // settings read-modify-write, and claiming the day's briefing
+	briefing string     // the day whose good-morning briefing is under way, or ""
 }
 
 // New builds the service.

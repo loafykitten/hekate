@@ -260,10 +260,12 @@ Telegram backup channel and a voice-off toggle. Next: M5 (polish).
   what's new (an event to leave for, overdue tasks, mail that needs the owner, due follow-ups),
   never repeating a nudge. Settings → Routines, or `routine_settings`.
 - **Morning briefing**: first built as a scheduled write-up, pushed and performed when the app
-  opened. Changed on 2026-10-20 at the owner's request (they wake around 2 pm and a pushed
-  briefing is easy to miss or swipe away): now the day's first message containing "good morning"
-  opens its turn with `morning_briefing`, gathered fresh (the next 24 hours, not the calendar day),
-  and she answers with the catch-up. She can also call the tool whenever asked.
+  opened. Changed on 2026-10-20 at the owner's request, because the day doesn't start at a fixed
+  hour and a pushed briefing is easy to miss or swipe away: now the day's first message containing
+  "good morning" opens its turn with `morning_briefing`, gathered fresh (the next 24 hours, not the
+  calendar day), and she answers with the catch-up. The day counts once that reply is given in
+  full, so a failed or interrupted one is tried again on the next good morning. She can also call
+  the tool whenever asked.
 - Not built: the optional evening check-in.
 
 ### Next: change requests, Telegram, voice off

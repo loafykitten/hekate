@@ -64,8 +64,15 @@ type Options struct {
 	Now       func() time.Time
 	// Opener, if set, may start a turn with a tool call of its own before the
 	// model is asked, such as the morning briefing on the day's first "good
-	// morning". It returns the tool's name, or false to leave the turn alone.
-	Opener func(ctx context.Context, userText string) (tool string, ok bool)
+	// morning". False leaves the turn alone.
+	Opener func(ctx context.Context, userText string) (Opening, bool)
+}
+
+// Opening is the call a turn starts with. Settle, if set, is told at the end
+// of the turn whether the reply was given in full (not cut short or failed).
+type Opening struct {
+	Tool   string
+	Settle func(given bool)
 }
 
 // Agent owns the conversation and runs one turn at a time.
@@ -84,7 +91,7 @@ type Agent struct {
 	gestures *gestureSource
 	limits   Limits
 	now      func() time.Time
-	opener   func(ctx context.Context, userText string) (string, bool)
+	opener   func(ctx context.Context, userText string) (Opening, bool)
 
 	baseCtx context.Context //nolint:containedctx // service lifetime, set by Start
 	wg      sync.WaitGroup

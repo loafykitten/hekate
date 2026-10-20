@@ -192,6 +192,7 @@
     order: 0;
     display: flex;
     flex-direction: column;
+    justify-content: flex-start; /* the phone bar spreads its tabs; the side list stacks them */
     gap: 2px;
     width: 188px;
     padding: calc(var(--space-6) + var(--safe-top)) var(--space-3) var(--space-4);

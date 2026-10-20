@@ -42,7 +42,7 @@ function stubAudio(refusals: string[] = []) {
   const requests: MediaStreamConstraints[] = [];
   let resolveModule!: () => void;
   const moduleLoaded = new Promise<void>((r) => (resolveModule = r));
-  const streams: { stopped: boolean }[] = [];
+  const streams: { stopped: boolean; unplug: () => void }[] = [];
   // Each worklet node: the messages it got, and a way to play the worklet's side. By default a
   // flush delivers a last partial chunk of the recording, then the acknowledgment; with
   // `manualFlush` the test sends those itself.
@@ -54,6 +54,7 @@ function stubAudio(refusals: string[] = []) {
         requests.push(constraints);
         const refusal = refusals.shift();
         if (refusal) throw named(refusal);
+        const ended: (() => void)[] = [];
         const track = {
           stopped: false,
           readyState: "live",
@@ -61,7 +62,12 @@ function stubAudio(refusals: string[] = []) {
             this.stopped = true;
             this.readyState = "ended";
           },
-          addEventListener: () => {},
+          addEventListener: (type: string, fn: () => void) => type === "ended" && ended.push(fn),
+          // The device went away: the browser ends the track and says so (stop() doesn't).
+          unplug() {
+            this.readyState = "ended";
+            ended.forEach((fn) => fn());
+          },
         };
         streams.push(track);
         return { getTracks: () => [track] };
@@ -334,6 +340,25 @@ describe("MicCapture recording handoff", () => {
     expect(await restarting).toBe(true);
     node.emit({ id: 2, pcm: new Int16Array([222]).buffer });
     expect(chunks).toEqual([222]);
+  });
+
+  it("a device that goes away mid-drain keeps the last chunk, then closes the mic", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const audio = stubAudio();
+    audio.resolveModule();
+    vi.stubGlobal("document", { visibilityState: "visible", addEventListener: () => {} });
+    const chunks: number[] = [];
+    const mic = new MicCapture((c) => chunks.push(new Int16Array(c)[0]), { stayOpen: true });
+    expect(await mic.start()).toBe(true);
+    const node = audio.nodes[0];
+    node.manualFlush = true;
+    const stopping = mic.stop(); // kept open: the track is still live while it drains
+    audio.streams[0].unplug();
+    node.emit({ id: 1, pcm: new Int16Array([444]).buffer }); // the last chunk, after the track ended
+    node.emit({ flushed: 1 });
+    await stopping;
+    expect(chunks).toEqual([444]);
+    expect(audio.streams[0].stopped).toBe(true);
   });
 
   it("going to the background mid-drain keeps the last chunk, then closes the mic", async () => {

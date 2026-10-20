@@ -124,8 +124,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	// and its capabilities are read under the broadcast lock so a capabilities
 	// broadcast can't slip between the snapshot and registration.
 	gestures := s.conv.Gestures() // may read the manifest; keep it outside the lock
+	briefing := s.briefings != nil && s.briefings.BriefingWaiting(ctx)
 	if !s.hub.addWithFirst(ss.cl, func() any {
-		return proto.NewReady(ss.id, s.conv.ConversationID(), s.capabilities(), gestures, s.conv.Timezone())
+		return proto.NewReady(ss.id, s.conv.ConversationID(), s.capabilities(), gestures, s.conv.Timezone(), briefing)
 	}) {
 		_ = conn.Close(websocket.StatusGoingAway, "shutting down")
 		return
@@ -235,6 +236,8 @@ func (ss *session) onText(data []byte) {
 		if m.ID == ss.pttID {
 			ss.resetPTT()
 		}
+	case proto.TypeBriefing:
+		ss.onBriefing(m)
 	case proto.TypeInterrupt:
 		heard := -1
 		if m.HeardSeq != nil {
@@ -264,6 +267,26 @@ func (ss *session) onSay(m proto.ClientMessage) {
 		return
 	}
 	ss.s.say(ss.id, m.ID, text, m.Quiet)
+}
+
+// onBriefing plays today's morning briefing on this device, as new input would
+// start a turn (it interrupts whatever she's saying).
+func (ss *session) onBriefing(m proto.ClientMessage) {
+	if !validInputID(m.ID) {
+		ss.sendTo(proto.NewError(proto.CodeBadMessage, "Messages need an id.", ""))
+		return
+	}
+	if ss.s.briefings == nil {
+		ss.sendTo(proto.NewError(proto.CodeNoBriefing, "There's no briefing waiting.", m.ID))
+		return
+	}
+	ss.s.inputMu.Lock()
+	defer ss.s.inputMu.Unlock()
+	ss.s.inputs++
+	if err := ss.s.briefings.PlayBriefing(ss.ctx, ss.id, m.ID, m.Quiet); err != nil {
+		ss.s.log.Info("no briefing to play", "client_id", ss.id, "error", err)
+		ss.sendTo(proto.NewError(proto.CodeNoBriefing, "There's no briefing for today yet.", m.ID))
+	}
 }
 
 func (ss *session) onPTTStart(m proto.ClientMessage) {

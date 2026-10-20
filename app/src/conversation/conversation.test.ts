@@ -9,7 +9,7 @@ function memoryStorage(initial: Record<string, string> = {}) {
   return { data, getItem: (k: string) => data.get(k) ?? null, setItem: (k: string, v: string) => void data.set(k, v) };
 }
 
-function setup(opts: { startImpl?: () => Promise<boolean>; ready?: object; storage?: ReturnType<typeof memoryStorage> } = {}) {
+function setup(opts: { startImpl?: () => Promise<boolean>; ready?: object; storage?: ReturnType<typeof memoryStorage>; stage?: object } = {}) {
   FakeSocket.reset();
   let clock = 1000;
   const mic = {
@@ -30,6 +30,7 @@ function setup(opts: { startImpl?: () => Promise<boolean>; ready?: object; stora
       return mic;
     },
   });
+  if (opts.stage) conversation.attachStage(opts.stage as never);
   conversation.start();
   const socket = FakeSocket.last;
   socket.open();
@@ -347,6 +348,56 @@ describe("Conversation: superseded input and back-to-back turns", () => {
   });
 });
 
+describe("Conversation: morning briefing", () => {
+  const stageWith = (speech: FakeSpeech) => ({ speech, bubble: undefined, character: undefined });
+
+  it("starts the waiting briefing on open when it can be heard", async () => {
+    const speech = new FakeSpeech();
+    const t = setup({ ready: { ...READY, briefing: true }, stage: stageWith(speech) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.socket.json.at(-1)).toMatchObject({ type: "briefing" });
+    expect(t.socket.json.at(-1)).not.toHaveProperty("quiet");
+    expect(t.state().phase).toBe("thinking");
+    expect(t.state().notices).toEqual([]);
+
+    // It arrives as this device's turn with no words of the owner's: no caption, no user line.
+    t.socket.receive({ type: "turn_start", turn_id: "t1", input_id: "x", origin: "c1", user_text: "" });
+    expect(t.state().caption).toBeUndefined();
+    expect(t.state().live.map((e) => e.role)).toEqual(["assistant"]);
+  });
+
+  it("offers it with a notice when audio needs a tap first, and plays it from there", async () => {
+    const speech = new FakeSpeech();
+    speech.unlockable = false;
+    const t = setup({ ready: { ...READY, briefing: true }, stage: stageWith(speech) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.types()).not.toContain("briefing");
+    expect(t.state().notices).toMatchObject([{ id: "briefing", play: true }]);
+    vi.advanceTimersByTime(60_000);
+    expect(t.state().notices).toHaveLength(1); // it waits until played or dismissed
+
+    t.conversation.playBriefing();
+    expect(t.socket.json.at(-1)).toMatchObject({ type: "briefing" });
+    expect(t.state().notices).toEqual([]);
+  });
+
+  it("plays quietly at once when her voice is off", async () => {
+    const speech = new FakeSpeech();
+    speech.unlockable = false;
+    const t = setup({ ready: { ...READY, briefing: true }, stage: stageWith(speech), storage: memoryStorage({ "hekate.voice": "off" }) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.socket.json.at(-1)).toMatchObject({ type: "briefing", quiet: true });
+  });
+
+  it("offers a briefing written while the app is open rather than starting to talk", async () => {
+    const t = setup({ stage: stageWith(new FakeSpeech()) });
+    t.socket.receive({ type: "notify", id: "briefing-2026-10-20", kind: "briefing", title: "Good morning", body: "Rain all day." });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.types()).not.toContain("briefing");
+    expect(t.state().notices).toMatchObject([{ id: "briefing", title: "Good morning", body: "Rain all day.", play: true }]);
+  });
+});
+
 describe("Conversation: voice off", () => {
   it("starts with her voice on, and turning it off quiets typed and spoken input and is remembered", async () => {
     const t = setup();
@@ -503,7 +554,7 @@ describe("Conversation: cards, notices and invalidation", () => {
     t.conversation.client.reconnectNow();
     FakeSocket.last.open();
     FakeSocket.last.receive(READY);
-    expect(seen.at(-1)).toEqual(["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes", "ideas", "journal", "routines"]);
+    expect(seen.at(-1)).toEqual(["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes", "ideas", "journal", "routines", "briefing"]);
   });
 });
 

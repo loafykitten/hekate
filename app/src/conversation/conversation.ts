@@ -30,7 +30,12 @@ export interface Notice {
   body: string;
   // The menu section it belongs to, when it has one.
   section?: "reminders" | "today" | "changes";
+  // It offers to play the morning briefing.
+  play?: boolean;
 }
+
+// The notice that offers the morning briefing when it can't start on its own.
+export const BRIEFING_NOTICE = "briefing";
 
 function noticeSection(kind: string): Notice["section"] {
   if (kind === "reminder") return "reminders";
@@ -142,6 +147,8 @@ export class Conversation {
   private toastTimers = new Map<number, ReturnType<typeof setTimeout>>();
   private toastSeq = 0;
   private everOpen = false;
+  private briefingWaiting = false;
+  private offeringBriefing = false;
   private readonly deck = new CardDeck(() => this.emit());
   private notices: Notice[] = [];
   private noticeTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -169,7 +176,7 @@ export class Conversation {
     const c = this.client;
     this.unsubscribers = [
       c.onStatus((s) => this.onStatus(s)),
-      c.on("ready", (m) => this.onReady(m.capabilities, m.timezone)),
+      c.on("ready", (m) => this.onReady(m.capabilities, m.timezone, m.briefing)),
       c.on("capabilities", (m) => this.onCapabilities(m.capabilities)),
       c.on("transcript", (m) => this.onTranscript(m.id, m.text, m.superseded)),
       c.on("turn_start", (m) => this.onTurnStart(m.turn_id, m.origin, m.user_text)),
@@ -206,6 +213,7 @@ export class Conversation {
     this.stage = stage;
     if (stage) {
       stage.speech.muted = !this.voice;
+      void this.offerBriefing(); // it may have been waiting for the stage
       const host = { speech: stage.speech, bubble: stage.bubble as Bubble | undefined, character: () => stage.character };
       this.player = new SegmentPlayer(host);
       this.player.onChange(() => this.emit());
@@ -245,6 +253,48 @@ export class Conversation {
     if (!this.notices.some((n) => n.id === id)) return;
     this.notices = this.notices.filter((n) => n.id !== id);
     this.emit();
+  }
+
+  // Plays today's morning briefing here: she performs it with its cards. Call from a user gesture
+  // (it unlocks audio). Works again after it was played, as a replay.
+  playBriefing(): boolean {
+    this.unlockAudio();
+    if (!this.connected) {
+      this.toast("error", "Not connected to Hekate yet.", "offline-briefing");
+      return false;
+    }
+    this.interruptIfBusy();
+    const id = this.client.briefing(!this.voice);
+    if (!id) return false;
+    this.briefingWaiting = false;
+    this.dismissNotice(BRIEFING_NOTICE);
+    this.setPending({ id, stage: "turn" });
+    this.emit();
+    return true;
+  }
+
+  // The briefing is waiting: start it when the app is in view and it can be heard (or her voice is
+  // off), otherwise offer it with a notice to tap.
+  private async offerBriefing() {
+    if (!this.briefingWaiting || this.offeringBriefing) return;
+    this.offeringBriefing = true;
+    try {
+      const visible = typeof document === "undefined" || document.visibilityState === "visible";
+      const idle = this.phase() === "idle";
+      if (visible && idle && this.stage) {
+        const audible = !this.voice || (await this.stage.speech.unlock());
+        if (audible && this.briefingWaiting && this.connected && this.phase() === "idle") {
+          this.playBriefing();
+          return;
+        }
+      }
+      if (this.briefingWaiting && !this.notices.some((n) => n.id === BRIEFING_NOTICE)) {
+        this.notices = [...this.notices, { id: BRIEFING_NOTICE, title: "Good morning", body: "Your briefing is ready.", play: true }].slice(-2);
+        this.emit();
+      }
+    } finally {
+      this.offeringBriefing = false;
+    }
   }
 
   // Turns her voice on or off on this device, and remembers it here. Off, she answers in the
@@ -430,7 +480,7 @@ export class Conversation {
     this.emit();
   }
 
-  private onReady(capabilities: Capabilities, timezone?: string) {
+  private onReady(capabilities: Capabilities, timezone?: string, briefing?: boolean) {
     // Show times in the zone the service schedules in, not the device's.
     if (timezone) setZone({ tz: timezone });
     this.dismissToast("connection");
@@ -442,7 +492,10 @@ export class Conversation {
     this.live = [];
     this.historyEpoch++;
     this.emit();
-    this.emitInvalidate(["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes", "ideas", "journal", "routines"]);
+    this.briefingWaiting = !!briefing;
+    if (!briefing) this.dismissNotice(BRIEFING_NOTICE);
+    else void this.offerBriefing();
+    this.emitInvalidate(["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes", "ideas", "journal", "routines", "briefing"]);
   }
 
   private onTranscript(id: string, text: string, superseded = false) {
@@ -478,11 +531,12 @@ export class Conversation {
       this.player?.stop();
       this.myTurn = undefined;
     }
-    if (!this.caption || this.caption.text !== userText) this.setCaption(userText);
+    // A scripted turn (the briefing) answers no words of the owner's.
+    if (userText && (!this.caption || this.caption.text !== userText)) this.setCaption(userText);
     this.running.clear();
     this.live = [
       ...this.live,
-      { id: `u:${turnId}`, turnId, role: "user" as const, text: userText, done: true },
+      ...(userText ? [{ id: `u:${turnId}`, turnId, role: "user" as const, text: userText, done: true }] : []),
       { id: `a:${turnId}`, turnId, role: "assistant" as const, text: "", done: false },
     ].slice(-MAX_LIVE);
     this.emit();
@@ -537,6 +591,14 @@ export class Conversation {
   }
 
   private onNotify(m: Notify) {
+    if (m.kind === "briefing") {
+      // Written just now: offer it (it stays until played or dismissed) rather than start talking.
+      this.briefingWaiting = true;
+      const notice: Notice = { id: BRIEFING_NOTICE, title: m.title || "Good morning", body: m.body || "Your briefing is ready.", play: true };
+      this.notices = [...this.notices.filter((n) => n.id !== BRIEFING_NOTICE), notice].slice(-2);
+      this.emit();
+      return;
+    }
     const card = m.card === undefined ? undefined : parseCard(m.card);
     if (card) this.deck.add(card, "notify");
     const notice: Notice = {

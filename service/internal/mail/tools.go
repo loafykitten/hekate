@@ -96,8 +96,8 @@ func (s *Service) wrapList(intro string, msgs []Message) string {
 	return sb.String()
 }
 
-// mailCard is a `mail` card for messages already in the cache.
-func mailCard(title string, msgs []Message, highlight []string) *agent.Card {
+// Card is a `mail` card for messages already in the cache.
+func Card(title string, msgs []Message, highlight []string) *agent.Card {
 	data, err := json.Marshal(map[string]any{"items": msgs, "highlight": highlight})
 	if err != nil {
 		return nil
@@ -169,7 +169,7 @@ func (s *Service) summaryTool() agent.Tool {
 			if len(sum.Attention) > 0 {
 				text += "\n" + s.wrapList("Unread messages that need a reply or are important, newest first.", sum.Attention)
 			}
-			return agent.Result{Content: text, Card: mailCard("Mail", sum.Attention, nil)}, nil
+			return agent.Result{Content: text, Card: Card("Mail", sum.Attention, nil)}, nil
 		}),
 	}
 }
@@ -221,7 +221,7 @@ func (s *Service) searchTool() agent.Tool {
 			}
 			return agent.Result{
 				Content: s.wrapList(fmt.Sprintf("%s, newest first.", plural(len(msgs), "message", "messages")), msgs),
-				Card:    mailCard("Mail", msgs, nil),
+				Card:    Card("Mail", msgs, nil),
 			}, nil
 		}),
 	}
@@ -304,7 +304,7 @@ func (s *Service) directOrBulk(ctx context.Context, ids []int64, action, folder,
 			msgs = append(msgs, m)
 		}
 	}
-	return agent.Result{Content: text + ".", Card: mailCard("Mail", msgs, idStrings(ids))}, nil
+	return agent.Result{Content: text + ".", Card: Card("Mail", msgs, idStrings(ids))}, nil
 }
 
 func idStrings(ids []int64) []string {

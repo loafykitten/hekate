@@ -874,3 +874,55 @@ func TestPTTStartHushIsAtomicWithInputOrdering(t *testing.T) {
 		t.Errorf("order = %v, want %v", conv.order, want)
 	}
 }
+
+type fakeBriefings struct {
+	mu      sync.Mutex
+	waiting bool
+	played  []said
+}
+
+func (f *fakeBriefings) BriefingWaiting(context.Context) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.waiting
+}
+
+func (f *fakeBriefings) PlayBriefing(_ context.Context, origin, id string, quiet bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.waiting {
+		return errors.New("none")
+	}
+	f.waiting = false
+	f.played = append(f.played, said{origin: origin, id: id, quiet: quiet})
+	return nil
+}
+
+func TestBriefingOverTheSocket(t *testing.T) {
+	b := &fakeBriefings{waiting: true}
+	hub := NewHub(nil)
+	srv := httptest.NewServer(New(Options{Conversation: newFakeConv(), Hub: hub, Briefings: b}).Routes())
+	t.Cleanup(func() { hub.Close(); srv.Close() })
+	env := &wsEnv{srv: srv, hub: hub}
+
+	c := env.dial(t)
+	ready := readMsg(t, c)
+	if ready["briefing"] != true {
+		t.Fatalf("ready = %v", ready)
+	}
+	send(t, c, map[string]any{"type": "briefing", "id": "b1", "quiet": true})
+	waitFor(t, func() bool { b.mu.Lock(); defer b.mu.Unlock(); return len(b.played) == 1 })
+	b.mu.Lock()
+	got := b.played[0]
+	b.mu.Unlock()
+	if got.origin != ready["client_id"] || got.id != "b1" || !got.quiet {
+		t.Errorf("played = %+v", got)
+	}
+	send(t, c, map[string]any{"type": "briefing", "id": "b2"})
+	if m := readMsg(t, c); m["code"] != "no_briefing" || m["input_id"] != "b2" {
+		t.Errorf("nothing waiting: %v", m)
+	}
+	if ready2 := readMsg(t, env.dial(t)); ready2["briefing"] != false {
+		t.Errorf("a played briefing still shows as waiting: %v", ready2)
+	}
+}

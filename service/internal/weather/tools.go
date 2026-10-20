@@ -51,7 +51,7 @@ func (s *Service) weatherTool() agent.Tool {
 				return agent.Result{}, err
 			}
 			return agent.Result{
-				Content: describe(w),
+				Content: Describe(w),
 				Card:    &agent.Card{Kind: "weather", ID: "weather", Title: "Weather: " + w.Place, Data: data},
 			}, nil
 		},
@@ -135,8 +135,8 @@ func opt(v *int, suffix string) string {
 	return fmt.Sprintf("%d%s", *v, suffix)
 }
 
-// describe renders the forecast for the model.
-func describe(w Weather) string {
+// Describe renders the forecast for the model.
+func Describe(w Weather) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Weather for %s (°%s). Now: %s, feels like %s, %s.\n", w.Place, w.Unit, deg(w.Now.Temp, w.Unit), deg(w.Now.FeelsLike, w.Unit), w.Now.Condition)
 	fmt.Fprintf(&sb, "Today: high %s, low %s, precipitation chance %s", opt(w.Today.High, "°"), opt(w.Today.Low, "°"), opt(w.Today.PrecipChance, "%"))

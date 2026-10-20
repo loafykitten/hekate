@@ -18,6 +18,12 @@ import (
 	"github.com/loafykitten/hekate/service/internal/voice"
 )
 
+// Briefings is the morning briefing, as the socket offers and plays it.
+type Briefings interface {
+	BriefingWaiting(ctx context.Context) bool
+	PlayBriefing(ctx context.Context, origin, inputID string, quiet bool) error
+}
+
 // Pinger is the slice of the store the server needs.
 type Pinger interface {
 	Ping(ctx context.Context) error
@@ -37,6 +43,9 @@ type Options struct {
 	// STT may be nil (not configured); TTS says whether replies carry audio.
 	STT voice.Transcriber
 	TTS bool
+
+	// Briefings plays the morning briefing; nil when there is none.
+	Briefings Briefings
 
 	// API registers REST routes of feature packages (tasks, reminders, ...).
 	API []func(*http.ServeMux)
@@ -58,6 +67,7 @@ type Server struct {
 	api       []func(*http.ServeMux)
 	stt       voice.Transcriber
 	tts       bool
+	briefings Briefings
 	pingEvery time.Duration
 	pingWait  time.Duration
 
@@ -128,6 +138,7 @@ func New(o Options) *Server {
 		api:       o.API,
 		stt:       o.STT,
 		tts:       o.TTS,
+		briefings: o.Briefings,
 		pingEvery: cmp.Or(o.PingInterval, pingInterval),
 		pingWait:  cmp.Or(o.PingTimeout, pingTimeout),
 	}

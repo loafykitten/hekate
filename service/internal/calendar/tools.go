@@ -258,6 +258,18 @@ func (s *Service) cardWindow(ev Event) (time.Time, time.Time) {
 	return from, to
 }
 
+// EventsCard is an `events` card of the given events between from and to.
+func (s *Service) EventsCard(id, title string, from, to time.Time, events []Event) *agent.Card {
+	if events == nil {
+		events = []Event{}
+	}
+	data, err := json.Marshal(cardData{From: from.In(s.loc).Format(time.RFC3339), To: to.In(s.loc).Format(time.RFC3339), Items: events})
+	if err != nil {
+		return nil
+	}
+	return &agent.Card{Kind: "events", ID: id, Title: title, Data: data}
+}
+
 type cardData struct {
 	From      string   `json:"from"`
 	To        string   `json:"to"`

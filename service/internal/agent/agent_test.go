@@ -808,3 +808,43 @@ func TestTrimFinishesBeforeTheNextTurnStarts(t *testing.T) {
 		t.Errorf("history = %q\nwant      %q", got, want)
 	}
 }
+
+func TestPerformAScript(t *testing.T) {
+	synth := &fakeSynth{}
+	e := newEnv(t, func(int, llmReq) (int, []string) {
+		t.Error("a script never asks the model")
+		return 500, nil
+	}, envOpts{synth: synth})
+	card := proto.Card{Kind: "weather", ID: "home", Title: "Weather", Data: json.RawMessage(`{}`)}
+	e.agent.Perform("client-1", "b-1", Script{Text: "{waving} Morning, Rika. [laughs] It's cold out.", Cards: []proto.Card{card},
+		Cue: "(The app opened: you gave the morning briefing.)", Model: "flex"}, false)
+	ev := e.hub.waitTurnEnd(t, 1)
+
+	start := ofType[proto.TurnStart](ev)
+	if len(start) != 1 || start[0].UserText != "" || start[0].Origin != "client-1" || start[0].InputID != "b-1" {
+		t.Fatalf("turn_start = %+v", start)
+	}
+	if cards := ofType[proto.CardMsg](ev); len(cards) != 1 || cards[0].Card.Kind != "weather" {
+		t.Errorf("cards = %+v", cards)
+	}
+	segs := ofType[proto.Segment](ev)
+	if got := segTexts(ev); !slices.Equal(got, []string{"Morning, Rika.", "It's cold out."}) || segs[0].AudioB64 == nil || len(segs[0].Gestures) != 1 {
+		t.Errorf("segments = %q %+v", got, segs)
+	}
+	end := ofType[proto.TurnEnd](ev)[0]
+	if end.Status != proto.StatusDone || end.Text != "Morning, Rika. It's cold out." || end.Model != "flex" {
+		t.Errorf("turn_end = %+v", end)
+	}
+	msgs := e.messages()
+	if len(msgs) != 2 || msgs[0].Role != store.RoleUser || msgs[0].Text != "" || !strings.Contains(msgs[0].Content, "morning briefing") ||
+		msgs[1].Role != store.RoleAssistant || msgs[1].Content != "{waving} Morning, Rika. [laughs] It's cold out." {
+		t.Errorf("history = %+v", msgs)
+	}
+
+	// Quiet: performed without speech.
+	e.agent.Perform("client-1", "b-2", Script{Text: "Quietly now.", Cue: "(cue)"}, true)
+	ev = e.hub.waitTurnEnd(t, 2)
+	if segs := ofType[proto.Segment](ev); segs[len(segs)-1].AudioB64 != nil {
+		t.Errorf("a quiet script was spoken: %+v", segs[len(segs)-1])
+	}
+}

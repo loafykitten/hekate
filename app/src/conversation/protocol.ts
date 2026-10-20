@@ -13,6 +13,7 @@ export interface Ready {
   capabilities: Capabilities;
   gestures: string[];
   timezone?: string; // IANA zone the service schedules in
+  briefing?: boolean; // today's morning briefing is waiting to be played
 }
 
 export interface Transcript {
@@ -98,7 +99,7 @@ export interface CapabilitiesChanged {
 // Something fired with no turn running (a reminder, an approval she asks for, a change that
 // finished). `card` has the same shape as a turn's card. `kind` stays a string so a newer
 // service's kinds still show as a plain banner.
-export type NotifyKind = "reminder" | "approval" | "change" | "nudge";
+export type NotifyKind = "reminder" | "approval" | "change" | "nudge" | "briefing";
 export interface Notify {
   type: "notify";
   id: string;
@@ -142,6 +143,8 @@ export type ClientMessage =
   | { type: "ptt_start"; id: string; sample_rate: number }
   | { type: "ptt_end"; id: string; quiet?: boolean }
   | { type: "ptt_cancel"; id: string }
+  // Play today's morning briefing on this device.
+  | { type: "briefing"; id: string; quiet?: boolean }
   | { type: "interrupt"; heard_seq: number; turn_id?: string };
 
 export const MAX_TEXT_LENGTH = 4000;

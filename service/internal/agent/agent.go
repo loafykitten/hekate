@@ -94,7 +94,8 @@ type turn struct {
 	inputID  string
 	origin   string
 	userText string
-	quiet    bool // the device that asked has her voice off: no speech for this turn
+	quiet    bool    // the device that asked has her voice off: no speech for this turn
+	script   *Script // a reply written beforehand, performed instead of asking the model
 
 	ctx    context.Context //nolint:containedctx // the turn's lifetime
 	cancel context.CancelCauseFunc
@@ -244,8 +245,29 @@ func (a *Agent) Say(origin, inputID, text string, quiet bool) {
 		return
 	}
 	ctx, cancel := context.WithCancelCause(a.baseCtx)
-	t := &turn{id: newID("t_"), inputID: inputID, origin: origin, userText: text, quiet: quiet,
-		ctx: ctx, cancel: cancel, done: make(chan struct{})}
+	a.start(&turn{id: newID("t_"), inputID: inputID, origin: origin, userText: text, quiet: quiet,
+		ctx: ctx, cancel: cancel, done: make(chan struct{})})
+}
+
+// Script is a reply she gives without thinking it up on the spot, such as the
+// morning briefing written earlier. It's performed like any reply (voice,
+// gestures, cards) and kept in history.
+type Script struct {
+	Text  string       // her words, tags included
+	Cards []proto.Card // shown beside her as she speaks
+	Cue   string       // what history keeps as the prompt it answers; never shown
+	Model string       // the model that wrote it, for the record
+}
+
+// Perform delivers a scripted reply as a turn started by origin, interrupting
+// a running turn as new input would.
+func (a *Agent) Perform(origin, inputID string, s Script, quiet bool) {
+	ctx, cancel := context.WithCancelCause(a.baseCtx)
+	a.start(&turn{id: newID("t_"), inputID: inputID, origin: origin, quiet: quiet, script: &s,
+		ctx: ctx, cancel: cancel, done: make(chan struct{})})
+}
+
+func (a *Agent) start(t *turn) {
 	t.lastSeq.Store(-1)
 	t.heard.Store(heardUnset)
 

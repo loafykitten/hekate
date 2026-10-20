@@ -66,7 +66,11 @@ func (a *Agent) runTurn(t *turn, prev *turn) {
 		log: a.log.With("turn_id", t.id)}
 	r.log.Info("turn start", "origin", t.origin, "chars", len(t.userText), "quiet", t.quiet)
 
-	if err := r.begin(); err != nil {
+	begin := r.begin
+	if t.script != nil {
+		begin, r.lastUsed = r.beginScript, t.script.Model
+	}
+	if err := begin(); err != nil {
 		r.log.Error("cannot start turn", "error", err)
 		a.hub.Broadcast(proto.NewError(proto.CodeLLMError, "Something went wrong on my side. Try again?", t.inputID))
 		return
@@ -80,7 +84,12 @@ func (a *Agent) runTurn(t *turn, prev *turn) {
 	r.pipe = newPipeline(ctx, synth, a.vocabulary(), r.emitSegment, r.log)
 	t.pipe.Store(r.pipe)
 
-	loopErr := r.loop(ctx)
+	var loopErr error
+	if t.script != nil {
+		r.perform()
+	} else {
+		loopErr = r.loop(ctx)
+	}
 	r.pipe.finish()
 	r.end(ctx, loopErr)
 }
@@ -111,6 +120,39 @@ func (r *turnRun) begin() error {
 		Context: gatherContext(t.ctx, a.sources, now, t.userText, r.log),
 	})
 	return nil
+}
+
+// beginScript records a scripted turn: its cue stands in for the user's
+// message, hidden from the conversation log.
+func (r *turnRun) beginScript() error {
+	a, t := r.a, r.t
+	ctx, cancel := a.dbCtx()
+	defer cancel()
+	if err := a.store.BeginTurn(ctx, store.Turn{ID: t.id, ConversationID: ConversationID,
+		InputID: t.inputID, Origin: t.origin, StartedAt: r.start}); err != nil {
+		return fmt.Errorf("record turn: %w", err)
+	}
+	if err := a.store.AddMessages(ctx, []store.Message{{
+		ConversationID: ConversationID, TurnID: t.id, Role: store.RoleUser,
+		Content: t.script.Cue, CreatedAt: r.start,
+	}}); err != nil {
+		return fmt.Errorf("record message: %w", err)
+	}
+	return nil
+}
+
+// perform shows a script's cards and speaks its text, sentence by sentence.
+func (r *turnRun) perform() {
+	s := r.t.script
+	rd := &roundRec{index: 0, model: s.Model, text: s.Text, results: map[string]string{}, stored: map[string]string{}}
+	r.rounds = append(r.rounds, rd)
+	for _, c := range s.Cards {
+		r.a.hub.Broadcast(proto.NewCard(r.t.id, c))
+	}
+	var split perform.Splitter
+	for _, sentence := range append(split.Push(s.Text), split.Flush()...) {
+		r.pipe.submit(rd.index, sentence)
+	}
 }
 
 func (r *turnRun) emitSegment(seg perform.Segment) {

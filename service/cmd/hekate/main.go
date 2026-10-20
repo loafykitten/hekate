@@ -212,15 +212,21 @@ func run() error {
 	toolList = slices.Concat(toolList, reflectSvc.Tools())
 	sources = append(sources, agent.Source{Name: "Your diary", Source: reflectSvc})
 	api = append(api, reflectSvc.Routes)
-	// Proactive routines: the heartbeat nudges during waking hours.
+
+	// Proactive routines: the heartbeat nudges during waking hours, and the
+	// morning briefing is written early and performed when the app opens.
+	var ag *agent.Agent // built below; the briefing asks it for gestures and performs through it
 	routineSvc, err := routines.New(routines.Options{
 		Store: db, Jobs: runner, Tasks: taskSvc, Calendar: calSvc, Mail: mailSvc, FollowUps: memSvc,
+		Reminders: remSvc, Weather: weatherSvc, LLM: llmClient, Model: cfg.ModelBackground, Tamer: cfg.TamerName,
+		Gestures: func() []string { return ag.Gestures() },
 		Location: cfg.Location, Events: hub, Push: notifier, Logger: logger.Logger,
 	})
 	if err != nil {
 		return fmt.Errorf("build routines: %w", err)
 	}
 	runner.Add(routineSvc.HeartbeatJobDef())
+	runner.Add(routineSvc.BriefingJobDef())
 	toolList = slices.Concat(toolList, routineSvc.Tools())
 	api = append(api, routineSvc.Routes)
 
@@ -228,7 +234,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("register tools: %w", err)
 	}
-	ag, err := agent.New(agent.Options{
+	ag, err = agent.New(agent.Options{
 		LLM:       llmClient,
 		Store:     db,
 		Hub:       hub,
@@ -248,6 +254,7 @@ func run() error {
 	if err := ag.Start(ctx); err != nil {
 		return fmt.Errorf("start agent: %w", err)
 	}
+	routineSvc.SetPerformer(ag)
 
 	// The schedulers run until the process is told to stop.
 	var background sync.WaitGroup
@@ -266,6 +273,7 @@ func run() error {
 		Hub:          hub,
 		STT:          stt,
 		TTS:          synth != nil,
+		Briefings:    routineSvc,
 		API:          api,
 	})
 	httpSrv := &http.Server{

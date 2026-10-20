@@ -35,6 +35,7 @@ const (
 	CodeSTTFailed      = "stt_failed"
 	CodeBadMessage     = "bad_message"
 	CodeTooLong        = "too_long"
+	CodeNoBriefing     = "no_briefing"
 )
 
 // Turn end statuses.
@@ -58,6 +59,7 @@ type Ready struct {
 	Capabilities   Capabilities `json:"capabilities"`
 	Gestures       []string     `json:"gestures"`
 	Timezone       string       `json:"timezone"` // IANA zone the service schedules in
+	Briefing       bool         `json:"briefing"` // today's morning briefing is waiting to be played
 }
 
 // CapabilitiesChanged tells clients that what the service can do changed after
@@ -73,11 +75,11 @@ func NewCapabilities(c Capabilities) CapabilitiesChanged {
 }
 
 // NewReady builds a ready message; a nil gesture list is sent as [].
-func NewReady(clientID, conversationID string, caps Capabilities, gestures []string, timezone string) Ready {
+func NewReady(clientID, conversationID string, caps Capabilities, gestures []string, timezone string, briefing bool) Ready {
 	if gestures == nil {
 		gestures = []string{}
 	}
-	return Ready{TypeReady, clientID, conversationID, caps, gestures, timezone}
+	return Ready{TypeReady, clientID, conversationID, caps, gestures, timezone, briefing}
 }
 
 // Transcript is the push-to-talk result for input ID.
@@ -214,6 +216,7 @@ const (
 	TypePTTEnd    = "ptt_end"
 	TypePTTCancel = "ptt_cancel"
 	TypeInterrupt = "interrupt"
+	TypeBriefing  = "briefing" // play today's morning briefing here
 )
 
 // ClientMessage is any client-to-server text frame; fields not used by a type are zero.

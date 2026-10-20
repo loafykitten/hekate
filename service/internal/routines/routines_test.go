@@ -356,3 +356,24 @@ func TestTheBodyStaysWithinPushSize(t *testing.T) {
 		t.Errorf("shown %d of %d: %q", len(shown), len(list), body[len(body)-30:])
 	}
 }
+
+func TestRoutineSettingsTool(t *testing.T) {
+	f := newFixture(t)
+	tool := f.svc.Tools()[0]
+	run := func(args string) (string, error) {
+		res, err := tool.Run(t.Context(), json.RawMessage(args))
+		return res.Content, err
+	}
+	if out, err := run(`{}`); err != nil || out != "Check-in nudges are on, between 08:00 and 22:00. The morning briefing is on, at 07:30." {
+		t.Errorf("report: %q %v", out, err)
+	}
+	if out, err := run(`{"heartbeat": false, "briefing_at": "7:05"}`); err != nil || !strings.Contains(out, "nudges are off") || !strings.Contains(out, "at 07:05") {
+		t.Errorf("update: %q %v", out, err)
+	}
+	if _, err := run(`{"waking_start": "noonish"}`); err == nil {
+		t.Error("a bad time should be refused")
+	}
+	if _, err := run(`{"volume": 11}`); err == nil {
+		t.Error("an unknown argument should be refused")
+	}
+}

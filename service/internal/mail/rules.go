@@ -125,13 +125,16 @@ func (sp RuleSpec) normalize() (RuleSpec, error) {
 		if sp.Folder != "" {
 			return sp, httpx.BadRequest("folder only goes with the move action")
 		}
-		// The owner names who to unsubscribe from: a category comes from the
-		// classifier reading untrusted mail, so it alone never decides where
-		// requests go.
+		// It acts unattended, so it decides only on what the sender's signature
+		// vouches for: the sender and the subject. A category is the classifier's
+		// reading of parts of the mail anyone can change, and body words would
+		// need the whole body vouched for too.
 		if sp.From == "" {
 			return sp, httpx.BadRequest("an unsubscribe rule needs a sender (from)")
 		}
-		// It acts per sender, so body words would only cost fetches.
+		if sp.Category != "" || slices.ContainsFunc(sp.Except, func(e RuleException) bool { return e.Category != "" }) {
+			return sp, httpx.BadRequest("an unsubscribe rule can't use categories, in its match or its exceptions: only the sender and subject words")
+		}
 		if sp.Body != "" {
 			return sp, httpx.BadRequest("an unsubscribe rule can't match body words")
 		}
@@ -223,14 +226,11 @@ func checkSender(from string) error {
 
 // label words the rule for the owner, e.g. "Archive newsletter mail from
 // example.com", `Trash mail from example.com with "upgrade" in the subject` or
-// "Unsubscribe from example.com (promo mail)".
+// "Unsubscribe from example.com".
 func (sp RuleSpec) label() string {
 	var l string
 	if sp.Action == ActionUnsubscribe {
 		l = "Unsubscribe from " + strings.TrimPrefix(sp.From, "@")
-		if sp.Category != "" {
-			l += " (" + strings.ReplaceAll(sp.Category, "_", " ") + " mail)"
-		}
 	} else {
 		verb := map[string]string{ActionArchive: "Archive", ActionTrash: "Trash", ActionMarkRead: "Mark as read", ActionMove: "Move"}[sp.Action]
 		what := "mail"
@@ -793,14 +793,15 @@ func (s *Service) unsubscribeOne(ctx context.Context, id, rid int64) (bool, erro
 	return true, nil
 }
 
-// unsubscribedLately reports whether mail from m's sender and list was
+// unsubscribedLately reports whether mail from m's sender address was
 // unsubscribed from within unsubEvery, by a rule or by the owner, in the same
-// account: each inbox's subscription is its own.
+// account: each inbox's subscription is its own. It goes by the address, which
+// the signature vouches for, not by List-Id, which it may not.
 func (s *Service) unsubscribedLately(ctx context.Context, m row) (bool, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM mail_messages
-		WHERE account = ? AND from_addr = ? AND list_id = ? AND unsubscribed_at >= ?`,
-		m.Account, m.FromAddr, m.ListID, stamp(s.now().Add(-unsubEvery))).Scan(&n)
+		WHERE account = ? AND from_addr = ? AND unsubscribed_at >= ?`,
+		m.Account, m.FromAddr, stamp(s.now().Add(-unsubEvery))).Scan(&n)
 	if err != nil {
 		return false, fmt.Errorf("check earlier unsubscribes: %w", err)
 	}

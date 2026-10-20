@@ -262,9 +262,10 @@ POST, never a link opened or a mail sent) once the other rules are done with the
 message stays wherever they left it. It only acts on mail whose unsubscribe headers the sender
 signed (RFC 8058 section 4): a valid DKIM signature by the sender's domain or a parent of it,
 covering `From`, `Subject`, `List-Unsubscribe` and `List-Unsubscribe-Post`, each present once. Anything else is left alone,
-since anyone can forge a From line. Subject words and exceptions narrow it as for any rule; body
-words don't apply. Each message gets one try (a sweep cut short resumes it), and a sender's list
-is asked at most once a week in each inbox. `hits` counts the requests that succeeded.
+since anyone can forge a From line. For the same reason it decides only on what the signature
+vouches for: the sender and subject words, in its match and its exceptions; categories and body
+words aren't allowed. Each message gets one try (a sweep cut short resumes it), and a sender
+address is asked at most once a week in each inbox. `hits` counts the requests that succeeded.
 
 A message keeps its `id` when it moves between folders. Mail that someone else moved or deleted
 is marked as having left the inbox (`folder: "other"`) and answers 404 to reads and actions; such

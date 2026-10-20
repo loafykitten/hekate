@@ -11,7 +11,9 @@ import (
 func TestUnsubscribeRuleValidation(t *testing.T) {
 	f := newFixture(t)
 	bad := []RuleSpec{
-		{Category: "promo", Action: "unsubscribe"},                      // no sender: a category alone never picks where requests go
+		{Category: "promo", Action: "unsubscribe"},                            // no sender: a category alone never picks where requests go
+		{From: "@shop.example.net", Category: "promo", Action: "unsubscribe"}, // categories aren't vouched for by the signature
+		{From: "@shop.example.net", Action: "unsubscribe", Except: []RuleException{{Category: "receipt"}}},
 		{From: "@shop.example.net", Action: "unsubscribe", Folder: "X"}, // folder without move
 	}
 	for _, sp := range bad {
@@ -26,7 +28,7 @@ func TestUnsubscribeRuleValidation(t *testing.T) {
 	if r.Action != "unsubscribe" || r.Label != "Unsubscribe from shop.example.net" {
 		t.Errorf("rule = %+v", r)
 	}
-	if l := (RuleSpec{From: "deals@shop.example.net", Category: "promo", Action: "unsubscribe"}).label(); l != "Unsubscribe from deals@shop.example.net (promo mail)" {
+	if l := (RuleSpec{From: "deals@shop.example.net", Action: "unsubscribe"}).label(); l != "Unsubscribe from deals@shop.example.net" {
 		t.Errorf("label = %q", l)
 	}
 }
@@ -310,5 +312,25 @@ func TestUnsubscribeExceptionsCantBeDodgedByASecondSubject(t *testing.T) {
 	f.sweep()
 	if got := srv.reqs(); len(got) != 0 {
 		t.Errorf("requests = %q, want none", got)
+	}
+}
+
+// The weekly limit goes by the signed sender address: a replay with another
+// List-Id on top gets no second request.
+func TestUnsubscribeLimitIgnoresUnsignedListID(t *testing.T) {
+	srv := newUnsubServer(t)
+	f := newFixture(t, func(o *fixtureOpts) { o.httpc = srv.Client() })
+	if _, err := f.svc.CreateRule(t.Context(), RuleSpec{From: "@shop.example.net", Action: "unsubscribe"}); err != nil {
+		t.Fatal(err)
+	}
+	spec := mailSpec{subject: "Sale", from: "Shop <deals@shop.example.net>", dkim: "shop.example.net",
+		headers: listMail(srv.URL+"/u/sale", "deals.shop.example.net")}
+	f.deliver("INBOX", spec)
+	f.sweep()
+	spec.forged = "List-Id: <another.example.org>\r\n"
+	f.deliver("INBOX", spec)
+	f.sweep()
+	if got := srv.reqs(); len(got) != 1 {
+		t.Errorf("requests = %q, want one", got)
 	}
 }

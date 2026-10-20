@@ -249,8 +249,9 @@ export class MicCapture {
     console.info(`microphone: opened in ${Math.round(performance.now() - began)} ms`);
     if (generation !== this.generation) return this.dropStale(stream); // released before the stream arrived
     this.stream = stream;
-    // A device that goes away (unplugged headset) closes the mic; the next press reopens it.
-    stream.getTracks().forEach((t) => t.addEventListener("ended", () => !this._active && this.close()));
+    // A device that goes away (unplugged headset) closes the mic; the next press reopens it. A
+    // recording still draining its last chunks closes once it's done (see stop()).
+    stream.getTracks().forEach((t) => t.addEventListener("ended", () => !this._active && this.forwarding === undefined && this.close()));
     if (resumed) {
       await resumed.catch(() => {});
       await ctx.resume(); // iOS can leave the context "interrupted" after the permission prompt

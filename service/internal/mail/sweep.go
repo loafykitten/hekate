@@ -39,12 +39,16 @@ func (s *Service) Sweep(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		prev, stateErr := s.accountState(ctx, a.cfg.Name)
 		ch, err := s.sweepAccount(ctx, a)
 		changed = changed || ch
-		if err != nil && ctx.Err() == nil {
+		switch {
+		case err != nil && ctx.Err() == nil:
 			s.log.Warn("mail sweep failed", "account", a.cfg.Name, "error", err)
 			s.saveError(ctx, a.cfg.Name, oneLine(err.Error(), 300))
 			changed = true // the status changed
+		case err == nil && (prev.err != "" || stateErr != nil):
+			changed = true // recovered: the error the status showed is gone
 		}
 	}
 	if ctx.Err() != nil {

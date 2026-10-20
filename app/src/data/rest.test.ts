@@ -41,8 +41,8 @@ describe("request", () => {
   it("explains non-JSON answers (an SPA fallback or a proxy error)", async () => {
     respond(200, undefined);
     await expect(request("GET", "/tasks")).rejects.toThrow(/unexpected/);
-    respond(502, undefined, false);
-    await expect(request("GET", "/tasks")).rejects.toMatchObject({ status: 502 });
+    respond(500, undefined, false);
+    await expect(request("GET", "/tasks")).rejects.toMatchObject({ message: "Hekate answered 500.", status: 500 });
   });
 
   it("says so when the service can't be reached", async () => {
@@ -50,15 +50,22 @@ describe("request", () => {
     await expect(request("GET", "/tasks")).rejects.toMatchObject({ message: "Hekate isn't reachable.", status: 0 });
   });
 
-  it("says the same when the proxy finds the service down, whatever the proxy's own words", async () => {
+  it("says the same when the proxy finds the service down", async () => {
     for (const status of [502, 503, 504]) {
-      respond(status, { error: "bad gateway" });
+      respond(status); // an empty or HTML proxy page: no JSON
       const err = await request("GET", "/tasks").catch((e: unknown) => e);
-      expect(err).toMatchObject({ message: "Hekate isn't reachable.", status });
+      expect(err).toMatchObject({ message: "Hekate isn't reachable." });
       expect(unreachable(err)).toBe(true);
     }
-    respond(500, { error: "database is locked" });
-    expect(unreachable(await request("GET", "/tasks").catch((e: unknown) => e))).toBe(false);
+  });
+
+  it("keeps the service's own words for a failed integration, even on a gateway status", async () => {
+    for (const [status, error] of [[502, "The calendar server refused the login."], [503, "Mail isn't set up."], [504, "The mail server took too long."]] as const) {
+      respond(status, { error });
+      const err = await request("GET", "/calendar/events").catch((e: unknown) => e);
+      expect(err).toMatchObject({ message: error, status });
+      expect(unreachable(err)).toBe(false);
+    }
   });
 });
 

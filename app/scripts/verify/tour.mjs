@@ -206,7 +206,8 @@ async function open(browser, viewport, query, { mode = "full", onSay } = {}) {
     const p = url.pathname;
     const q = url.searchParams;
     if (p === "/api/ws") return route.fallback();
-    if (mode === "down") return json(route, { error: "bad gateway" }, 502);
+    // As the proxy answers with nothing behind it: a plain-text 502, not the service's JSON.
+    if (mode === "down") return route.fulfill({ status: 502, contentType: "text/plain", body: "bad gateway" });
     if (p === "/api/tasks") {
       const status = q.get("status") ?? "open";
       let list = empty ? [] : TASKS.filter((t) => (q.get("list") ? t.list === q.get("list") : true));

@@ -123,7 +123,7 @@ func (p *pipeline) run() {
 		p.emit(seg)
 		p.mu.Lock()
 		p.records = append(p.records, segRecord{seq: seq, round: j.round, raw: j.raw, display: j.tagged.Display})
-		p.playEnd = later(p.playEnd, time.Now()).Add(time.Duration(seg.Duration * float64(time.Second)))
+		p.playEnd = later(p.playEnd, time.Now()).Add(time.Duration(seg.Duration*float64(time.Second)) + playGap)
 		p.mu.Unlock()
 		p.lastSeq.Store(int64(seq))
 		seq++
@@ -144,11 +144,23 @@ func (p *pipeline) finish() {
 // last is the highest emitted seq, or -1.
 func (p *pipeline) last() int { return int(p.lastSeq.Load()) }
 
-// playsUntil estimates when playback of what was emitted ends.
+// The app leaves a short pause before each sentence (its lead and the gap
+// between queued ones, about 150 ms), and delivery, decoding and the output
+// device add some more. Playback estimates err long by these.
+const (
+	playGap   = 250 * time.Millisecond
+	playSlack = 2 * time.Second
+)
+
+// playsUntil estimates, generously, when a client playing what was emitted as
+// it arrived would be done.
 func (p *pipeline) playsUntil() time.Time {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.playEnd
+	if p.playEnd.IsZero() {
+		return p.playEnd
+	}
+	return p.playEnd.Add(playSlack)
 }
 
 func later(a, b time.Time) time.Time {

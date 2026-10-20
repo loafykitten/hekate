@@ -926,7 +926,23 @@ func TestStoppingABriefingStillPlayingFreesTheDay(t *testing.T) {
 		}
 	}
 
+	before := time.Now()
 	briefed(false)
+	// The estimate errs long: the app pauses before each sentence, and audio
+	// reaches the speaker a little late.
+	var sum time.Duration
+	segs := ofType[proto.Segment](e.hub.snapshot())
+	for _, sg := range segs {
+		sum += time.Duration(sg.Duration*float64(time.Second)) + playGap
+	}
+	e.agent.mu.Lock()
+	cur := e.agent.cur
+	e.agent.mu.Unlock()
+	cur.endMu.Lock()
+	if earliest := before.Add(sum + playSlack); len(segs) != 2 || cur.fin.plays.Before(earliest) {
+		t.Errorf("playback estimated to end at %v, before %v (%d segments)", cur.fin.plays, earliest, len(segs))
+	}
+	cur.endMu.Unlock()
 	e.agent.Hush() // read aloud, it takes seconds: still playing
 	ends++         // announced as interrupted
 	freed("talking on another device", true)

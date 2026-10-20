@@ -216,17 +216,12 @@ function Routines() {
             <TextField label="From" type="time" value={st.waking_start} onChange={(e) => e.target.value && patch.mutate({ waking_start: e.target.value })} />
             <TextField label="Until" type="time" value={st.waking_end} onChange={(e) => e.target.value && patch.mutate({ waking_end: e.target.value })} />
           </div>
-          <SwitchRow className={styles.settingRow} checked={st.briefing} onChange={(briefing) => patch.mutate({ briefing })}>
-            <span className={styles.settingLabel}>
+          <div className={styles.settingRow} style={{ borderBottom: 0 }}>
+            <div className={styles.settingLabel}>
               <strong>Morning briefing</strong>
-              <span>She writes your day up early: weather, events, what&rsquo;s due, mail that matters. You get a notification, and she tells you when you open Hekate.</span>
-            </span>
-          </SwitchRow>
-          {st.briefing && (
-            <div style={{ paddingBottom: "var(--space-3)" }}>
-              <TextField label="Ready by" type="time" value={st.briefing_at} onChange={(e) => e.target.value && patch.mutate({ briefing_at: e.target.value })} />
+              <span>Say &ldquo;good morning&rdquo; when you&rsquo;re up. The first time each day, she walks you through it: weather, what&rsquo;s coming up, what&rsquo;s due, mail that matters. Nothing is sent ahead of time.</span>
             </div>
-          )}
+          </div>
         </div>
       )}
       {patch.isError && (

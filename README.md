@@ -14,7 +14,7 @@ It's built for one person and for daily life rather than technical work.
 
 - **`service/`**: Go. Agent loop on Neuralwatt-hosted GLM 5.3 (Flash for conversation, the full
   model when depth helps), tool modules (memory, tasks, reminders, CalDAV calendar, IMAP mail,
-  web search, weather, self-inspection), a scheduler for briefings, heartbeats and nightly
+  web search, weather, self-inspection), a scheduler for heartbeats and nightly
   reflection, web push, local speech-to-text (Parakeet via sherpa-onnx) and ElevenLabs
   text-to-speech with timestamps for lip sync.
 - **`app/`**: React + three.js PWA. Full-screen character, push-to-talk and text entry, cards,

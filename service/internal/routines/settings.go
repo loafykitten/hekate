@@ -1,6 +1,6 @@
-// Package routines holds Renamon's proactive routines and their settings: the
-// heartbeat that nudges the owner during waking hours when something needs
-// them, and (next) the morning briefing.
+// Package routines holds Renamon's routines and their settings: the heartbeat
+// that nudges the owner during waking hours when something needs them, and the
+// morning briefing she gives when the owner starts their day with her.
 package routines
 
 import (
@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/loafykitten/hekate/service/internal/config"
 	"github.com/loafykitten/hekate/service/internal/httpx"
 	"github.com/loafykitten/hekate/service/internal/jobs"
 	"github.com/loafykitten/hekate/service/internal/proto"
@@ -21,33 +20,29 @@ import (
 	"github.com/loafykitten/hekate/service/internal/store"
 )
 
-// Invalidate domains: the routine settings, and today's briefing.
-const (
-	DomainRoutines = "routines"
-	DomainBriefing = "briefing"
-)
+// DomainRoutines is the invalidate domain of the routine settings.
+const DomainRoutines = "routines"
 
-const settingsKey = "routines"
+const (
+	settingsKey = "routines"
+	briefedKey  = "routines.briefed_on" // the local day the "good morning" briefing was last given
+)
 
 // Settings are the owner's choices for the routines, as GET /api/routines returns them.
 type Settings struct {
 	Heartbeat   bool   `json:"heartbeat"`    // nudges on or off
 	WakingStart string `json:"waking_start"` // HH:MM: nudges only between these
 	WakingEnd   string `json:"waking_end"`
-	Briefing    bool   `json:"briefing"`    // the morning briefing on or off
-	BriefingAt  string `json:"briefing_at"` // HH:MM: when it's written and pushed
 }
 
-// Defaults: nudges on, 08:00 to 22:00; the briefing at 07:30.
-var defaults = Settings{Heartbeat: true, WakingStart: "08:00", WakingEnd: "22:00", Briefing: true, BriefingAt: "07:30"}
+// Defaults: nudges on, 08:00 to 22:00.
+var defaults = Settings{Heartbeat: true, WakingStart: "08:00", WakingEnd: "22:00"}
 
 // Patch changes some settings; nil fields stay.
 type Patch struct {
 	Heartbeat   *bool   `json:"heartbeat"`
 	WakingStart *string `json:"waking_start"`
 	WakingEnd   *string `json:"waking_end"`
-	Briefing    *bool   `json:"briefing"`
-	BriefingAt  *string `json:"briefing_at"`
 }
 
 // Pusher delivers web push (with the Telegram fallback in production).
@@ -65,10 +60,6 @@ type Options struct {
 	FollowUps FollowUpSource
 	Reminders ReminderSource
 	Weather   WeatherSource
-	LLM       Completer
-	Model     config.Model // writes the briefing
-	Tamer     string
-	Gestures  func() []string // the gesture tags she may use
 	Location  *time.Location
 	Events    proto.Events
 	Push      Pusher // nil: in-app notices only
@@ -86,18 +77,14 @@ type Service struct {
 	followUps FollowUpSource
 	reminders ReminderSource
 	weather   WeatherSource
-	llm       Completer
-	model     config.Model
-	tamer     string
-	gestures  func() []string
-	performer Performer
 	loc       *time.Location
 	events    proto.Events
 	pusher    Pusher
 	log       *slog.Logger
 	now       func() time.Time
 
-	mu sync.Mutex // settings read-modify-write
+	mu       sync.Mutex // settings read-modify-write, and claiming the day's briefing
+	briefing string     // the day whose good-morning briefing is under way, or ""
 }
 
 // New builds the service.
@@ -106,14 +93,7 @@ func New(o Options) (*Service, error) {
 		return nil, errors.New("routines: Store is required")
 	}
 	s := &Service{st: o.Store, jobs: o.Jobs, tasks: o.Tasks, cal: o.Calendar, mail: o.Mail, followUps: o.FollowUps,
-		reminders: o.Reminders, weather: o.Weather, llm: o.LLM, model: o.Model, tamer: o.Tamer, gestures: o.Gestures,
-		loc: o.Location, events: o.Events, pusher: o.Push, log: o.Logger, now: o.Now}
-	if s.tamer == "" {
-		s.tamer = "your Tamer"
-	}
-	if s.gestures == nil {
-		s.gestures = func() []string { return nil }
-	}
+		reminders: o.Reminders, weather: o.Weather, loc: o.Location, events: o.Events, pusher: o.Push, log: o.Logger, now: o.Now}
 	if s.loc == nil {
 		s.loc = time.Local
 	}
@@ -157,13 +137,10 @@ func (s *Service) Update(ctx context.Context, p Patch) (Settings, error) {
 	if p.Heartbeat != nil {
 		cur.Heartbeat = *p.Heartbeat
 	}
-	if p.Briefing != nil {
-		cur.Briefing = *p.Briefing
-	}
 	for _, f := range []struct {
 		in  *string
 		out *string
-	}{{p.WakingStart, &cur.WakingStart}, {p.WakingEnd, &cur.WakingEnd}, {p.BriefingAt, &cur.BriefingAt}} {
+	}{{p.WakingStart, &cur.WakingStart}, {p.WakingEnd, &cur.WakingEnd}} {
 		if f.in == nil {
 			continue
 		}
@@ -185,7 +162,6 @@ func (s *Service) Update(ctx context.Context, p Patch) (Settings, error) {
 	}
 	if s.jobs != nil {
 		s.jobs.Wake(HeartbeatJob)
-		s.jobs.Wake(BriefingJob)
 	}
 	s.events.Invalidate(DomainRoutines)
 	return cur, nil
@@ -212,7 +188,6 @@ func (st Settings) awake(t time.Time, loc *time.Location) bool {
 func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/routines", s.handleGet)
 	mux.HandleFunc("PATCH /api/routines", s.handlePatch)
-	mux.HandleFunc("GET /api/briefing", s.handleBriefing)
 }
 
 func (s *Service) handleGet(w http.ResponseWriter, r *http.Request) {

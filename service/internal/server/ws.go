@@ -21,17 +21,15 @@ import (
 )
 
 const (
-	pingInterval = 20 * time.Second // PROTOCOL.md
-	pingTimeout  = 10 * time.Second
-	writeTimeout = 10 * time.Second
-	sttTimeout   = 30 * time.Second
-	// An automatic briefing waits this long after the last input.
-	quietBeforeBriefing = 2 * time.Minute
-	maxPTTSamples       = proto.PTTSampleRate * proto.MaxPTTSeconds
-	minPTTSamples       = proto.PTTSampleRate / 5 // under 0.2 s is a mis-tap, not speech
-	maxInputIDLen       = 128
-	defaultHistory      = 50
-	maxHistory          = 100
+	pingInterval   = 20 * time.Second // PROTOCOL.md
+	pingTimeout    = 10 * time.Second
+	writeTimeout   = 10 * time.Second
+	sttTimeout     = 30 * time.Second
+	maxPTTSamples  = proto.PTTSampleRate * proto.MaxPTTSeconds
+	minPTTSamples  = proto.PTTSampleRate / 5 // under 0.2 s is a mis-tap, not speech
+	maxInputIDLen  = 128
+	defaultHistory = 50
+	maxHistory     = 100
 )
 
 // Conversation is the slice of the agent the HTTP layer needs.
@@ -128,9 +126,8 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	// and its capabilities are read under the broadcast lock so a capabilities
 	// broadcast can't slip between the snapshot and registration.
 	gestures := s.conv.Gestures() // may read the manifest; keep it outside the lock
-	briefing := s.briefings != nil && s.briefings.BriefingWaiting(ctx)
 	if !s.hub.addWithFirst(ss.cl, func() any {
-		return proto.NewReady(ss.id, s.conv.ConversationID(), s.capabilities(), gestures, s.conv.Timezone(), briefing)
+		return proto.NewReady(ss.id, s.conv.ConversationID(), s.capabilities(), gestures, s.conv.Timezone())
 	}) {
 		_ = conn.Close(websocket.StatusGoingAway, "shutting down")
 		return
@@ -240,8 +237,6 @@ func (ss *session) onText(data []byte) {
 		if m.ID == ss.pttID {
 			ss.resetPTT()
 		}
-	case proto.TypeBriefing:
-		ss.onBriefing(m)
 	case proto.TypeInterrupt:
 		heard := -1
 		if m.HeardSeq != nil {
@@ -271,35 +266,6 @@ func (ss *session) onSay(m proto.ClientMessage) {
 		return
 	}
 	ss.s.say(ss.id, m.ID, text, m.Quiet)
-}
-
-// onBriefing plays today's morning briefing on this device, as new input would
-// start a turn (it interrupts whatever she's saying).
-func (ss *session) onBriefing(m proto.ClientMessage) {
-	if !validInputID(m.ID) {
-		ss.sendTo(proto.NewError(proto.CodeBadMessage, "Messages need an id.", ""))
-		return
-	}
-	if ss.s.briefings == nil {
-		ss.sendTo(proto.NewError(proto.CodeNoBriefing, "There's no briefing waiting.", m.ID))
-		return
-	}
-	ss.s.inputMu.Lock()
-	defer ss.s.inputMu.Unlock()
-	// The app asking on its own, as it opens, never cuts into a conversation:
-	// not while a turn runs, nor soon after any input (a recording may still be
-	// transcribing). The briefing keeps waiting, and the app offers it to tap.
-	if !m.Replay && (ss.s.conv.Busy() || time.Since(ss.s.lastInput) < quietBeforeBriefing) {
-		ss.sendTo(proto.NewError(proto.CodeBriefingBusy, "Your briefing is waiting for a quiet moment.", m.ID))
-		return
-	}
-	if err := ss.s.briefings.PlayBriefing(ss.ctx, ss.id, m.ID, m.Quiet, m.Replay); err != nil {
-		ss.s.log.Info("no briefing to play", "client_id", ss.id, "error", err)
-		ss.sendTo(proto.NewError(proto.CodeNoBriefing, "There's no briefing for today yet.", m.ID))
-		return
-	}
-	ss.s.inputs++ // it started a turn: a recording still being transcribed is now stale
-	ss.s.lastInput = time.Now()
 }
 
 func (ss *session) onPTTStart(m proto.ClientMessage) {

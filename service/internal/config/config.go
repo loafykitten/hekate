@@ -50,7 +50,7 @@ type Config struct {
 	NeuralwattBaseURL string
 	ModelChat         Model // everyday conversation
 	ModelDeep         Model // conversation that needs depth (think_deeper)
-	ModelBackground   Model // reflection, briefings; not latency sensitive
+	ModelBackground   Model // reflection; not latency sensitive
 	ModelBulk         Model // many small calls, e.g. mail classification
 
 	// Voice. Empty ElevenLabs key means text-only replies.

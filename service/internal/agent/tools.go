@@ -50,6 +50,9 @@ type Result struct {
 	// Card, if set, is shown on screen. Cards are filled by tools from the
 	// database by id, never from model text.
 	Card *Card
+	// Cards are shown after Card, in order, for a result that shows several
+	// things at once, such as the morning briefing.
+	Cards []Card
 	// Stored, if set, replaces Content in the saved conversation and the audit
 	// log, for results that must not be kept, such as a mail body. The model
 	// sees Content only for the rest of this turn.

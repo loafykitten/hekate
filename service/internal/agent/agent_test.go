@@ -809,42 +809,159 @@ func TestTrimFinishesBeforeTheNextTurnStarts(t *testing.T) {
 	}
 }
 
-func TestPerformAScript(t *testing.T) {
-	synth := &fakeSynth{}
-	e := newEnv(t, func(int, llmReq) (int, []string) {
-		t.Error("a script never asks the model")
-		return 500, nil
-	}, envOpts{synth: synth})
-	card := proto.Card{Kind: "weather", ID: "home", Title: "Weather", Data: json.RawMessage(`{}`)}
-	e.agent.Perform("client-1", "b-1", Script{Text: "{waving} Morning, Rika. [laughs] It's cold out.", Cards: []proto.Card{card},
-		Cue: "(The app opened: you gave the morning briefing.)", Model: "flex"}, false)
-	ev := e.hub.waitTurnEnd(t, 1)
-
-	start := ofType[proto.TurnStart](ev)
-	if len(start) != 1 || start[0].UserText != "" || start[0].Origin != "client-1" || start[0].InputID != "b-1" {
-		t.Fatalf("turn_start = %+v", start)
+func TestAnOpenerMakesTheFirstCall(t *testing.T) {
+	brief := Tool{
+		Name: "brief", Description: "The day", Effect: EffectRead, Label: "Looking over your day",
+		Schema: json.RawMessage(`{"type":"object","properties":{}}`),
+		Run: func(context.Context, json.RawMessage) (Result, error) {
+			return Result{Content: "Rain, and the dentist at three.", Cards: []Card{
+				{Kind: "weather", ID: "w", Title: "Weather", Data: json.RawMessage(`{}`)},
+				{Kind: "events", ID: "e", Title: "Coming up", Data: json.RawMessage(`{}`)},
+			}}, nil
+		},
 	}
-	if cards := ofType[proto.CardMsg](ev); len(cards) != 1 || cards[0].Card.Kind != "weather" {
+	settled := make(chan bool, 2)
+	opener := func(_ context.Context, text string) (Opening, bool) {
+		return Opening{Tool: "brief", Settle: func(given bool) { settled <- given }}, strings.Contains(text, "good morning")
+	}
+	e := newEnv(t, func(n int, _ llmReq) (int, []string) {
+		if n == 2 {
+			return 500, nil
+		}
+		return 200, say("Morning, Rika. Take an umbrella to the dentist.")
+	}, envOpts{tools: []Tool{brief}, opener: opener})
+	e.agent.Say("c", "i", "good morning!", false)
+	ev := e.hub.waitTurnEnd(t, 1)
+	if given := <-settled; !given {
+		t.Error("a briefing given in full was settled as not given")
+	}
+	// Its playback stopped partway after the turn ended: not given after all.
+	e.agent.Interrupt("", 0)
+	if given := <-settled; given {
+		t.Error("a briefing stopped partway stayed settled as given")
+	}
+
+	// The model is asked once, with the opener's call and its result already in.
+	reqs := e.llm.requests()
+	if len(reqs) != 1 {
+		t.Fatalf("requests = %d", len(reqs))
+	}
+	m := reqs[0].Messages
+	asst, tool := m[len(m)-2], m[len(m)-1]
+	if asst["role"] != "assistant" || asst["tool_calls"] == nil || tool["role"] != "tool" || tool["content"] != "Rain, and the dentist at three." {
+		t.Errorf("opened messages = %v / %v", asst, tool)
+	}
+	if cards := ofType[proto.CardMsg](ev); len(cards) != 2 || cards[0].Card.Kind != "weather" || cards[1].Card.Kind != "events" {
 		t.Errorf("cards = %+v", cards)
 	}
-	segs := ofType[proto.Segment](ev)
-	if got := segTexts(ev); !slices.Equal(got, []string{"Morning, Rika.", "It's cold out."}) || segs[0].AudioB64 == nil || len(segs[0].Gestures) != 1 {
-		t.Errorf("segments = %q %+v", got, segs)
+	if acts := ofType[proto.Activity](ev); len(acts) != 2 || acts[0].Label != "Looking over your day" {
+		t.Errorf("activity = %+v", acts)
 	}
-	end := ofType[proto.TurnEnd](ev)[0]
-	if end.Status != proto.StatusDone || end.Text != "Morning, Rika. It's cold out." || end.Model != "flex" {
-		t.Errorf("turn_end = %+v", end)
+	// History replays: user, the call, its result, the reply.
+	var roles []string
+	for _, msg := range e.messages() {
+		roles = append(roles, msg.Role)
 	}
-	msgs := e.messages()
-	if len(msgs) != 2 || msgs[0].Role != store.RoleUser || msgs[0].Text != "" || !strings.Contains(msgs[0].Content, "morning briefing") ||
-		msgs[1].Role != store.RoleAssistant || msgs[1].Content != "{waving} Morning, Rika. [laughs] It's cold out." {
-		t.Errorf("history = %+v", msgs)
+	if !slices.Equal(roles, []string{"user", "assistant", "tool", "assistant"}) {
+		t.Errorf("history roles = %v", roles)
 	}
 
-	// Quiet: performed without speech.
-	e.agent.Perform("client-1", "b-2", Script{Text: "Quietly now.", Cue: "(cue)"}, true)
-	ev = e.hub.waitTurnEnd(t, 2)
-	if segs := ofType[proto.Segment](ev); segs[len(segs)-1].AudioB64 != nil {
-		t.Errorf("a quiet script was spoken: %+v", segs[len(segs)-1])
+	// Anything else is left to the model.
+	e.agent.Say("c", "j", "thanks", false)
+	e.hub.waitTurnEnd(t, 3)
+	if m := e.llm.requests()[1].Messages; m[len(m)-1]["role"] != "user" {
+		t.Errorf("an unopened turn starts with %v", m[len(m)-1])
 	}
+
+	// A reply that fails is settled as not given, so the opener can try again.
+	e.agent.Say("c", "k", "good morning?", false)
+	e.hub.waitTurnEnd(t, 4)
+	if given := <-settled; given {
+		t.Error("a failed briefing was settled as given")
+	}
+}
+
+// A finished briefing may still be playing. Stopping it then (an interrupt,
+// even during its last sentence; talking or typing on any device) frees the
+// day; the same after it can have finished playing doesn't.
+func TestStoppingABriefingStillPlayingFreesTheDay(t *testing.T) {
+	brief := Tool{Name: "brief", Description: "The day", Effect: EffectRead, Schema: json.RawMessage(`{"type":"object","properties":{}}`),
+		Run: func(context.Context, json.RawMessage) (Result, error) { return Result{Content: "Rain."}, nil }}
+	settled := make(chan bool, 4)
+	opener := func(_ context.Context, text string) (Opening, bool) {
+		return Opening{Tool: "brief", Settle: func(given bool) { settled <- given }}, strings.Contains(text, "good morning")
+	}
+	e := newEnv(t, func(int, llmReq) (int, []string) {
+		return 200, say("Morning, Rika. It's raining, so take the umbrella.")
+	}, envOpts{tools: []Tool{brief}, opener: opener})
+	ends := 0
+	briefed := func(playedOut bool) {
+		t.Helper()
+		ends++
+		e.agent.Say("c", "b"+strconv.Itoa(ends), "good morning", false)
+		e.hub.waitTurnEnd(t, ends)
+		if !<-settled {
+			t.Fatal("a briefing given in full was settled as not given")
+		}
+		if playedOut {
+			e.agent.mu.Lock()
+			cur := e.agent.cur
+			e.agent.mu.Unlock()
+			cur.endMu.Lock()
+			cur.fin.plays = time.Now().Add(-time.Second) // long since heard
+			cur.endMu.Unlock()
+		}
+	}
+	freed := func(how string, want bool) {
+		t.Helper()
+		select {
+		case given := <-settled:
+			if !want || given {
+				t.Errorf("%s: settled again (%v)", how, given)
+			}
+		default:
+			if want {
+				t.Errorf("%s: the day wasn't freed", how)
+			}
+		}
+	}
+
+	before := time.Now()
+	briefed(false)
+	// The estimate errs long: the app pauses before each sentence, and audio
+	// reaches the speaker a little late.
+	var sum time.Duration
+	segs := ofType[proto.Segment](e.hub.snapshot())
+	for _, sg := range segs {
+		sum += time.Duration(sg.Duration*float64(time.Second)) + playGap
+	}
+	e.agent.mu.Lock()
+	cur := e.agent.cur
+	e.agent.mu.Unlock()
+	cur.endMu.Lock()
+	if earliest := before.Add(sum + playSlack); len(segs) != 2 || cur.fin.plays.Before(earliest) {
+		t.Errorf("playback estimated to end at %v, before %v (%d segments)", cur.fin.plays, earliest, len(segs))
+	}
+	cur.endMu.Unlock()
+	e.agent.Hush() // read aloud, it takes seconds: still playing
+	ends++         // announced as interrupted
+	freed("talking on another device", true)
+
+	briefed(false)
+	e.agent.Interrupt("", 1) // during the last sentence: nothing to trim
+	freed("an interrupt in the last sentence", true)
+
+	briefed(false)
+	e.agent.Say("c2", "x", "what's for lunch?", false) // typed on another device
+	ends++
+	e.hub.waitTurnEnd(t, ends)
+	freed("typing on another device", true)
+
+	briefed(true)
+	e.agent.Hush()
+	ends++
+	e.agent.Say("c", "y", "thanks", false)
+	ends++
+	e.hub.waitTurnEnd(t, ends)
+	freed("input after it played", false)
 }

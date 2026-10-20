@@ -6,7 +6,6 @@ import {
   asJournalDay,
   asReflectionChange,
   asRoutineSettings,
-  asBriefing,
   asCoreEntry,
   asEvent,
   asMailBody,
@@ -28,7 +27,6 @@ import {
   type IdeaStatus,
   type JournalDay,
   type RoutineSettings,
-  type Briefing,
   type CalendarEvent,
   type CoreEntry,
   type MailBody,
@@ -215,18 +213,6 @@ export const journalApi = {
 };
 
 // --- routines ------------------------------------------------------------------------------
-
-export const briefingApi = {
-  // Today's briefing, or null when none was written yet.
-  today: async (signal?: AbortSignal): Promise<Briefing | null> => {
-    try {
-      return one(await request("GET", "/briefing", { signal }), asBriefing);
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 404) return null;
-      throw e;
-    }
-  },
-};
 
 export const routinesApi = {
   get: async (signal?: AbortSignal): Promise<RoutineSettings> => one(await request("GET", "/routines", { signal }), asRoutineSettings),

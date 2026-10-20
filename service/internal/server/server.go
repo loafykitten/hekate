@@ -18,12 +18,6 @@ import (
 	"github.com/loafykitten/hekate/service/internal/voice"
 )
 
-// Briefings is the morning briefing, as the socket offers and plays it.
-type Briefings interface {
-	BriefingWaiting(ctx context.Context) bool
-	PlayBriefing(ctx context.Context, origin, inputID string, quiet, replay bool) error
-}
-
 // Pinger is the slice of the store the server needs.
 type Pinger interface {
 	Ping(ctx context.Context) error
@@ -43,9 +37,6 @@ type Options struct {
 	// STT may be nil (not configured); TTS says whether replies carry audio.
 	STT voice.Transcriber
 	TTS bool
-
-	// Briefings plays the morning briefing; nil when there is none.
-	Briefings Briefings
 
 	// API registers REST routes of feature packages (tasks, reminders, ...).
 	API []func(*http.ServeMux)
@@ -67,7 +58,6 @@ type Server struct {
 	api       []func(*http.ServeMux)
 	stt       voice.Transcriber
 	tts       bool
-	briefings Briefings
 	pingEvery time.Duration
 	pingWait  time.Duration
 
@@ -75,9 +65,8 @@ type Server struct {
 	// since all of them talk to the same conversation. A transcription that
 	// finishes after newer input from any device is stale. inputMu also makes
 	// "is it still current?" and starting the turn one step.
-	inputMu   sync.Mutex
-	inputs    uint64
-	lastInput time.Time // when the newest typed, spoken or briefing input arrived
+	inputMu sync.Mutex
+	inputs  uint64
 }
 
 // startPTT records a push-to-talk as the newest input and hushes her, as one
@@ -87,7 +76,6 @@ func (s *Server) startPTT() uint64 {
 	s.inputMu.Lock()
 	defer s.inputMu.Unlock()
 	s.inputs++
-	s.lastInput = time.Now()
 	if testHookInPTTStart != nil {
 		testHookInPTTStart()
 	}
@@ -119,7 +107,6 @@ func (s *Server) say(origin, id, text string, quiet bool) {
 	s.inputMu.Lock()
 	defer s.inputMu.Unlock()
 	s.inputs++
-	s.lastInput = time.Now()
 	s.conv.Say(origin, id, text, quiet)
 }
 
@@ -141,7 +128,6 @@ func New(o Options) *Server {
 		api:       o.API,
 		stt:       o.STT,
 		tts:       o.TTS,
-		briefings: o.Briefings,
 		pingEvery: cmp.Or(o.PingInterval, pingInterval),
 		pingWait:  cmp.Or(o.PingTimeout, pingTimeout),
 	}

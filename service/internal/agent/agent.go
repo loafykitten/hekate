@@ -62,6 +62,19 @@ type Options struct {
 	AssetsDir string
 	Limits    Limits
 	Now       func() time.Time
+	// Opener, if set, may start a turn with a tool call of its own before the
+	// model is asked, such as the morning briefing on the day's first "good
+	// morning". False leaves the turn alone.
+	Opener func(ctx context.Context, userText string) (Opening, bool)
+}
+
+// Opening is the call a turn starts with. Settle, if set, is told at the end
+// of the turn whether the reply was given in full (not cut short or failed),
+// and told again (false) if its playback is stopped partway afterwards: an
+// interrupt, or new input on any device while it could still be playing.
+type Opening struct {
+	Tool   string
+	Settle func(given bool)
 }
 
 // Agent owns the conversation and runs one turn at a time.
@@ -80,6 +93,7 @@ type Agent struct {
 	gestures *gestureSource
 	limits   Limits
 	now      func() time.Time
+	opener   func(ctx context.Context, userText string) (Opening, bool)
 
 	baseCtx context.Context //nolint:containedctx // service lifetime, set by Start
 	wg      sync.WaitGroup
@@ -94,8 +108,7 @@ type turn struct {
 	inputID  string
 	origin   string
 	userText string
-	quiet    bool    // the device that asked has her voice off: no speech for this turn
-	script   *Script // a reply written beforehand, performed instead of asking the model
+	quiet    bool // the device that asked has her voice off: no speech for this turn
 
 	ctx    context.Context //nolint:containedctx // the turn's lifetime
 	cancel context.CancelCauseFunc
@@ -117,11 +130,24 @@ type turn struct {
 type finished struct {
 	rounds []*roundRec
 	segs   []segRecord
-	kept   int  // last seq stored
-	hushed bool // clients were already told it was interrupted
+	kept   int              // last seq stored
+	hushed bool             // clients were already told it was interrupted
+	settle func(given bool) // the opener's, if the turn had one
+	plays  time.Time        // estimated end of its playback
 	model  string
 	usage  proto.TurnUsage
 	at     time.Time
+}
+
+// stopped tells the opener that the reply was stopped partway after it was
+// generated. Unless the client said so (sure), that's assumed only while it
+// could still be playing.
+func (f *finished) stopped(sure bool) {
+	if f.settle == nil || (!sure && !time.Now().Before(f.plays)) {
+		return
+	}
+	f.settle(false)
+	f.settle = nil
 }
 
 // lateInterruptWindow bounds how long after a turn ends an interrupt can still
@@ -163,7 +189,7 @@ func New(o Options) (*Agent, error) {
 	a := &Agent{
 		llm: o.LLM, store: o.Store, hub: o.Hub, synth: o.Synth, tools: reg, sources: o.Context, log: o.Logger,
 		tamer: o.Tamer, loc: o.Location, chat: o.Chat, deep: o.Deep,
-		gestures: newGestureSource(o.AssetsDir), limits: o.Limits, now: o.Now,
+		gestures: newGestureSource(o.AssetsDir), limits: o.Limits, now: o.Now, opener: o.Opener,
 	}
 	if a.log == nil {
 		a.log = slog.New(slog.DiscardHandler)
@@ -249,24 +275,6 @@ func (a *Agent) Say(origin, inputID, text string, quiet bool) {
 		ctx: ctx, cancel: cancel, done: make(chan struct{})})
 }
 
-// Script is a reply she gives without thinking it up on the spot, such as the
-// morning briefing written earlier. It's performed like any reply (voice,
-// gestures, cards) and kept in history.
-type Script struct {
-	Text  string       // her words, tags included
-	Cards []proto.Card // shown beside her as she speaks
-	Cue   string       // what history keeps as the prompt it answers; never shown
-	Model string       // the model that wrote it, for the record
-}
-
-// Perform delivers a scripted reply as a turn started by origin, interrupting
-// a running turn as new input would.
-func (a *Agent) Perform(origin, inputID string, s Script, quiet bool) {
-	ctx, cancel := context.WithCancelCause(a.baseCtx)
-	a.start(&turn{id: newID("t_"), inputID: inputID, origin: origin, quiet: quiet, script: &s,
-		ctx: ctx, cancel: cancel, done: make(chan struct{})})
-}
-
 func (a *Agent) start(t *turn) {
 	t.lastSeq.Store(-1)
 	t.heard.Store(heardUnset)
@@ -275,6 +283,11 @@ func (a *Agent) start(t *turn) {
 	prev := a.cur
 	if prev != nil {
 		prev.interrupt(prev.delivered())
+		prev.endMu.Lock()
+		if prev.fin != nil {
+			prev.fin.stopped(false) // its playback stops for this one
+		}
+		prev.endMu.Unlock()
 	}
 	a.cur = t
 	a.wg.Add(1)
@@ -303,6 +316,7 @@ func (a *Agent) Interrupt(turnID string, heardSeq int) {
 		t.interrupt(heardSeq)
 		return
 	}
+	t.fin.stopped(heardSeq < t.fin.kept)
 	if heardSeq >= t.fin.kept || time.Since(t.fin.at) > lateInterruptWindow {
 		return
 	}
@@ -344,6 +358,7 @@ func (a *Agent) Hush() {
 		t.interrupt(t.delivered())
 	case !f.hushed && time.Since(f.at) <= lateInterruptWindow:
 		f.hushed = true
+		f.stopped(false)
 		_, text := collectMessages(t.id, f.rounds, f.segs, f.kept)
 		a.hub.Broadcast(proto.NewTurnEnd(t.id, proto.StatusInterrupted, text, f.model, f.usage))
 	}

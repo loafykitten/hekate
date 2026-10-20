@@ -238,7 +238,7 @@ func (s *Store) AddUsage(ctx context.Context, u Usage) error {
 }
 
 // AddBackgroundUsage records an LLM request made outside a conversation turn;
-// source names the work (mail, reflection, briefing). u.TurnID is ignored.
+// source names the work (mail, reflection). u.TurnID is ignored.
 func (s *Store) AddBackgroundUsage(ctx context.Context, source string, u Usage) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO background_usage (source, model, tier, input_tokens, output_tokens, cached_tokens, cost_usd, created_at)

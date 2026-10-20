@@ -364,10 +364,10 @@ func TestRoutineSettingsTool(t *testing.T) {
 		res, err := tool.Run(t.Context(), json.RawMessage(args))
 		return res.Content, err
 	}
-	if out, err := run(`{}`); err != nil || out != "Check-in nudges are on, between 08:00 and 22:00. The morning briefing is on, at 07:30." {
+	if out, err := run(`{}`); err != nil || out != "Check-in nudges are on, between 08:00 and 22:00." {
 		t.Errorf("report: %q %v", out, err)
 	}
-	if out, err := run(`{"heartbeat": false, "briefing_at": "7:05"}`); err != nil || !strings.Contains(out, "nudges are off") || !strings.Contains(out, "at 07:05") {
+	if out, err := run(`{"heartbeat": false, "waking_start": "9:05"}`); err != nil || !strings.Contains(out, "nudges are off") || !strings.Contains(out, "between 09:05") {
 		t.Errorf("update: %q %v", out, err)
 	}
 	if _, err := run(`{"waking_start": "noonish"}`); err == nil {

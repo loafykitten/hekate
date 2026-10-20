@@ -73,7 +73,7 @@ for either. Quality comes from strict linting, tests and the review gate, not th
   keyboard toggle for text entry, speech bubble, cards that slide in beside her, and a menu
   sheet with Today, Tasks & Lists, Reminders, Calendar, Mail, Memory and Hekate (status, logs,
   usage, ideas).
-- Installable on iOS/Android/desktop, with web push for reminders and briefings. iOS needs the
+- Installable on iOS/Android/desktop, with web push for reminders and check-ins. iOS needs the
   app added to the home screen for push.
 
 ### Calendar: Radicale
@@ -89,7 +89,7 @@ only on the tailnet and uses htpasswd auth.
 |---|---|---|---|
 | Conversation (default) | `glm-5.3-flash` | low | ~0.8 s to first word, a tenth of the price |
 | Conversation needing depth | `glm-5.3` | high | Flash calls `think_deeper` and the turn continues on the full model |
-| Reflection, briefing, rule learning | `glm-5.3-flex` | high | Not latency sensitive; flex tier is cheaper |
+| Reflection, rule learning | `glm-5.3-flex` | high | Not latency sensitive; flex tier is cheaper |
 | Bulk mail classification | `glm-5.3-flash-flex` | low | Many small calls |
 
 Measured 2026-10-19: both models stream first content in 0.3–0.8 s. Reasoning is mandatory
@@ -157,9 +157,9 @@ reviewed and revoked in the menu.
 
 ### Proactive behavior
 
-- **Morning briefing** (configurable time): weather, today's events, due tasks, reminders and
-  mail that matters. Sent as a push notification; opening the app gets a spoken greeting with
-  cards.
+- **Morning briefing**, started by the owner: the day's first "good morning" gets a spoken
+  catch-up with cards (weather, what's coming up, due tasks, reminders, mail that matters). Nothing
+  is pushed ahead of time, since the owner's day starts at different hours.
 - **Heartbeat** (every 30 min, waking hours only): cheap checks for an event starting soon
   with no prep, an overdue task, important unread mail or a due follow-up. It notifies only on
   a threshold and never repeats a nudge.
@@ -259,9 +259,13 @@ Telegram backup channel and a voice-off toggle. Next: M5 (polish).
 - **Heartbeat** (`service/internal/routines`), every 30 minutes in waking hours: one notice about
   what's new (an event to leave for, overdue tasks, mail that needs the owner, due follow-ups),
   never repeating a nudge. Settings → Routines, or `routine_settings`.
-- **Morning briefing**: written at the chosen time from the day's weather, events, tasks,
-  reminders, mail and follow-ups; pushed, then performed with cards when the app opens (a
-  scripted turn, `Agent.Perform`), or offered with a tap when audio needs one.
+- **Morning briefing**: first built as a scheduled write-up, pushed and performed when the app
+  opened. Changed on 2026-10-20 at the owner's request, because the day doesn't start at a fixed
+  hour and a pushed briefing is easy to miss or swipe away: now the day's first message containing
+  "good morning" opens its turn with `morning_briefing`, gathered fresh (the next 24 hours, not the
+  calendar day), and she answers with the catch-up. The day counts once that reply is given in
+  full, so a failed or interrupted one is tried again on the next good morning. She can also call
+  the tool whenever asked.
 - Not built: the optional evening check-in.
 
 ### Next: change requests, Telegram, voice off

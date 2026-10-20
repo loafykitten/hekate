@@ -19,8 +19,7 @@ const (
 	NotifyKindReminder = "reminder"
 	NotifyKindApproval = "approval"
 	NotifyKindChange   = "change"
-	NotifyKindNudge    = "nudge"    // the heartbeat: something needs the owner
-	NotifyKindBriefing = "briefing" // the morning briefing is ready to play
+	NotifyKindNudge    = "nudge" // the heartbeat: something needs the owner
 )
 
 // Notify tells clients that something fired, even with no turn running.

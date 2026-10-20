@@ -446,13 +446,3 @@
 .approval:last-child {
   border-bottom: 0;
 }
-
-/* The morning briefing on Today, in her words */
-.briefing {
-  margin: 0;
-  padding: var(--space-3) var(--space-4);
-  border-left: 2px solid var(--accent-line);
-  color: var(--fg);
-  font-size: 0.95rem;
-  line-height: 1.55;
-}

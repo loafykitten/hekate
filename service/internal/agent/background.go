@@ -10,7 +10,7 @@ import (
 )
 
 // RecordBackgroundUsage stores what an LLM request made outside a conversation
-// turn cost, under source (mail, reflection, briefing), so self-inspection can
+// turn cost, under source (mail, reflection), so self-inspection can
 // add it up. A nil result (the provider reported nothing) is skipped.
 func RecordBackgroundUsage(ctx context.Context, st *store.Store, source string, res *llm.Result, log *slog.Logger) {
 	if res == nil || st == nil {

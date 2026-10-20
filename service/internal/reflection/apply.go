@@ -44,13 +44,9 @@ func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (
 	}
 	var saved, updated, retired, refused, stale, held, forgottenHeld int
 	updateFailed := p.updatesCut // an update in the plan didn't happen
-	recorder := func(action, reason, mergedFrom string, also ...func(*sql.Tx) error) memory.Recorder {
+	// also runs after the change is recorded, with its id.
+	recorder := func(action, reason, mergedFrom string, also ...func(tx *sql.Tx, changeID int64) error) memory.Recorder {
 		return func(ctx context.Context, tx *sql.Tx, before, after *memory.Memory) error {
-			for _, f := range also {
-				if err := f(tx); err != nil {
-					return err
-				}
-			}
 			if s.mem.Forgets() != forgets {
 				return errForgotten
 			}
@@ -64,10 +60,19 @@ func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (
 				raw, _ := json.Marshal(after)
 				a, id = string(raw), after.ID
 			}
-			_, err := tx.ExecContext(ctx, `INSERT INTO reflection_changes (reflection_id, action, memory_id, before, after, reason, merged_from)
+			res, err := tx.ExecContext(ctx, `INSERT INTO reflection_changes (reflection_id, action, memory_id, before, after, reason, merged_from)
 				VALUES (?, ?, ?, ?, ?, ?, ?)`, rid, action, id, b, a, clip(oneLine(reason), maxReason), mergedFrom)
 			if err != nil {
 				return fmt.Errorf("record a reflection change: %w", err)
+			}
+			changeID, err := res.LastInsertId()
+			if err != nil {
+				return fmt.Errorf("record a reflection change: %w", err)
+			}
+			for _, f := range also {
+				if err := f(tx, changeID); err != nil {
+					return err
+				}
 			}
 			return nil
 		}
@@ -101,7 +106,7 @@ func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (
 	// transaction, so forgetting one of them later forgets this one too.
 	update := func(id int64, patch memory.Patch, reason string, mergedFrom []int64) error {
 		before := latest[id]
-		link := func(tx *sql.Tx) error {
+		link := func(tx *sql.Tx, changeID int64) error {
 			// The sources must still say what she read: an edit made while she
 			// thought would otherwise be merged in its old form.
 			for _, src := range mergedFrom {
@@ -115,7 +120,19 @@ func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (
 				}
 			}
 			for _, src := range mergedFrom {
-				if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO memory_merges (source_id, into_id) VALUES (?, ?)`, src, id); err != nil {
+				// A merge back the other way (this memory already merged, however
+				// indirectly, into the source) would make a cycle no undo can unwind.
+				var cycle int
+				err := tx.QueryRowContext(ctx, `WITH RECURSIVE onward(id) AS (
+						SELECT ? UNION SELECT mm.into_id FROM memory_merges mm JOIN onward ON mm.source_id = onward.id
+					) SELECT COUNT(*) FROM onward WHERE id = ?`, id, src).Scan(&cycle)
+				if err != nil {
+					return fmt.Errorf("check a merge: %w", err)
+				}
+				if cycle > 0 {
+					return httpx.BadRequest("memory %d was already merged into memory %d", id, src)
+				}
+				if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO memory_merges (source_id, into_id, change_id) VALUES (?, ?, ?)`, src, id, changeID); err != nil {
 					return fmt.Errorf("record a merge: %w", err)
 				}
 			}

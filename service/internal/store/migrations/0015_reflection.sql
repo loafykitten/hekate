@@ -30,7 +30,8 @@ CREATE INDEX reflection_changes_memory ON reflection_changes(memory_id);
 CREATE TABLE memory_merges (
     source_id INTEGER NOT NULL,
     into_id   INTEGER NOT NULL,
-    PRIMARY KEY (source_id, into_id)
+    change_id INTEGER NOT NULL, -- the reflection change that merged them; undoing it removes the link
+    PRIMARY KEY (source_id, into_id, change_id)
 );
 CREATE INDEX memory_merges_into ON memory_merges(into_id);
 

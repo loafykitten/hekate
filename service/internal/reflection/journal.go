@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/loafykitten/hekate/service/internal/httpx"
 	"github.com/loafykitten/hekate/service/internal/memory"
@@ -224,10 +223,9 @@ func (s *Service) Undo(ctx context.Context, changeID int64) (Change, error) {
 		// An undone merge holds only its own words again: it's no longer
 		// linked to what it merged, and the record drops the merged text.
 		if c.mergedFrom != "" {
-			for _, src := range strings.Split(c.mergedFrom, ",") {
-				if _, err := tx.ExecContext(ctx, `DELETE FROM memory_merges WHERE source_id = ? AND into_id = ?`, src, mid); err != nil {
-					return fmt.Errorf("undo a merge: %w", err)
-				}
+			// Only this change's links: an earlier merge of the same memories keeps its own.
+			if _, err := tx.ExecContext(ctx, `DELETE FROM memory_merges WHERE change_id = ?`, changeID); err != nil {
+				return fmt.Errorf("undo a merge: %w", err)
 			}
 			if _, err := tx.ExecContext(ctx, `UPDATE reflection_changes SET after = '' WHERE id = ?`, changeID); err != nil {
 				return fmt.Errorf("undo a merge: %w", err)

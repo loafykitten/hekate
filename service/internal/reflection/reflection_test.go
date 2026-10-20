@@ -556,3 +556,52 @@ func TestUndoInReverseOrder(t *testing.T) {
 		t.Errorf("after both undos: %+v", m)
 	}
 }
+
+func TestTooManyUpdatesHoldRetirementsBack(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	src := f.remember("preference", "Likes oolong")
+	var ids []int64
+	for i := range maxUpdates + 1 {
+		ids = append(ids, f.remember("fact", "Fact number "+strconv.Itoa(i)))
+	}
+	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "hi", "hello")
+	var ups []string
+	for i, id := range ids {
+		ups = append(ups, `{"id": `+strconv.FormatInt(id, 10)+`, "importance": 4, "reason": "u`+strconv.Itoa(i)+`"}`)
+	}
+	f.model.reply = `{"update": [` + strings.Join(ups, ",") + `], "retire": [{"id": ` + strconv.FormatInt(src, 10) + `, "reason": "merged into the last one"}], "diary": "d"}`
+	summary, err := f.svc.Reflect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.mem.Get(ctx, src); err != nil {
+		t.Errorf("retired although an update was cut (%q): %v", summary, err)
+	}
+}
+
+func TestForgettingWhileSheThinksStopsTheRun(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	dest := f.remember("person", "Mika is Rika's sister")
+	secret := f.remember("fact", "A private detail about Mika")
+	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "hi", "hello")
+	model := &editingModel{fakeModel: &fakeModel{reply: `{"update": [{"id": ` + strconv.FormatInt(dest, 10) + `,
+		"content": "Mika is Rika's sister. A private detail about Mika", "reason": "merge"}],
+		"retire": [{"id": ` + strconv.FormatInt(secret, 10) + `, "reason": "merged"}], "diary": "d"}`}}
+	model.during = func() {
+		if _, err := f.mem.Forget(ctx, secret); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.svc.llm = model
+	if _, err := f.svc.Reflect(ctx); err == nil || !strings.Contains(err.Error(), "forgotten") {
+		t.Fatalf("run: %v", err)
+	}
+	if m, _ := f.mem.Get(ctx, dest); m.Content != "Mika is Rika's sister" {
+		t.Errorf("the forgotten words reached another memory: %+v", m)
+	}
+	if start, _ := f.svc.windowStart(ctx, f.now); !start.Equal(f.now.Add(-defaultWindow)) {
+		t.Errorf("the stopped run advanced the window to %v", start)
+	}
+}

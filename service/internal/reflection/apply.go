@@ -27,10 +27,11 @@ const (
 // edited meanwhile is left alone, as are changes the memory service refuses (an
 // unknown id, a bad kind or date). Merges are an update plus retirements, so if
 // any update doesn't happen, nothing is retired: the information stays live. If
-// the database fails, the reflection stops unfinished and the next one reads
-// the same conversation again.
+// the database fails, or the owner forgets a memory while she's thinking (the
+// plan may carry its words into another memory), the reflection stops
+// unfinished and the next one reads the same conversation again.
 // Once changes start, cancellation waits until they're done.
-func (s *Service) apply(ctx context.Context, in *input, p plan) (string, error) {
+func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (string, error) {
 	ctx = context.WithoutCancel(ctx)
 	res, err := s.db.ExecContext(ctx, `INSERT INTO reflections (day, window_start, window_end, summary, created_at) VALUES (?, ?, ?, ?, ?)`,
 		in.day, stamp(in.start), stamp(in.end), p.Summary, stamp(s.now()))
@@ -42,9 +43,12 @@ func (s *Service) apply(ctx context.Context, in *input, p plan) (string, error) 
 		return "", fmt.Errorf("record the reflection: %w", err)
 	}
 	var saved, updated, retired, refused, stale, held int
-	updateFailed := false // an update in the plan didn't happen
+	updateFailed := p.updatesCut // an update in the plan didn't happen
 	recorder := func(action, reason string) memory.Recorder {
 		return func(ctx context.Context, tx *sql.Tx, before, after *memory.Memory) error {
+			if s.mem.Forgets() != forgets {
+				return errForgotten
+			}
 			id := ""
 			b, a := "", ""
 			if before != nil {
@@ -79,6 +83,8 @@ func (s *Service) apply(ctx context.Context, in *input, p plan) (string, error) 
 		case errors.As(err, &he) && he.Status < 500:
 			s.log.Warn("reflection: a change was refused", "change", what, "memory_id", id, "error", err)
 			refused++
+		case errors.Is(err, errForgotten):
+			return errors.New("a memory was forgotten while she reflected; the next reflection reads this conversation again")
 		default:
 			return fmt.Errorf("reflection: %s memory %d: %w", what, id, err)
 		}
@@ -182,6 +188,9 @@ func (s *Service) apply(ctx context.Context, in *input, p plan) (string, error) 
 	s.events.Invalidate(DomainJournal)
 	return summary, nil
 }
+
+// errForgotten stops a reflection planned before a memory was forgotten.
+var errForgotten = errors.New("a memory was forgotten after the plan was made")
 
 // findContent finds a live memory with the same text, any case.
 func findContent(mems map[int64]memory.Memory, content string) (int64, bool) {

@@ -135,6 +135,7 @@ func (s *Service) Reflect(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	forgets := s.mem.Forgets()
 	in, err := s.gather(ctx, start, end)
 	if err != nil {
 		return "", err
@@ -157,7 +158,7 @@ func (s *Service) Reflect(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return s.apply(ctx, in, p)
+	return s.apply(ctx, in, p, forgets)
 }
 
 // windowStart is where the last reflection stopped reading, bounded.

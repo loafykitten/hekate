@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -86,12 +87,15 @@ type Options struct {
 type Service struct {
 	// mu serializes read-modify-write changes (REST and her tools overlap), so a
 	// patch never writes back a stale copy of fields it didn't touch.
-	mu     sync.Mutex
-	db     *sql.DB
-	loc    *time.Location
-	events proto.Events
-	log    *slog.Logger
-	now    func() time.Time
+	mu sync.Mutex
+	db *sql.DB
+	// forgets counts memories forgotten for good, so work that read memories
+	// earlier can tell whether one has gone since (see Forgets).
+	forgets atomic.Int64
+	loc     *time.Location
+	events  proto.Events
+	log     *slog.Logger
+	now     func() time.Time
 }
 
 // New builds the service.
@@ -251,6 +255,11 @@ func (s *Service) Save(ctx context.Context, n NewMemory) (m Memory, existed bool
 // ErrChanged is returned by the IfUnchanged operations when the memory is no
 // longer what the caller last saw.
 var ErrChanged = errors.New("the memory changed since it was read")
+
+// Forgets is how many memories have been forgotten since the service started.
+// A Recorder (which runs under the service's lock) can compare it with an
+// earlier reading to refuse a change planned before a memory was forgotten.
+func (s *Service) Forgets() int64 { return s.forgets.Load() }
 
 // ErrExists is returned by Insert when a live memory already holds that text.
 var ErrExists = errors.New("a memory with that text already exists")
@@ -458,6 +467,7 @@ func (s *Service) Forget(ctx context.Context, id int64) (Memory, error) {
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM memories WHERE id = ?`, id); err != nil {
 		return Memory{}, fmt.Errorf("forget memory %d: %w", id, err)
 	}
+	s.forgets.Add(1)
 	// The journal's copies of it went too (a trigger deletes them).
 	s.events.Invalidate(proto.DomainMemory, domainJournal)
 	return m, nil

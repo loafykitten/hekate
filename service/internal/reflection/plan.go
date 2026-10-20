@@ -15,6 +15,10 @@ type plan struct {
 	Retire  []retireOp `json:"retire"`
 	Diary   string     `json:"diary"`
 	Summary string     `json:"summary"`
+
+	// updatesCut is set when the plan had more updates than are applied:
+	// one of the dropped ones may be a merge's destination.
+	updatesCut bool
 }
 
 type saveOp struct {
@@ -77,7 +81,9 @@ func parsePlan(text string) (plan, error) {
 	p.Diary = clip(p.Diary, maxDiary)
 	p.Summary = clip(oneLine(p.Summary), 200)
 	p.Save = p.Save[:min(len(p.Save), maxSaves)]
-	p.Update = p.Update[:min(len(p.Update), maxUpdates)]
+	if len(p.Update) > maxUpdates {
+		p.Update, p.updatesCut = p.Update[:maxUpdates], true
+	}
 	p.Retire = p.Retire[:min(len(p.Retire), maxRetires)]
 	return p, nil
 }

@@ -414,6 +414,19 @@ describe("Conversation: morning briefing", () => {
     expect(t.types()).not.toContain("briefing");
   });
 
+  it("sends one briefing when tapped again while a tap made during loading settles", async () => {
+    const t = setup({ ready: { ...READY, briefing: true } });
+    t.conversation.playBriefing();
+    const speech = new FakeSpeech();
+    let unlock: (ok: boolean) => void = () => {};
+    speech.unlock = () => new Promise<boolean>((resolve) => (unlock = resolve));
+    t.conversation.attachStage({ speech, bubble: undefined, character: undefined } as never);
+    t.conversation.playBriefing(); // tapped again before the unlock settled
+    unlock(true);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(t.types().filter((x) => x === "briefing")).toHaveLength(1);
+  });
+
   it("asks for another tap when a tap made while loading can't start audio", async () => {
     const t = setup({ ready: { ...READY, briefing: true } });
     t.conversation.playBriefing();

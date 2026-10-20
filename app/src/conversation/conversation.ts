@@ -283,6 +283,7 @@ export class Conversation {
       this.toast("error", "Not connected to Hekate yet.", "offline-briefing");
       return false;
     }
+    this.newInput(); // a deferred tap still settling mustn't send it twice
     this.interruptIfBusy();
     const id = this.client.briefing(!this.voice, replay);
     if (!id) return false;

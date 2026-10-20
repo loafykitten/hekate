@@ -453,7 +453,9 @@ func (s *Service) Insert(ctx context.Context, n NewMemory, rec Recorder) (Memory
 }
 
 // Forget deletes a memory for good, including its search index entry and the
-// copies reflection kept of it. A retired memory can be forgotten too.
+// copies reflection kept of it. A retired memory can be forgotten too. A memory
+// that reflection merged with others is forgotten with all of them: each holds
+// the others' words.
 func (s *Service) Forget(ctx context.Context, id int64) (Memory, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -464,8 +466,39 @@ func (s *Service) Forget(ctx context.Context, id int64) (Memory, error) {
 	if err != nil {
 		return Memory{}, fmt.Errorf("get memory %d: %w", id, err)
 	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM memories WHERE id = ?`, id); err != nil {
-		return Memory{}, fmt.Errorf("forget memory %d: %w", id, err)
+	err = s.inTx(ctx, func(tx *sql.Tx) error {
+		// The merge group: every memory linked to this one through merges, either way.
+		rows, err := tx.QueryContext(ctx, `WITH RECURSIVE grp(id) AS (
+				SELECT ?
+				UNION
+				SELECT CASE WHEN mm.source_id = grp.id THEN mm.into_id ELSE mm.source_id END
+				FROM memory_merges mm JOIN grp ON mm.source_id = grp.id OR mm.into_id = grp.id
+			) SELECT id FROM grp`, id)
+		if err != nil {
+			return fmt.Errorf("find memory %d's merges: %w", id, err)
+		}
+		var group []int64
+		for rows.Next() {
+			var g int64
+			if err := rows.Scan(&g); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("find memory %d's merges: %w", id, err)
+			}
+			group = append(group, g)
+		}
+		_ = rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("find memory %d's merges: %w", id, err)
+		}
+		for _, g := range group {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM memories WHERE id = ?`, g); err != nil {
+				return fmt.Errorf("forget memory %d: %w", g, err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return Memory{}, err
 	}
 	s.forgets.Add(1)
 	// The journal's copies of it went too (a trigger deletes them).

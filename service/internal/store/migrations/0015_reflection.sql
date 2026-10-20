@@ -24,9 +24,19 @@ CREATE TABLE reflection_changes (
 CREATE INDEX reflection_changes_reflection ON reflection_changes(reflection_id);
 CREATE INDEX reflection_changes_memory ON reflection_changes(memory_id);
 
+-- When reflection merges memories, the ones retired into another. Forgetting any
+-- memory of a merge forgets the whole group (see memory.Forget): each holds the others' words.
+CREATE TABLE memory_merges (
+    source_id INTEGER NOT NULL,
+    into_id   INTEGER NOT NULL,
+    PRIMARY KEY (source_id, into_id)
+);
+CREATE INDEX memory_merges_into ON memory_merges(into_id);
+
 -- Forgetting a memory for good also forgets the copies reflection kept of it.
 CREATE TRIGGER memories_forget_reflection_copies AFTER DELETE ON memories BEGIN
     DELETE FROM reflection_changes WHERE memory_id = old.id;
+    DELETE FROM memory_merges WHERE source_id = old.id OR into_id = old.id;
 END;
 
 CREATE TABLE diary (

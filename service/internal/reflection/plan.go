@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -39,8 +40,9 @@ type updateOp struct {
 }
 
 type retireOp struct {
-	ID     flexID `json:"id"`
-	Reason string `json:"reason"`
+	ID     flexID  `json:"id"`
+	Into   *flexID `json:"into"` // a merge: the memory it was merged into
+	Reason string  `json:"reason"`
 }
 
 // flexID accepts a memory id as a number or a string, as models write both.
@@ -56,8 +58,9 @@ func (f *flexID) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &s); err != nil {
 		return fmt.Errorf("memory id: %w", err)
 	}
-	if _, err := fmt.Sscan(strings.TrimSpace(s), &n); err != nil {
-		return fmt.Errorf("memory id %q: %w", s, err)
+	n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	if err != nil || n <= 0 {
+		return fmt.Errorf("memory id %q is not a whole number", s)
 	}
 	*f = flexID(n)
 	return nil

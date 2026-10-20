@@ -605,3 +605,53 @@ func TestForgettingWhileSheThinksStopsTheRun(t *testing.T) {
 		t.Errorf("the stopped run advanced the window to %v", start)
 	}
 }
+
+func TestForgettingEitherSideOfAMergeForgetsBoth(t *testing.T) {
+	for _, side := range []string{"destination", "source"} {
+		t.Run(side, func(t *testing.T) {
+			f := newFixture(t)
+			ctx := t.Context()
+			dest := f.remember("person", "Mika is Rika's sister")
+			src := f.remember("fact", "Mika works nights")
+			other := f.remember("fact", "Unrelated")
+			f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "hi", "hello")
+			f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(dest, 10) + `, "content": "Mika is Rika's sister and works nights", "reason": "merge"}],
+				"retire": [{"id": ` + strconv.FormatInt(src, 10) + `, "into": ` + strconv.FormatInt(dest, 10) + `, "reason": "merged"}], "diary": "d"}`
+			if _, err := f.svc.Reflect(ctx); err != nil {
+				t.Fatal(err)
+			}
+			target := dest
+			if side == "source" {
+				target = src
+			}
+			if _, err := f.mem.Forget(ctx, target); err != nil {
+				t.Fatal(err)
+			}
+			var n int
+			if err := f.store.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM memories WHERE id IN (?, ?)`, dest, src).Scan(&n); err != nil || n != 0 {
+				t.Errorf("merged memories left: %d %v", n, err)
+			}
+			if err := f.store.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM reflection_changes`).Scan(&n); err != nil || n != 0 {
+				t.Errorf("copies left: %d %v", n, err)
+			}
+			if _, err := f.mem.Get(ctx, other); err != nil {
+				t.Errorf("an unrelated memory went too: %v", err)
+			}
+		})
+	}
+}
+
+func TestMemoryIDsAreStrict(t *testing.T) {
+	for _, bad := range []string{`"1e3"`, `"010x"`, `"abc"`, `"-4"`, `"0"`} {
+		var id flexID
+		if err := id.UnmarshalJSON([]byte(bad)); err == nil {
+			t.Errorf("%s parsed as %d", bad, id)
+		}
+	}
+	for raw, want := range map[string]flexID{`12`: 12, `"12"`: 12, `" 7 "`: 7, `"010"`: 10} {
+		var id flexID
+		if err := id.UnmarshalJSON([]byte(raw)); err != nil || id != want {
+			t.Errorf("%s = %d, %v", raw, id, err)
+		}
+	}
+}

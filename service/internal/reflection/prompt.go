@@ -132,7 +132,8 @@ profile and your last diary entry. Do three things.
      facts about {{tamer}}'s life. Not small talk, not what another tool keeps (events, tasks,
      reminders), not what the profile already says. A memory's content is the fact itself in
      plain words.
-   - update: merge duplicates (keep one, rewrite its content to hold both, retire the others),
+   - update: merge duplicates (keep one, rewrite its content to hold both, and retire the others
+     with "into" set to the kept one's id),
      correct what the conversation changed, adjust importance (1 trivia to 5 must never forget).
    - retire: memories that are stale (a past event that no longer matters), contradicted by the
      conversation, or merged into another. Never retire something just because you're unsure.
@@ -151,7 +152,7 @@ most 10 saves, 15 updates and 15 retires; changing nothing is fine.
 Answer with one JSON object and nothing else:
 {"save": [{"kind": "fact|preference|person|event|follow_up", "content": "...", "importance": 3, "follow_up_at": "YYYY-MM-DD or YYYY-MM-DDTHH:MM, optional", "reason": "..."}],
  "update": [{"id": 12, "content": "optional", "kind": "optional", "importance": 4, "follow_up_at": "optional; empty string clears it", "reason": "..."}],
- "retire": [{"id": 7, "reason": "..."}],
+ "retire": [{"id": 7, "into": 12, "reason": "... (into only when merged into another memory)"}],
  "diary": "...",
  "summary": "one short line on what you changed"}`
 

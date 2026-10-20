@@ -44,8 +44,13 @@ func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (
 	}
 	var saved, updated, retired, refused, stale, held int
 	updateFailed := p.updatesCut // an update in the plan didn't happen
-	recorder := func(action, reason string) memory.Recorder {
+	recorder := func(action, reason string, also ...func(*sql.Tx) error) memory.Recorder {
 		return func(ctx context.Context, tx *sql.Tx, before, after *memory.Memory) error {
+			for _, f := range also {
+				if err := f(tx); err != nil {
+					return err
+				}
+			}
 			if s.mem.Forgets() != forgets {
 				return errForgotten
 			}
@@ -125,7 +130,19 @@ func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (
 			held++ // it may be half of a merge whose other half didn't happen
 			continue
 		}
-		if _, err := s.mem.RetireIfUnchanged(ctx, id, before, recorder(ActionRetire, r.Reason)); err != nil {
+		var link []func(*sql.Tx) error
+		if r.Into != nil {
+			if _, ok := latest[int64(*r.Into)]; ok && int64(*r.Into) != id {
+				into := int64(*r.Into)
+				link = append(link, func(tx *sql.Tx) error {
+					if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO memory_merges (source_id, into_id) VALUES (?, ?)`, id, into); err != nil {
+						return fmt.Errorf("record a merge: %w", err)
+					}
+					return nil
+				})
+			}
+		}
+		if _, err := s.mem.RetireIfUnchanged(ctx, id, before, recorder(ActionRetire, r.Reason, link...)); err != nil {
 			if err := failed(ActionRetire, id, err); err != nil {
 				return "", err
 			}

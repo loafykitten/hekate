@@ -358,7 +358,8 @@ duplicates, retires stale or contradicted ones, schedules follow-ups and writes 
 the day. With no conversation since, nothing runs. Every change is recorded and can be undone.
 A change applies only to the memory as she read it: one the owner edited while she was thinking
 is left alone. The next reflection reads on from the last one that finished. Forgetting a memory
-also deletes the copies reflections kept of it; her diary entries are her own words and stay.
+also deletes the copies reflections kept of it, and a memory merged with others is forgotten with
+all of them (each holds the others' words); her diary entries are her own words and stay.
 
 ```jsonc
 // JournalDay

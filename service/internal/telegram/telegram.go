@@ -294,21 +294,20 @@ func (s *Service) handle(ctx context.Context, u update) {
 		if cb.From.ID != s.chat || cb.Message == nil || cb.Message.Chat.ID != s.chat {
 			return
 		}
-		reply, settled := s.decideButton(ctx, cb.Data)
+		// Acknowledged at once, so the button stops spinning; the action can take
+		// a while, and its outcome follows as a reply.
 		actx, cancel := context.WithTimeout(ctx, s.sendFor)
 		defer cancel()
-		// Telegram takes at most 200 characters here; the full reply follows in the chat.
-		ack := reply
-		if utf8.RuneCountInString(ack) > 190 {
-			ack = string([]rune(ack)[:189]) + "…"
-		}
-		if err := s.call(actx, "answerCallbackQuery", map[string]any{"callback_query_id": cb.ID, "text": ack}, nil); err != nil {
+		if err := s.call(actx, "answerCallbackQuery", map[string]any{"callback_query_id": cb.ID, "text": "On it…"}, nil); err != nil {
 			s.log.Warn("cannot answer a telegram button", "error", err)
 		}
+		reply, settled := s.decideButton(ctx, cb.Data)
 		// Once it's decided (here or elsewhere) the buttons have done their job;
 		// after a failure that might pass, they stay for another try.
 		if settled {
-			if err := s.call(actx, "editMessageReplyMarkup", map[string]any{
+			ectx, cancel := context.WithTimeout(ctx, s.sendFor)
+			defer cancel()
+			if err := s.call(ectx, "editMessageReplyMarkup", map[string]any{
 				"chat_id": s.chat, "message_id": cb.Message.MessageID, "reply_markup": keyboard{Rows: [][]button{}},
 			}, nil); err != nil {
 				s.log.Warn("cannot clear telegram buttons", "error", err)

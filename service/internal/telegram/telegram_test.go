@@ -174,8 +174,11 @@ func TestApprovalButtons(t *testing.T) {
 		t.Errorf("decisions = %v", d.decisions)
 	}
 	answers := b.sent("answerCallbackQuery")
-	if len(answers) != 1 || answers[0].params["text"] != "Allowed: Moved 3 messages to Trash" {
+	if len(answers) != 1 || answers[0].params["text"] != "On it…" {
 		t.Errorf("answers = %+v", answers)
+	}
+	if sent := b.sent("sendMessage"); sent[len(sent)-1].params["text"] != "Allowed: Moved 3 messages to Trash" {
+		t.Errorf("outcome = %+v", sent[len(sent)-1])
 	}
 	if len(b.sent("editMessageReplyMarkup")) != 1 {
 		t.Error("the buttons were left on the message")
@@ -304,10 +307,10 @@ func TestSendsDontHangOnAStalledTelegram(t *testing.T) {
 	}
 }
 
-func TestLongResultsStillAcknowledgeTheButton(t *testing.T) {
+func TestAFailedDecisionKeepsTheButtons(t *testing.T) {
 	b := newFakeBot(t)
 	s, d := newService(t, b)
-	d.err = errors.New(strings.Repeat("x", 600))
+	d.err = errors.New("database is locked")
 	u := update{UpdateID: 1}
 	u.Callback = &struct {
 		ID      string   `json:"id"`
@@ -317,10 +320,6 @@ func TestLongResultsStillAcknowledgeTheButton(t *testing.T) {
 	}{ID: "cb", From: user{ID: owner}, Data: "approval:7:once", Message: &message{MessageID: 101}}
 	u.Callback.Message.Chat.ID = owner
 	s.handle(t.Context(), u)
-	answers := b.sent("answerCallbackQuery")
-	if len(answers) != 1 || len([]rune(answers[0].params["text"].(string))) > 200 {
-		t.Errorf("answer = %+v", answers)
-	}
 	if n := len(b.sent("editMessageReplyMarkup")); n != 0 {
 		t.Errorf("a failed decision took the buttons away (%d edits)", n)
 	}

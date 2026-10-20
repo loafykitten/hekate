@@ -491,11 +491,32 @@ export interface RoutineSettings {
   heartbeat: boolean; // check-in nudges
   waking_start: string; // HH:MM
   waking_end: string;
+  briefing: boolean; // the morning briefing
+  briefing_at: string; // HH:MM
 }
 
 export function asRoutineSettings(v: unknown): RoutineSettings | undefined {
   if (!isRec(v) || typeof v.heartbeat !== "boolean" || !isStr(v.waking_start) || !isStr(v.waking_end)) return undefined;
-  return { heartbeat: v.heartbeat, waking_start: v.waking_start, waking_end: v.waking_end };
+  return {
+    heartbeat: v.heartbeat,
+    waking_start: v.waking_start,
+    waking_end: v.waking_end,
+    briefing: v.briefing !== false,
+    briefing_at: strOr(v.briefing_at, "07:30"),
+  };
+}
+
+// Today's morning briefing (GET /api/briefing).
+export interface Briefing {
+  day: string;
+  text: string; // what she says, without performance tags
+  created_at: string;
+  delivered_at: string | null; // first played
+}
+
+export function asBriefing(v: unknown): Briefing | undefined {
+  if (!isRec(v) || !isStr(v.day) || !isStr(v.text)) return undefined;
+  return { day: v.day, text: v.text, created_at: strOr(v.created_at), delivered_at: strOrNull(v.delivered_at) };
 }
 
 export const IDEA_STATUSES = ["open", "done", "dismissed"] as const;

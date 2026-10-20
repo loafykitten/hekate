@@ -69,7 +69,7 @@ func (s *Service) listTool() agent.Tool {
 			}
 			// Grouping is for the model's benefit; the card keeps the same order.
 			slices.SortStableFunc(tasks, func(x, y Task) int { return strings.Compare(strings.ToLower(x.List), strings.ToLower(y.List)) })
-			card, err := taskCard(title, tasks, nil)
+			card, err := Card(title, tasks, nil)
 			if err != nil {
 				return agent.Result{}, err
 			}
@@ -312,10 +312,11 @@ func (s *Service) changedCard(ctx context.Context, list string, changed []Task, 
 			items = append(items, c)
 		}
 	}
-	return taskCard(list, items, ids)
+	return Card(list, items, ids)
 }
 
-func taskCard(title string, items []Task, highlight []string) (*agent.Card, error) {
+// Card is a `tasks` card titled title, highlighting the given ids.
+func Card(title string, items []Task, highlight []string) (*agent.Card, error) {
 	if len(items) > maxCardItems {
 		items = items[:maxCardItems]
 	}

@@ -192,6 +192,14 @@ export class ConversationClient {
     return this.send({ type: "ptt_cancel", id });
   }
 
+  // Asks for today's morning briefing; it arrives as a turn started by this client.
+  briefing(quiet = false, replay = false): string | undefined {
+    if (!this.canSend()) return undefined;
+    this.interruptForNewInput();
+    const id = newId();
+    return this.send({ type: "briefing", id, ...(quiet && { quiet }), ...(replay && { replay }) }) ? id : undefined;
+  }
+
   // Stops the current turn; the server keeps segments up to heardSeq in history.
   interrupt(heardSeq: number = this.getHeardSeq(), turnId: string | undefined = this.getHeardTurn() ?? this.activeTurn): boolean {
     this.activeTurn = undefined;

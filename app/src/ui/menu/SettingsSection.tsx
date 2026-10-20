@@ -212,10 +212,21 @@ function Routines() {
               <span>Check-ins only come between these times.</span>
             </div>
           </div>
-          <div className={styles.pair} style={{ paddingBottom: "var(--space-3)" }}>
+          <div className={styles.pair} style={{ paddingBottom: "var(--space-3)", borderBottom: "1px solid var(--hairline)" }}>
             <TextField label="From" type="time" value={st.waking_start} onChange={(e) => e.target.value && patch.mutate({ waking_start: e.target.value })} />
             <TextField label="Until" type="time" value={st.waking_end} onChange={(e) => e.target.value && patch.mutate({ waking_end: e.target.value })} />
           </div>
+          <SwitchRow className={styles.settingRow} checked={st.briefing} onChange={(briefing) => patch.mutate({ briefing })}>
+            <span className={styles.settingLabel}>
+              <strong>Morning briefing</strong>
+              <span>She writes your day up early: weather, events, what&rsquo;s due, mail that matters. You get a notification, and she tells you when you open Hekate.</span>
+            </span>
+          </SwitchRow>
+          {st.briefing && (
+            <div style={{ paddingBottom: "var(--space-3)" }}>
+              <TextField label="Ready by" type="time" value={st.briefing_at} onChange={(e) => e.target.value && patch.mutate({ briefing_at: e.target.value })} />
+            </div>
+          )}
         </div>
       )}
       {patch.isError && (

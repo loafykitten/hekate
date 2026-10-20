@@ -233,9 +233,9 @@ Full message shapes live in `docs/PROTOCOL.md` alongside the code that implement
 Every milestone ships through the PR gate in `DEVELOPMENT.md` and deploys automatically on
 merge.
 
-Status (2026-10-19): M0–M3 are merged and running on the homelab, plus tap-to-talk, a desktop
-mic that opens with the app, and 24 character clips with idle variations. Next, in order: the
-change-request pipeline and Telegram channel (below), a voice-off toggle, then M4 (proactive).
+Status (2026-10-20): M0–M4 are merged and running on the homelab, plus tap-to-talk, a desktop
+mic that opens with the app, 24 character clips with idle variations, change requests, the
+Telegram backup channel and a voice-off toggle. Next: M5 (polish).
 
 | Milestone | Contents | Done when |
 |---|---|---|
@@ -243,8 +243,26 @@ change-request pipeline and Telegram channel (below), a voice-off toggle, then M
 | **M1 Conversation** ✅ | Neuralwatt client, agent loop, persona, history, WebSocket, text chat, PTT + Parakeet STT, ElevenLabs TTS + segments + gestures | Talk to her by voice from the phone and she answers in voice with gestures |
 | **M2 Daily life** ✅ | Tasks, lists, reminders + web push, memory, calendar (CalDAV), web search/read, weather, cards, menu | Ask her to add things, remind you, schedule; see it all in the menu and on the phone calendar |
 | **M3 Mail** ✅ | Two Zoho accounts over IMAP, sweep + classification, rules, approvals, noise report | She tells you what matters and cleans what you've agreed to |
-| **M4 Proactive** | Briefing, heartbeat, follow-ups, reflection + diary, self-inspection, ideas | She greets you with your day and reflects nightly |
+| **M4 Proactive** ✅ | Briefing, heartbeat, follow-ups, reflection + diary, self-inspection, ideas | She greets you with your day and reflects nightly |
 | **M5 Polish** | Viseme lip sync from TTS timings, expression map, offline shell, UX passes | — |
+
+### M4 as built (2026-10-20)
+
+- **Routines** run on a small scheduler (`service/internal/jobs`): daily at a time, caught up
+  after an outage, or every interval. Every run is recorded and visible to her (`self_activity`).
+- **Self-inspection** (`service/internal/inspect`): `self_status`, `self_logs`, `self_usage`
+  (conversation by model, background work by source), `self_activity` (tool calls, routine runs,
+  deploys), and `idea_log`; her ideas are listed under Changes.
+- **Reflection** (`service/internal/reflection`), nightly at 03:30: tidies memories and writes the
+  diary. Changes apply only to memories as she read them, each is recorded in the same transaction
+  and can be undone from the Diary; merges are linked so forgetting either side forgets both.
+- **Heartbeat** (`service/internal/routines`), every 30 minutes in waking hours: one notice about
+  what's new (an event to leave for, overdue tasks, mail that needs the owner, due follow-ups),
+  never repeating a nudge. Settings → Routines, or `routine_settings`.
+- **Morning briefing**: written at the chosen time from the day's weather, events, tasks,
+  reminders, mail and follow-ups; pushed, then performed with cards when the app opens (a
+  scripted turn, `Agent.Perform`), or offered with a tap when audio needs one.
+- Not built: the optional evening check-in.
 
 ### Next: change requests, Telegram, voice off
 

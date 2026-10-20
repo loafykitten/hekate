@@ -9,7 +9,7 @@ function memoryStorage(initial: Record<string, string> = {}) {
   return { data, getItem: (k: string) => data.get(k) ?? null, setItem: (k: string, v: string) => void data.set(k, v) };
 }
 
-function setup(opts: { startImpl?: () => Promise<boolean>; ready?: object; storage?: ReturnType<typeof memoryStorage> } = {}) {
+function setup(opts: { startImpl?: () => Promise<boolean>; ready?: object; storage?: ReturnType<typeof memoryStorage>; stage?: object } = {}) {
   FakeSocket.reset();
   let clock = 1000;
   const mic = {
@@ -30,6 +30,7 @@ function setup(opts: { startImpl?: () => Promise<boolean>; ready?: object; stora
       return mic;
     },
   });
+  if (opts.stage) conversation.attachStage(opts.stage as never);
   conversation.start();
   const socket = FakeSocket.last;
   socket.open();
@@ -347,6 +348,146 @@ describe("Conversation: superseded input and back-to-back turns", () => {
   });
 });
 
+describe("Conversation: morning briefing", () => {
+  const stageWith = (speech: FakeSpeech) => ({ speech, bubble: undefined, character: undefined });
+
+  it("starts the waiting briefing on open when it can be heard", async () => {
+    const speech = new FakeSpeech();
+    const t = setup({ ready: { ...READY, briefing: true }, stage: stageWith(speech) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.socket.json.at(-1)).toMatchObject({ type: "briefing" });
+    expect(t.socket.json.at(-1)).not.toHaveProperty("quiet");
+    expect(t.socket.json.at(-1)).not.toHaveProperty("replay"); // on its own: only if it's still waiting
+    expect(t.state().phase).toBe("thinking");
+    expect(t.state().notices).toEqual([]);
+
+    // It arrives as this device's turn with no words of the owner's: no caption, no user line.
+    t.socket.receive({ type: "turn_start", turn_id: "t1", input_id: "x", origin: "c1", user_text: "" });
+    expect(t.state().caption).toBeUndefined();
+    expect(t.state().live.map((e) => e.role)).toEqual(["assistant"]);
+  });
+
+  it("offers it with a notice when audio needs a tap first, and plays it from there", async () => {
+    const speech = new FakeSpeech();
+    speech.unlockable = false;
+    const t = setup({ ready: { ...READY, briefing: true }, stage: stageWith(speech) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.types()).not.toContain("briefing");
+    expect(t.state().notices).toMatchObject([{ id: "briefing", play: true }]);
+    vi.advanceTimersByTime(60_000);
+    expect(t.state().notices).toHaveLength(1); // it waits until played or dismissed
+
+    t.conversation.playBriefing();
+    expect(t.socket.json.at(-1)).toMatchObject({ type: "briefing" });
+    expect(t.state().notices).toEqual([]);
+  });
+
+  it("offers it when unlocking audio never settles without a tap", async () => {
+    const speech = new FakeSpeech();
+    speech.unlock = () => new Promise<boolean>(() => {}); // pending until a gesture
+    const t = setup({ ready: { ...READY, briefing: true }, stage: stageWith(speech) });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(t.types()).not.toContain("briefing");
+    expect(t.state().notices).toMatchObject([{ id: "briefing", play: true }]);
+    t.conversation.playBriefing();
+    expect(t.socket.json.at(-1)).toMatchObject({ type: "briefing", replay: true });
+  });
+
+  it("waits for her to load before offering or playing it", async () => {
+    const t = setup({ ready: { ...READY, briefing: true } }); // no stage yet
+    await vi.advanceTimersByTimeAsync(500);
+    expect(t.state().notices).toEqual([]);
+    t.socket.receive({ type: "notify", id: "briefing-x", kind: "briefing", title: "Good morning", body: "Rain." });
+    t.conversation.playBriefing(); // tapped while she loads
+    expect(t.types()).not.toContain("briefing");
+    t.conversation.attachStage({ speech: new FakeSpeech(), bubble: undefined, character: undefined } as never);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.socket.json.at(-1)).toMatchObject({ type: "briefing", replay: true });
+  });
+
+  it("drops a tap made while loading once the owner says something else", async () => {
+    const t = setup({ ready: { ...READY, briefing: true } });
+    t.conversation.playBriefing();
+    t.conversation.sendText("actually, what's the weather?");
+    t.conversation.attachStage({ speech: new FakeSpeech(), bubble: undefined, character: undefined } as never);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(t.types()).not.toContain("briefing");
+  });
+
+  it("sends one briefing when tapped again while a tap made during loading settles", async () => {
+    const t = setup({ ready: { ...READY, briefing: true } });
+    t.conversation.playBriefing();
+    const speech = new FakeSpeech();
+    let unlock: (ok: boolean) => void = () => {};
+    speech.unlock = () => new Promise<boolean>((resolve) => (unlock = resolve));
+    t.conversation.attachStage({ speech, bubble: undefined, character: undefined } as never);
+    t.conversation.playBriefing(); // tapped again before the unlock settled
+    unlock(true);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(t.types().filter((x) => x === "briefing")).toHaveLength(1);
+  });
+
+  it("doesn't cut into another device's conversation", async () => {
+    const t = setup({ ready: { ...READY, briefing: true } });
+    t.socket.receive({ type: "turn_start", turn_id: "t9", input_id: "x", origin: "other", user_text: "hi from the desktop" });
+    t.conversation.attachStage({ speech: new FakeSpeech(), bubble: undefined, character: undefined } as never);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(t.types()).not.toContain("briefing");
+    expect(t.state().notices).toMatchObject([{ id: "briefing", play: true }]);
+  });
+
+  it("forgets a tap made while loading once another device starts a turn", async () => {
+    const t = setup({ ready: { ...READY, briefing: true } });
+    t.conversation.playBriefing();
+    t.socket.receive({ type: "turn_start", turn_id: "t9", input_id: "x", origin: "other", user_text: "hi" });
+    t.socket.receive({ type: "turn_end", turn_id: "t9", status: "done", text: "hello", model: "m", usage: { input_tokens: 0, output_tokens: 0, cost_usd: null } });
+    t.conversation.attachStage({ speech: new FakeSpeech(), bubble: undefined, character: undefined } as never);
+    await vi.advanceTimersByTimeAsync(500);
+    // The tap was superseded: no replay. Still waiting and all quiet now, it's offered as on opening.
+    const sent = t.socket.json.filter((m) => m.type === "briefing");
+    expect(sent.every((m) => !("replay" in m))).toBe(true);
+  });
+
+  it("offers it for a tap when the service says now isn't a good moment", async () => {
+    const speech = new FakeSpeech();
+    const t = setup({ ready: { ...READY, briefing: true }, stage: stageWith(speech) });
+    await vi.advanceTimersByTimeAsync(0);
+    const req = t.socket.json.at(-1)!;
+    expect(req).toMatchObject({ type: "briefing" });
+    t.socket.receive({ type: "error", code: "briefing_busy", message: "Your briefing is waiting for a quiet moment.", input_id: req.id });
+    expect(t.state().toasts).toEqual([]);
+    expect(t.state().notices).toMatchObject([{ id: "briefing", play: true }]);
+    expect(t.state().phase).toBe("idle");
+  });
+
+  it("asks for another tap when a tap made while loading can't start audio", async () => {
+    const t = setup({ ready: { ...READY, briefing: true } });
+    t.conversation.playBriefing();
+    const speech = new FakeSpeech();
+    speech.unlockable = false;
+    t.conversation.attachStage({ speech, bubble: undefined, character: undefined } as never);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(t.types()).not.toContain("briefing");
+    expect(t.state().notices).toMatchObject([{ id: "briefing", play: true }]);
+  });
+
+  it("plays quietly at once when her voice is off", async () => {
+    const speech = new FakeSpeech();
+    speech.unlockable = false;
+    const t = setup({ ready: { ...READY, briefing: true }, stage: stageWith(speech), storage: memoryStorage({ "hekate.voice": "off" }) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.socket.json.at(-1)).toMatchObject({ type: "briefing", quiet: true });
+  });
+
+  it("offers a briefing written while the app is open rather than starting to talk", async () => {
+    const t = setup({ stage: stageWith(new FakeSpeech()) });
+    t.socket.receive({ type: "notify", id: "briefing-2026-10-20", kind: "briefing", title: "Good morning", body: "Rain all day." });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.types()).not.toContain("briefing");
+    expect(t.state().notices).toMatchObject([{ id: "briefing", title: "Good morning", body: "Rain all day.", play: true }]);
+  });
+});
+
 describe("Conversation: voice off", () => {
   it("starts with her voice on, and turning it off quiets typed and spoken input and is remembered", async () => {
     const t = setup();
@@ -503,7 +644,7 @@ describe("Conversation: cards, notices and invalidation", () => {
     t.conversation.client.reconnectNow();
     FakeSocket.last.open();
     FakeSocket.last.receive(READY);
-    expect(seen.at(-1)).toEqual(["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes", "ideas", "journal", "routines"]);
+    expect(seen.at(-1)).toEqual(["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes", "ideas", "journal", "routines", "briefing"]);
   });
 });
 

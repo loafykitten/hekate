@@ -86,9 +86,10 @@ export class FakeSpeech {
     this.stopped++;
     this.queued = [];
   }
+  unlockable = true; // false: the browser wants a gesture first
   async unlock() {
     this.unlocks++;
-    return true;
+    return this.unlockable;
   }
 }
 

@@ -1,5 +1,6 @@
 import { useMemo } from "react";
-import { useApprovals, useCalendarStatus, useEvents, useNow, useSetTaskDone, useTasks, useReminders, useWeather } from "../../data/hooks";
+import { useApprovals, useBriefing, useCalendarStatus, useEvents, useNow, useSetTaskDone, useTasks, useReminders, useWeather } from "../../data/hooks";
+import { useConversation } from "../ConversationContext";
 import { addDays, dayKey, dayKeyOfMs, formatDayLong, greeting, groupEventsByDay, toRfc3339, toMs } from "../../data/time";
 import { degrees, GROUP_LABEL, isDaytime, precipLabel, weatherGroup } from "../../data/weather";
 import { WeatherIcon } from "../cards/WeatherIcon";
@@ -19,6 +20,8 @@ export function TodaySection() {
   const now = useNow();
   const today = dayKeyOfMs(now);
 
+  const conversation = useConversation();
+  const briefing = useBriefing(active);
   const weather = useWeather(active);
   const calendar = useCalendarStatus(active);
   const calendarOn = calendar.data?.configured === true;
@@ -66,6 +69,21 @@ export function TodaySection() {
         <h3 className={styles.hello}>{greeting(now)}</h3>
         <p className={styles.date}>{formatDayLong(today)}</p>
       </div>
+
+      {briefing.data && briefing.data.day === today && (
+        <section>
+          <SectionTitle
+            action={
+              <Button compact onClick={() => conversation.playBriefing()}>
+                {briefing.data.delivered_at ? "Hear it again" : "Hear it"}
+              </Button>
+            }
+          >
+            This morning
+          </SectionTitle>
+          <p className={styles.briefing}>{briefing.data.text}</p>
+        </section>
+      )}
 
       {shownApprovals.length > 0 && (
         <section>

@@ -199,7 +199,7 @@ func (s *Service) deliver(ctx context.Context, d due) {
 		s.log.Error("cannot load the reminder that fired", "id", d.id, "error", err)
 		return
 	}
-	card, err := reminderCard(notifyTitle, []Reminder{r}, []string{r.ID})
+	card, err := Card(notifyTitle, []Reminder{r}, []string{r.ID})
 	if err != nil {
 		s.log.Error("cannot build the reminder card", "id", d.id, "error", err)
 	}

@@ -30,7 +30,16 @@ export interface Notice {
   body: string;
   // The menu section it belongs to, when it has one.
   section?: "reminders" | "today" | "changes";
+  // It offers to play the morning briefing.
+  play?: boolean;
 }
+
+// The notice that offers the morning briefing when it can't start on its own.
+export const BRIEFING_NOTICE = "briefing";
+// How long the app waits to find out whether audio can start without a tap.
+const UNLOCK_WAIT_MS = 400;
+
+const wait = <T,>(ms: number, value: T) => new Promise<T>((resolve) => setTimeout(() => resolve(value), ms));
 
 function noticeSection(kind: string): Notice["section"] {
   if (kind === "reminder") return "reminders";
@@ -142,6 +151,10 @@ export class Conversation {
   private toastTimers = new Map<number, ReturnType<typeof setTimeout>>();
   private toastSeq = 0;
   private everOpen = false;
+  private briefingWaiting = false;
+  private offeringBriefing = false;
+  private deferredBriefing?: boolean; // tapped before she loaded: the replay flag to send
+  private inputGen = 0; // bumps with each new input, so a deferred briefing never cuts in after it
   private readonly deck = new CardDeck(() => this.emit());
   private notices: Notice[] = [];
   private noticeTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -169,7 +182,7 @@ export class Conversation {
     const c = this.client;
     this.unsubscribers = [
       c.onStatus((s) => this.onStatus(s)),
-      c.on("ready", (m) => this.onReady(m.capabilities, m.timezone)),
+      c.on("ready", (m) => this.onReady(m.capabilities, m.timezone, m.briefing)),
       c.on("capabilities", (m) => this.onCapabilities(m.capabilities)),
       c.on("transcript", (m) => this.onTranscript(m.id, m.text, m.superseded)),
       c.on("turn_start", (m) => this.onTurnStart(m.turn_id, m.origin, m.user_text)),
@@ -209,6 +222,14 @@ export class Conversation {
       const host = { speech: stage.speech, bubble: stage.bubble as Bubble | undefined, character: () => stage.character };
       this.player = new SegmentPlayer(host);
       this.player.onChange(() => this.emit());
+      // The briefing may have been waiting for her, or tapped while she loaded.
+      if (this.deferredBriefing !== undefined) {
+        const replay = this.deferredBriefing;
+        this.deferredBriefing = undefined;
+        void this.playDeferred(replay);
+      } else {
+        void this.offerBriefing();
+      }
     }
     this.emit();
   }
@@ -245,6 +266,75 @@ export class Conversation {
     if (!this.notices.some((n) => n.id === id)) return;
     this.notices = this.notices.filter((n) => n.id !== id);
     this.emit();
+  }
+
+  // Plays today's morning briefing here: she performs it with its cards. Call from a user gesture
+  // (it unlocks audio). Works again after it was played, as a replay. On its own, as the app opens,
+  // the app asks without replay: if another device already has it, nothing happens here.
+  playBriefing(replay = true): boolean {
+    this.unlockAudio();
+    if (!this.player) {
+      // She's still loading: ask once she can perform it (attachStage).
+      this.deferredBriefing = replay;
+      this.dismissNotice(BRIEFING_NOTICE);
+      return true;
+    }
+    if (!this.connected) {
+      this.toast("error", "Not connected to Hekate yet.", "offline-briefing");
+      return false;
+    }
+    this.newInput(); // a deferred tap still settling mustn't send it twice
+    this.interruptIfBusy();
+    const id = this.client.briefing(!this.voice, replay);
+    if (!id) return false;
+    this.briefingWaiting = false;
+    this.dismissNotice(BRIEFING_NOTICE);
+    this.setPending({ id, stage: "turn" });
+    this.emit();
+    return true;
+  }
+
+  // A tap on the briefing came while she loaded. The tap is over now, so start it only if it can be
+  // heard (or her voice is off); otherwise offer it again for another tap.
+  private async playDeferred(replay: boolean) {
+    const gen = this.inputGen;
+    const audible = !this.voice || (await Promise.race([this.stage!.speech.unlock(), wait(UNLOCK_WAIT_MS, false)]));
+    if (gen !== this.inputGen) return; // something newer was said or asked, here or on another device
+    if (audible) {
+      this.playBriefing(replay);
+      return;
+    }
+    this.briefingWaiting = true;
+    this.notices = [...this.notices.filter((n) => n.id !== BRIEFING_NOTICE), { id: BRIEFING_NOTICE, title: "Good morning", body: "Tap to hear your briefing.", play: true }].slice(-2);
+    this.emit();
+  }
+
+  // The briefing is waiting: start it when the app is in view and it can be heard (or her voice is
+  // off), otherwise offer it with a notice to tap.
+  private async offerBriefing() {
+    // Without the stage there's nothing to perform it with: attachStage offers it again.
+    if (!this.briefingWaiting || this.offeringBriefing || !this.stage) return;
+    this.offeringBriefing = true;
+    try {
+      // Only when nothing is going on, here or on another device: starting it would cut that off.
+      const quiet = () =>
+        (typeof document === "undefined" || document.visibilityState === "visible") && this.phase() === "idle" && !this.client.turnActive;
+      if (quiet()) {
+        const gen = this.inputGen;
+        // Some browsers leave the unlock pending until a tap: don't wait on it for long.
+        const audible = !this.voice || (await Promise.race([this.stage.speech.unlock(), wait(UNLOCK_WAIT_MS, false)]));
+        if (audible && this.briefingWaiting && this.connected && gen === this.inputGen && quiet()) {
+          this.playBriefing(false);
+          return;
+        }
+      }
+      if (this.briefingWaiting && !this.notices.some((n) => n.id === BRIEFING_NOTICE)) {
+        this.notices = [...this.notices, { id: BRIEFING_NOTICE, title: "Good morning", body: "Your briefing is ready.", play: true }].slice(-2);
+        this.emit();
+      }
+    } finally {
+      this.offeringBriefing = false;
+    }
   }
 
   // Turns her voice on or off on this device, and remembers it here. Off, she answers in the
@@ -288,6 +378,7 @@ export class Conversation {
       this.toast("error", "Not connected to Hekate yet.", "offline-send");
       return false;
     }
+    this.newInput();
     this.interruptIfBusy();
     const id = this.client.say(trimmed, !this.voice);
     if (!id) return false;
@@ -315,6 +406,7 @@ export class Conversation {
       this.toast("error", "Voice input isn't available right now. You can still type.", "stt-off");
       return;
     }
+    this.newInput();
     this.interruptIfBusy();
     const id = this.client.pttStart();
     if (!id) return;
@@ -408,6 +500,12 @@ export class Conversation {
     return true;
   }
 
+  // Newer input supersedes a briefing tapped while she was loading.
+  private newInput() {
+    this.inputGen++;
+    this.deferredBriefing = undefined;
+  }
+
   private unlockAudio() {
     if (!this.voice) return; // nothing to play: leave the device's audio alone
     setAudioSession("playback"); // iOS: play through the speaker and ignore the silent switch
@@ -430,7 +528,7 @@ export class Conversation {
     this.emit();
   }
 
-  private onReady(capabilities: Capabilities, timezone?: string) {
+  private onReady(capabilities: Capabilities, timezone?: string, briefing?: boolean) {
     // Show times in the zone the service schedules in, not the device's.
     if (timezone) setZone({ tz: timezone });
     this.dismissToast("connection");
@@ -442,7 +540,10 @@ export class Conversation {
     this.live = [];
     this.historyEpoch++;
     this.emit();
-    this.emitInvalidate(["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes", "ideas", "journal", "routines"]);
+    this.briefingWaiting = !!briefing;
+    if (!briefing) this.dismissNotice(BRIEFING_NOTICE);
+    else void this.offerBriefing();
+    this.emitInvalidate(["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes", "ideas", "journal", "routines", "briefing"]);
   }
 
   private onTranscript(id: string, text: string, superseded = false) {
@@ -465,6 +566,8 @@ export class Conversation {
 
   private onTurnStart(turnId: string, origin: string, userText: string) {
     const mine = origin === this.client.clientId;
+    // Any turn, from any device, is newer than a briefing tapped while she loaded.
+    if (!mine) this.newInput();
     if (mine) {
       // A newer reply of ours replaces whatever is still playing (its turn may have finished on
       // the server before this input arrived, so nothing else stops it).
@@ -478,11 +581,12 @@ export class Conversation {
       this.player?.stop();
       this.myTurn = undefined;
     }
-    if (!this.caption || this.caption.text !== userText) this.setCaption(userText);
+    // A scripted turn (the briefing) answers no words of the owner's.
+    if (userText && (!this.caption || this.caption.text !== userText)) this.setCaption(userText);
     this.running.clear();
     this.live = [
       ...this.live,
-      { id: `u:${turnId}`, turnId, role: "user" as const, text: userText, done: true },
+      ...(userText ? [{ id: `u:${turnId}`, turnId, role: "user" as const, text: userText, done: true }] : []),
       { id: `a:${turnId}`, turnId, role: "assistant" as const, text: "", done: false },
     ].slice(-MAX_LIVE);
     this.emit();
@@ -537,6 +641,14 @@ export class Conversation {
   }
 
   private onNotify(m: Notify) {
+    if (m.kind === "briefing") {
+      // Written just now: offer it (it stays until played or dismissed) rather than start talking.
+      this.briefingWaiting = true;
+      const notice: Notice = { id: BRIEFING_NOTICE, title: m.title || "Good morning", body: m.body || "Your briefing is ready.", play: true };
+      this.notices = [...this.notices.filter((n) => n.id !== BRIEFING_NOTICE), notice].slice(-2);
+      this.emit();
+      return;
+    }
     const card = m.card === undefined ? undefined : parseCard(m.card);
     if (card) this.deck.add(card, "notify");
     const notice: Notice = {
@@ -567,6 +679,13 @@ export class Conversation {
 
   private onError(code: string, message: string, inputId?: string) {
     if (this.pending && (inputId === undefined || inputId === this.pending.id)) this.clearPending();
+    if (code === "briefing_busy") {
+      // Something else is going on: it keeps waiting, offered for a tap.
+      this.briefingWaiting = true;
+      this.notices = [...this.notices.filter((n) => n.id !== BRIEFING_NOTICE), { id: BRIEFING_NOTICE, title: "Good morning", body: "Your briefing is ready.", play: true }].slice(-2);
+      this.emit();
+      return;
+    }
     if (inputId !== undefined && this.capture?.id === inputId) this.cancelCapture();
     this.toast("error", message || "Something went wrong.", `error-${code}`);
     this.emit();

@@ -19,6 +19,11 @@ export function Toasts({ onOpenSection }: { onOpenSection: (section: Section) =>
             <strong>{n.title}</strong>
             {n.body && <span>{n.body}</span>}
           </span>
+          {n.play && (
+            <button type="button" className={styles.action} onClick={() => conversation.playBriefing()}>
+              Hear it
+            </button>
+          )}
           {n.section && (
             <button
               type="button"

@@ -90,7 +90,7 @@ func (s *Service) listTool() agent.Tool {
 				if a.Status == ListPast {
 					content = "No past reminders."
 				}
-				card, err := reminderCard("Reminders", nil, nil)
+				card, err := Card("Reminders", nil, nil)
 				return agent.Result{Content: content, Card: card}, err
 			}
 			var lines []string
@@ -100,7 +100,7 @@ func (s *Service) listTool() agent.Tool {
 			if len(list) > maxCardItems {
 				list = list[:maxCardItems]
 			}
-			card, err := reminderCard("Reminders", list, nil)
+			card, err := Card("Reminders", list, nil)
 			return agent.Result{Content: strings.Join(lines, "\n"), Card: card}, err
 		},
 	}
@@ -213,11 +213,12 @@ func (s *Service) result(ctx context.Context, content string, r Reminder) (agent
 	if !slices.ContainsFunc(items, func(x Reminder) bool { return x.ID == r.ID }) {
 		items = append(items, r)
 	}
-	card, err := reminderCard("Reminders", items, []string{r.ID})
+	card, err := Card("Reminders", items, []string{r.ID})
 	return agent.Result{Content: content, Card: card}, err
 }
 
-func reminderCard(title string, items []Reminder, highlight []string) (*agent.Card, error) {
+// Card is a `reminders` card titled title, highlighting the given ids.
+func Card(title string, items []Reminder, highlight []string) (*agent.Card, error) {
 	if items == nil {
 		items = []Reminder{}
 	}

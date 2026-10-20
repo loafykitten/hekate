@@ -279,10 +279,11 @@ scope, so the next matching request runs without asking (such a run appears as a
 ### Change requests
 
 Renamon proposes changes to Hekate itself with her `propose_change` tool (at most 5 in 24 h).
-Each proposal waits as an approval of kind `change_request`. Allowing it queues the change; a
-worker on the development machine claims it, files a sanitized public issue, builds the change
-in its own worktree, opens a PR, and a separate final check merges it (which deploys) or
-rejects it. The owner can send a failed or rejected change back to the queue. Denying it can carry a note; she reads it and may propose a revised version, which
+Each proposal waits as an approval of kind `change_request`. Allowing it puts the change on the
+list (`queued`, shown as "Approved") for the owner and Claude Code to build by hand, through the
+usual PR gate. Whoever builds it records the progress with `claim`, `progress` and `finish`, so
+the owner and Renamon can follow it. The owner can put a failed or rejected change back on the
+list. Denying a proposal can carry a note; she reads it and may propose a revised version, which
 names the one it `revises`. There is no auth beyond the tailnet and the device allowlist, like
 the rest of the API.
 
@@ -298,13 +299,13 @@ the rest of the API.
   "status": "queued",                  // proposed | denied | expired | queued | working | merged | rejected | failed
   "approval_id": "41",
   "feedback": null,                    // the owner's note when denied
-  "stage": "",                         // the worker's latest step, e.g. "Building", "PR open, in review"
+  "stage": "",                         // the latest step while it's built, e.g. "Building", "PR open, in review"
   "issue_url": null,                   // https://github.com/… once filed
   "pr_url": null,
   "result": null,                      // once finished: what happened, in a line or two
-  "attempts": 1,                       // how many times the worker has taken it
+  "attempts": 1,                       // how many times it has been taken up
   "previous_result": null,             // after a retry: how the last attempt ended
-  "previous_pr_url": null,             // and its PR, whose commits the next attempt can build on
+  "previous_pr_url": null,             // and its PR
   "created_at": "…", "updated_at": "…", "finished_at": null
 }
 ```

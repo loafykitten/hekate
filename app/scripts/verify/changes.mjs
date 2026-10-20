@@ -127,7 +127,7 @@ for (const [vname, viewport] of [["phone", { width: 375, height: 812 }], ["deskt
   await page.getByRole("button", { name: /^Fix duplicate calendar events/ }).click();
   await shot(page, `${vname}-failed-open`);
   await page.getByRole("button", { name: "Try “Fix duplicate calendar events” again" }).click();
-  await page.getByText("Trying again (attempt 3)").waitFor();
+  await page.getByText("Back on the list").waitFor();
   await shot(page, `${vname}-retried`);
   console.log("retried", state.retried);
   await page.close();

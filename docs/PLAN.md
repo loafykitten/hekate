@@ -255,25 +255,17 @@ to GitHub) and capped at about five a day.
 
 1. The owner approves or denies each proposal on an approval card. A denial can carry feedback;
    Renamon reads it and either lets the idea go or proposes a revised version.
-2. A watcher on the development machine (launchd, every one to two minutes) picks up approved
-   proposals over Tailscale and starts a headless Claude Code session.
-3. That session re-checks the proposal for personal details, files a sanitized issue on the
-   public repo, builds the change in its own git worktree, runs the usual gates, gets a GPT-6
-   Astra review and resolves it (with a round cap), and opens a PR.
-4. A separate fresh agent does the final merge check: CI green, review gate passed, the diff
-   matches the issue's scope, no secrets, personal data or private hostnames. It merges (which
-   deploys; the deployer's health check and rollback still apply) or rejects with reasons.
+2. Approved proposals wait in the Changes menu. The owner and Claude Code build them by hand,
+   through the usual PR gate, recording progress so the owner and Renamon can follow it.
 
-Progress and outcomes reach the owner through Hekate (push, in-app notice, Renamon mentioning
-it).
-
-Built 2026-10-19 (`service/internal/changes`, `scripts/change-worker/`; setup in
-`DEVELOPMENT.md`). Proposals expire after 7 days unanswered, and denials carry an optional
-reason for every approval kind, not just change requests.
+Built 2026-10-19 (`service/internal/changes`). Proposals expire after 7 days unanswered, and
+denials carry an optional reason for every approval kind, not just change requests. An automated
+worker that built and merged approved changes unattended ran for one evening and was removed the
+same day: the owner prefers to build them together.
 
 **Telegram.** Notifications and actions only, not a second chat. Hekate stays the first channel;
-Telegram is used when Hekate can't deliver: the homelab or the service is down (the watcher's
-health check notices), or a deploy failed and rolled back (the deployer reports it). Messages
+Telegram is used when Hekate can't deliver: the homelab or the service is down (something off
+the homelab has to notice; to be decided now that there's no worker on the development machine), or a deploy failed and rolled back (the deployer reports it). Messages
 can carry buttons (approve or deny a proposal or a mail approval); a reply supplies deny
 feedback. The service long-polls the Bot API, so nothing is exposed to the internet, and only
 the owner's chat is accepted.

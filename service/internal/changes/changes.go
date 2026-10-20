@@ -77,9 +77,13 @@ type ChangeRequest struct {
 	IssueURL   *string `json:"issue_url"`
 	PRURL      *string `json:"pr_url"`
 	Result     *string `json:"result"`
-	CreatedAt  string  `json:"created_at"`
-	UpdatedAt  string  `json:"updated_at"`
-	FinishedAt *string `json:"finished_at"`
+	// Attempts counts the worker's runs; a retry keeps the last run's outcome and PR here.
+	Attempts       int     `json:"attempts"`
+	PreviousResult *string `json:"previous_result"`
+	PreviousPRURL  *string `json:"previous_pr_url"`
+	CreatedAt      string  `json:"created_at"`
+	UpdatedAt      string  `json:"updated_at"`
+	FinishedAt     *string `json:"finished_at"`
 }
 
 // Pusher delivers web push; push.Service satisfies it.
@@ -162,7 +166,7 @@ const statusExpr = `CASE WHEN c.state <> 'proposed' THEN c.state
 const selectCols = `SELECT c.id, c.title, c.what, c.why, c.kind, c.revises, ` + statusExpr + `, c.approval_id,
 	CASE WHEN a.status = 'denied' THEN a.note END, c.stage, c.issue_url, c.pr_url,
 	COALESCE(c.result, CASE WHEN c.state = 'proposed' AND a.status = 'failed' THEN a.result END),
-	c.created_at, c.updated_at, c.finished_at
+	c.attempts, c.last_result, c.last_pr_url, c.created_at, c.updated_at, c.finished_at
 	FROM change_requests c LEFT JOIN approvals a ON a.id = c.approval_id`
 
 type scanner interface{ Scan(dest ...any) error }
@@ -173,10 +177,11 @@ func (s *Service) scan(row scanner) (ChangeRequest, error) {
 		id                               int64
 		revises, approvalID              sql.NullInt64
 		feedback, issue, pr, result, fin sql.NullString
+		lastResult, lastPR               sql.NullString
 		created, updated                 string
 	)
 	if err := row.Scan(&id, &c.Title, &c.What, &c.Why, &c.Kind, &revises, &c.Status, &approvalID,
-		&feedback, &c.Stage, &issue, &pr, &result, &created, &updated, &fin); err != nil {
+		&feedback, &c.Stage, &issue, &pr, &result, &c.Attempts, &lastResult, &lastPR, &created, &updated, &fin); err != nil {
 		return c, err //nolint:wrapcheck // callers distinguish sql.ErrNoRows
 	}
 	c.ID = strconv.FormatInt(id, 10)
@@ -195,6 +200,7 @@ func (s *Service) scan(row scanner) (ChangeRequest, error) {
 	}
 	c.Revises, c.ApprovalID = idPtr(revises), idPtr(approvalID)
 	c.Feedback, c.IssueURL, c.PRURL, c.Result = strPtr(feedback), strPtr(issue), strPtr(pr), strPtr(result)
+	c.PreviousResult, c.PreviousPRURL = strPtr(lastResult), strPtr(lastPR)
 	c.CreatedAt, c.UpdatedAt = s.display(created), s.display(updated)
 	if fin.Valid {
 		v := s.display(fin.String)
@@ -389,8 +395,19 @@ func (s *Service) queue(ctx context.Context, raw json.RawMessage) (string, error
 // Claim hands a queued change to the worker.
 func (s *Service) Claim(ctx context.Context, id int64) (ChangeRequest, error) {
 	now := stamp(s.now())
-	return s.transition(ctx, id, StatusQueued, `UPDATE change_requests SET state = 'working', stage = 'Starting', claimed_at = ?, updated_at = ?
-		WHERE id = ? AND state = 'queued'`, now, now, id)
+	return s.transition(ctx, id, StatusQueued, `UPDATE change_requests SET state = 'working', stage = 'Starting',
+		attempts = attempts + 1, claimed_at = ?, updated_at = ? WHERE id = ? AND state = 'queued'`, now, now, id)
+}
+
+// Retry sends a failed or rejected change back to the queue, at the owner's request. The issue
+// stays; this run's outcome and PR are kept as the previous attempt, so the next run can build
+// on its work and knows why it ended.
+func (s *Service) Retry(ctx context.Context, id int64) (ChangeRequest, error) {
+	c, err := s.transition(ctx, id, "failed or rejected", `UPDATE change_requests SET state = 'queued', stage = '',
+		last_result = result, last_pr_url = COALESCE(pr_url, last_pr_url), result = NULL, pr_url = NULL,
+		claimed_at = NULL, finished_at = NULL, updated_at = ?
+		WHERE id = ? AND state IN ('failed', 'rejected')`, stamp(s.now()), id)
+	return c, err
 }
 
 // Progress records the worker's latest step and any links it has made.

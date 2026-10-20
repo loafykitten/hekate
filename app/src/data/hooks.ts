@@ -343,3 +343,7 @@ export function useDecideApproval() {
 export function useChanges(enabled = true) {
   return useQuery({ queryKey: keys.changes, queryFn: ({ signal }) => changesApi.list(signal), enabled });
 }
+
+export function useRetryChange() {
+  return useDomainMutation(["changes"], (id: string) => changesApi.retry(id));
+}

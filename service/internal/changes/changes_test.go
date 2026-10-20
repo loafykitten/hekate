@@ -397,3 +397,53 @@ func TestREST(t *testing.T) {
 		t.Errorf("list = %+v, %v", list, err)
 	}
 }
+
+func TestRetry(t *testing.T) {
+	f := newFixture(t)
+	c, a := f.propose(t, subjectRules)
+	id := mustID(t, c.ID)
+	var he *httpx.Error
+	if _, err := f.svc.Retry(t.Context(), id); !errors.As(err, &he) || he.Status != http.StatusConflict {
+		t.Fatalf("retrying a proposal = %v, want 409", err)
+	}
+	f.decide(t, a, approvals.DecisionOnce, "")
+	if _, err := f.svc.Claim(t.Context(), id); err != nil {
+		t.Fatal(err)
+	}
+	issue, pr := "https://github.com/example/hekate/issues/1", "https://github.com/example/hekate/pull/2"
+	if _, err := f.svc.Finish(t.Context(), id, StatusFailed, "Three review rounds weren't enough.", issue, pr); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := f.svc.Retry(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != StatusQueued || got.Result != nil || got.PRURL != nil || got.FinishedAt != nil || got.Stage != "" {
+		t.Errorf("retried = %+v, want queued and cleared", got)
+	}
+	if got.IssueURL == nil || *got.IssueURL != issue {
+		t.Errorf("issue = %v, want it kept", got.IssueURL)
+	}
+	if got.Attempts != 1 || got.PreviousResult == nil || *got.PreviousResult != "Three review rounds weren't enough." ||
+		got.PreviousPRURL == nil || *got.PreviousPRURL != pr {
+		t.Errorf("previous attempt = %d %v %v", got.Attempts, got.PreviousResult, got.PreviousPRURL)
+	}
+	if _, err := f.svc.Retry(t.Context(), id); !errors.As(err, &he) || he.Status != http.StatusConflict {
+		t.Errorf("retrying a queued change = %v, want 409", err)
+	}
+
+	// The next run counts as a second attempt; a merge can't be retried.
+	if got, err := f.svc.Claim(t.Context(), id); err != nil || got.Attempts != 2 {
+		t.Fatalf("second claim = %+v, %v", got, err)
+	}
+	if _, err := f.svc.Finish(t.Context(), id, StatusMerged, "Shipped.", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Retry(t.Context(), id); err == nil {
+		t.Error("retried a merged change")
+	}
+	if w := f.do("POST", "/api/changes/"+c.ID+"/retry", ""); w.Code != http.StatusConflict {
+		t.Errorf("POST retry on a merged change = %d, want 409", w.Code)
+	}
+}

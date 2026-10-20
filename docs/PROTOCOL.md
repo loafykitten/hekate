@@ -282,7 +282,7 @@ Renamon proposes changes to Hekate itself with her `propose_change` tool (at mos
 Each proposal waits as an approval of kind `change_request`. Allowing it queues the change; a
 worker on the development machine claims it, files a sanitized public issue, builds the change
 in its own worktree, opens a PR, and a separate final check merges it (which deploys) or
-rejects it. Denying it can carry a note; she reads it and may propose a revised version, which
+rejects it. The owner can send a failed or rejected change back to the queue. Denying it can carry a note; she reads it and may propose a revised version, which
 names the one it `revises`. There is no auth beyond the tailnet and the device allowlist, like
 the rest of the API.
 
@@ -302,6 +302,9 @@ the rest of the API.
   "issue_url": null,                   // https://github.com/… once filed
   "pr_url": null,
   "result": null,                      // once finished: what happened, in a line or two
+  "attempts": 1,                       // how many times the worker has taken it
+  "previous_result": null,             // after a retry: how the last attempt ended
+  "previous_pr_url": null,             // and its PR, whose commits the next attempt can build on
   "created_at": "…", "updated_at": "…", "finished_at": null
 }
 ```
@@ -312,6 +315,7 @@ the rest of the API.
 | `GET /api/changes/{id}` | | `ChangeRequest` |
 | `POST /api/changes/{id}/claim` | | `ChangeRequest` now `working`; 409 unless it was `queued` |
 | `POST /api/changes/{id}/progress` | `{ stage, issue_url?, pr_url? }` | `ChangeRequest`; 409 unless `working`. URLs must be `https://github.com/…` |
+| `POST /api/changes/{id}/retry` | | `ChangeRequest` queued again, keeping its issue; the last outcome and PR move to `previous_*`. 409 unless `failed` or `rejected`. The owner's action |
 | `POST /api/changes/{id}/finish` | `{ outcome: "merged" \| "rejected" \| "failed", result, issue_url?, pr_url? }` | `ChangeRequest`; 409 unless `working`. Tells the owner by notify and push |
 
 ### Weather

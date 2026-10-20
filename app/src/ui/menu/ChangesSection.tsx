@@ -1,19 +1,22 @@
 import { useState } from "react";
-import { changeKindLabel, changeStatusLabel, changeStatusTone, changeSummary } from "../../data/changes";
-import { useChanges, useNow } from "../../data/hooks";
+import { canRetry, changeKindLabel, changeStatusLabel, changeStatusTone, changeSummary } from "../../data/changes";
+import { useChanges, useNow, useRetryChange } from "../../data/hooks";
 import type { ChangeRequest } from "../../data/model";
 import { relativeTime } from "../../data/time";
 import { ChevronIcon } from "../icons";
-import { StateMessage } from "../kit/kit";
+import { Button, StateMessage } from "../kit/kit";
 import styles from "./changes.module.css";
 import { useMenuActive } from "./MenuContext";
 
 // What Renamon has proposed to change about Hekate herself, and how each one is going. Deciding
-// happens on the approval card; this is where you follow it afterwards.
+// happens on the approval card; this is where you follow it afterwards, and send a change that
+// failed or was turned down back for another try.
 
 function ChangeRow({ change, now, open, onToggle }: { change: ChangeRequest; now: number; open: boolean; onToggle: () => void }) {
   const summary = changeSummary(change);
   const when = change.finished_at ?? change.updated_at ?? change.created_at;
+  const retry = useRetryChange();
+  const retryable = canRetry(change);
   return (
     <div className={styles.row} data-expanded={open || undefined}>
       <button type="button" className={styles.head} aria-expanded={open} onClick={onToggle}>
@@ -28,8 +31,19 @@ function ChangeRow({ change, now, open, onToggle }: { change: ChangeRequest; now
         {summary && <span className={styles.summary}>{summary}</span>}
         <ChevronIcon className={styles.chevron} />
       </button>
-      {(change.issue_url || change.pr_url) && (
+      {(change.issue_url || change.pr_url || retryable) && (
         <div className={styles.links}>
+          {retryable && (
+            <Button
+              compact
+              busy={retry.isPending}
+              disabled={retry.isPending}
+              onClick={() => retry.mutate(change.id)}
+              aria-label={`Try “${change.title}” again`}
+            >
+              Try again
+            </Button>
+          )}
           {change.issue_url && (
             <a href={change.issue_url} target="_blank" rel="noopener noreferrer">
               Issue
@@ -42,12 +56,28 @@ function ChangeRow({ change, now, open, onToggle }: { change: ChangeRequest; now
           )}
         </div>
       )}
+      {retry.isError && (
+        <p className={styles.error} role="alert">
+          Couldn't send it back: {retry.error.message}
+        </p>
+      )}
       {open && (
         <div className={styles.detail}>
           <h3>What</h3>
           <p>{change.what || "No details."}</p>
           <h3>Why</h3>
           <p>{change.why || "No reason given."}</p>
+          {change.previous_result && (
+            <>
+              <h3>Last attempt</h3>
+              <p>{change.previous_result}</p>
+              {change.previous_pr_url && (
+                <a className={styles.inline} href={change.previous_pr_url} target="_blank" rel="noopener noreferrer">
+                  Its pull request
+                </a>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>

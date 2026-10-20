@@ -14,6 +14,21 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/changes/{id}/claim", s.handleClaim)
 	mux.HandleFunc("POST /api/changes/{id}/progress", s.handleProgress)
 	mux.HandleFunc("POST /api/changes/{id}/finish", s.handleFinish)
+	mux.HandleFunc("POST /api/changes/{id}/retry", s.handleRetry)
+}
+
+func (s *Service) handleRetry(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		httpx.Fail(w, s.log, r, err)
+		return
+	}
+	c, err := s.Retry(r.Context(), id)
+	if err != nil {
+		httpx.Fail(w, s.log, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, c)
 }
 
 func pathID(r *http.Request) (int64, error) {

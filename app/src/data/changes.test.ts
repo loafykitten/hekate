@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { changeKindLabel, changeStatusLabel, changeStatusTone, changeSummary } from "./changes";
+import { canRetry, changeKindLabel, changeStatusLabel, changeStatusTone, changeSummary } from "./changes";
 import { asChangeRequest, type ChangeRequest } from "./model";
 
 const raw = {
@@ -16,6 +16,9 @@ const raw = {
   issue_url: null,
   pr_url: null,
   result: null,
+  attempts: 0,
+  previous_result: null,
+  previous_pr_url: null,
   created_at: "2026-10-19T08:00:00Z",
   updated_at: "2026-10-19T08:00:00Z",
   finished_at: null,
@@ -25,7 +28,7 @@ const make = (over: Partial<ChangeRequest> = {}): ChangeRequest => ({ ...(asChan
 
 describe("asChangeRequest", () => {
   it("reads a full change request", () => {
-    expect(asChangeRequest(raw)).toEqual({ ...raw, revises: null, feedback: null, issue_url: null, pr_url: null, result: null, finished_at: null });
+    expect(asChangeRequest(raw)).toEqual(raw);
   });
 
   it("accepts numeric ids and fills in missing optional fields", () => {
@@ -69,5 +72,27 @@ describe("change wording", () => {
     expect(changeSummary(make({ status: "merged", result: "Shipped." }))).toBe("Shipped.");
     expect(changeSummary(make({ status: "failed", result: null, stage: "Building" }))).toBe("Building");
     expect(changeSummary(make({ status: "queued" }))).toBe("");
+  });
+});
+
+describe("retrying", () => {
+  it("offers a retry only for what the worker failed or turned down", () => {
+    expect(canRetry(make({ status: "failed", attempts: 1 }))).toBe(true);
+    expect(canRetry(make({ status: "rejected", attempts: 2 }))).toBe(true);
+    // A proposal whose approval failed reads "failed" too, but the worker never had it.
+    expect(canRetry(make({ status: "failed", attempts: 0 }))).toBe(false);
+    expect(canRetry(make({ status: "merged", attempts: 1 }))).toBe(false);
+    expect(canRetry(make({ status: "working", attempts: 1 }))).toBe(false);
+  });
+
+  it("says a retried change is trying again", () => {
+    expect(changeSummary(make({ status: "queued", attempts: 1 }))).toBe("Trying again (attempt 2)");
+    expect(changeSummary(make({ status: "queued", attempts: 0 }))).toBe("");
+  });
+
+  it("reads the last attempt, keeping only GitHub links", () => {
+    const c = asChangeRequest({ ...raw, attempts: 1, previous_result: "Three rounds weren't enough.", previous_pr_url: "https://github.com/example/hekate/pull/15" });
+    expect(c).toMatchObject({ attempts: 1, previous_result: "Three rounds weren't enough.", previous_pr_url: "https://github.com/example/hekate/pull/15" });
+    expect(asChangeRequest({ ...raw, previous_pr_url: "https://evil.example/pr" })?.previous_pr_url).toBeNull();
   });
 });

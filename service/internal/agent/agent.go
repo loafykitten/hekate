@@ -116,7 +116,6 @@ type turn struct {
 
 	lastSeq atomic.Int64 // newest segment delivered; -1 before the first
 	heard   atomic.Int64 // set by interrupt; heardUnset until then
-	pipe    atomic.Pointer[pipeline]
 
 	// endMu orders an interrupt against the end of the turn: either the turn
 	// sees the heard seq when it saves, or the interrupt sees fin and trims
@@ -162,12 +161,7 @@ func (t *turn) interrupt(heard int) {
 	t.cancel(errInterrupted)
 }
 
-func (t *turn) delivered() int {
-	if p := t.pipe.Load(); p != nil {
-		return p.last()
-	}
-	return -1
-}
+func (t *turn) delivered() int { return int(t.lastSeq.Load()) }
 
 // New builds an agent. Call Start before Say.
 func New(o Options) (*Agent, error) {

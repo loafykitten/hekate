@@ -362,7 +362,8 @@ also deletes the copies reflections kept of it, and a memory merged with others 
 all of them (each holds the others' words); her diary entries are her own words and stay. A merge
 is declared on the kept memory (`merged_from`). Forgetting keeps a one-way fingerprint of each
 deleted memory's wording (never the text), and reflection won't save or write those words again,
-though the conversation they came from stays. Retired memories can be forgotten with `DELETE
+though the conversation they came from stays: a reworded or combined version of a forgotten fact
+can still come back, and the owner can forget it again. Retired memories can be forgotten with `DELETE
 /api/memory/{id}` too (the Diary offers it).
 
 ```jsonc

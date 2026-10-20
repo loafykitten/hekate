@@ -473,7 +473,7 @@ func (r *turnRun) end(ctx context.Context, loopErr error) {
 		r.settle(status == proto.StatusDone)
 	}
 	a.hub.Broadcast(proto.NewTurnEnd(t.id, status, text, r.lastUsed, r.usage))
-	t.fin = &finished{rounds: r.rounds, segs: segs, kept: keep, model: r.lastUsed, usage: r.usage, at: time.Now()}
+	t.fin = &finished{rounds: r.rounds, segs: segs, kept: keep, model: r.lastUsed, usage: r.usage, at: time.Now(), settle: r.settle}
 	r.log.Info("turn end", "status", status, "segments", len(segs), "kept", keep+1,
 		"ms", time.Since(r.start).Milliseconds(), "first_segment_ms", r.firstSeg.Milliseconds(),
 		"in", r.usage.InputTokens, "out", r.usage.OutputTokens)

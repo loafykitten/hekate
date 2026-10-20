@@ -835,6 +835,11 @@ func TestAnOpenerMakesTheFirstCall(t *testing.T) {
 	if given := <-settled; !given {
 		t.Error("a briefing given in full was settled as not given")
 	}
+	// Its playback stopped partway after the turn ended: not given after all.
+	e.agent.Interrupt("", 0)
+	if given := <-settled; given {
+		t.Error("a briefing stopped partway stayed settled as given")
+	}
 
 	// The model is asked once, with the opener's call and its result already in.
 	reqs := e.llm.requests()
@@ -863,14 +868,14 @@ func TestAnOpenerMakesTheFirstCall(t *testing.T) {
 
 	// Anything else is left to the model.
 	e.agent.Say("c", "j", "thanks", false)
-	e.hub.waitTurnEnd(t, 2)
+	e.hub.waitTurnEnd(t, 3)
 	if m := e.llm.requests()[1].Messages; m[len(m)-1]["role"] != "user" {
 		t.Errorf("an unopened turn starts with %v", m[len(m)-1])
 	}
 
 	// A reply that fails is settled as not given, so the opener can try again.
 	e.agent.Say("c", "k", "good morning?", false)
-	e.hub.waitTurnEnd(t, 3)
+	e.hub.waitTurnEnd(t, 4)
 	if given := <-settled; given {
 		t.Error("a failed briefing was settled as given")
 	}

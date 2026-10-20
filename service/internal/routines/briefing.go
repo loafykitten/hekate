@@ -73,20 +73,26 @@ func (s *Service) Opener(ctx context.Context, userText string) (agent.Opening, b
 	return agent.Opening{Tool: BriefingTool, Settle: func(given bool) { s.settleBriefing(day, given) }}, true
 }
 
-// settleBriefing records the day's briefing as given, or frees the day for another try.
+// settleBriefing records the day's briefing as given, or frees the day for
+// another try: also when one recorded as given is stopped partway afterwards.
 func (s *Service) settleBriefing(day string, given bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.briefing == day {
 		s.briefing = ""
 	}
-	if !given {
-		return
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := s.st.SetSetting(ctx, briefedKey, day); err != nil {
-		s.log.Warn("briefing: can't record that it was given", "error", err)
+	if given {
+		if err := s.st.SetSetting(ctx, briefedKey, day); err != nil {
+			s.log.Warn("briefing: can't record that it was given", "error", err)
+		}
+		return
+	}
+	if last, err := s.st.GetSetting(ctx, briefedKey); err == nil && last == day {
+		if err := s.st.SetSetting(ctx, briefedKey, ""); err != nil {
+			s.log.Warn("briefing: can't free the day for another try", "error", err)
+		}
 	}
 }
 

@@ -69,7 +69,8 @@ type Options struct {
 }
 
 // Opening is the call a turn starts with. Settle, if set, is told at the end
-// of the turn whether the reply was given in full (not cut short or failed).
+// of the turn whether the reply was given in full (not cut short or failed),
+// and told again (false) if the owner later stops its playback partway.
 type Opening struct {
 	Tool   string
 	Settle func(given bool)
@@ -128,8 +129,9 @@ type turn struct {
 type finished struct {
 	rounds []*roundRec
 	segs   []segRecord
-	kept   int  // last seq stored
-	hushed bool // clients were already told it was interrupted
+	kept   int              // last seq stored
+	hushed bool             // clients were already told it was interrupted
+	settle func(given bool) // the opener's, if the turn had one
 	model  string
 	usage  proto.TurnUsage
 	at     time.Time
@@ -363,6 +365,9 @@ func (a *Agent) trimFinished(t *turn, heard int) {
 		a.log.Error("cannot mark turn interrupted", "turn_id", t.id, "error", err)
 	}
 	f.kept, f.hushed = heard, true
+	if f.settle != nil {
+		f.settle(false) // cut short after all
+	}
 	a.hub.Broadcast(proto.NewTurnEnd(t.id, proto.StatusInterrupted, text, f.model, f.usage))
 	a.log.Info("trimmed finished turn", "turn_id", t.id, "kept", heard+1)
 }

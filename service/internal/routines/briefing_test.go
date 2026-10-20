@@ -121,6 +121,11 @@ func TestTheDaysFirstGoodMorningOpensWithTheBriefing(t *testing.T) {
 	if open("good morning again") != nil {
 		t.Error("a second good morning the same day started it again")
 	}
+	settle(false) // its playback was stopped partway after all
+	if settle = open("good morning, from the top"); settle == nil {
+		t.Fatal("a briefing stopped partway can't be tried again")
+	}
+	settle(true)
 	f.now = time.Date(2026, 10, 21, 13, 50, 0, 0, f.loc) // the next day
 	if open("good morning") == nil {
 		t.Error("the next day's first good morning didn't start it")

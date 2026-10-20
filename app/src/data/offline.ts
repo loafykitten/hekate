@@ -1,12 +1,12 @@
 import type { Query } from "@tanstack/react-query";
-import { shouldPersistQuery } from "./persist";
+import { menuData } from "./persist";
 import { dayKeyOfMs, formatDateTime, formatTime } from "./time";
 
 // The oldest "last updated" among the menu data on screen: the time the note says the data is from.
 export function oldestUpdate(queries: Pick<Query, "queryKey" | "state">[]): number | undefined {
   let oldest: number | undefined;
   for (const q of queries) {
-    if (!shouldPersistQuery(q) || !q.state.dataUpdatedAt) continue;
+    if (!menuData(q) || !q.state.dataUpdatedAt) continue;
     if (oldest === undefined || q.state.dataUpdatedAt < oldest) oldest = q.state.dataUpdatedAt;
   }
   return oldest;

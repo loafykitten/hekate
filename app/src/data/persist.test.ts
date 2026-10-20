@@ -46,6 +46,15 @@ describe("what is persisted", () => {
     const stored = dehydrate(qc, { shouldDehydrateQuery: shouldPersistQuery }).queries.map((q) => q.queryKey[0]);
     expect(stored.sort()).toEqual(["changes", "tasks"]);
   });
+
+  it("keeps data only for a week from when it was fetched, however often it's saved again", () => {
+    const qc = new QueryClient();
+    const fetched = Date.now() - 8 * 24 * 60 * 60_000;
+    qc.setQueryData(keys.lists, [], { updatedAt: fetched });
+    qc.setQueryData(keys.changes, []);
+    const stored = dehydrate(qc, { shouldDehydrateQuery: (q) => shouldPersistQuery(q) }).queries.map((q) => q.queryKey[0]);
+    expect(stored).toEqual(["changes"]);
+  });
 });
 
 describe("storage failures", () => {

@@ -113,7 +113,9 @@ export function useDeleteTask() {
   return useDomainMutation(["tasks"], (id: string) => tasksApi.remove(id));
 }
 
-type TaskCache = [readonly unknown[], Task[] | undefined][];
+// Each task list as it was, with when it was fetched: a rollback restores both, so a failed change
+// doesn't make old data look fresh (the offline note reads that time).
+type TaskCache = { key: readonly unknown[]; data: Task[] | undefined; updatedAt: number }[];
 
 // Completing or reopening a task updates every cached task list at once, so the checkbox responds
 // immediately; a failure puts the lists back.
@@ -124,7 +126,10 @@ export function useSetTaskDone() {
       done ? tasksApi.complete(id, due) : tasksApi.reopen(id),
     onMutate: async ({ id, done }) => {
       await qc.cancelQueries({ queryKey: ["tasks", "list"] });
-      const previous: TaskCache = qc.getQueriesData<Task[]>({ queryKey: ["tasks", "list"] });
+      const previous: TaskCache = qc
+        .getQueryCache()
+        .findAll({ queryKey: ["tasks", "list"] })
+        .map((q) => ({ key: q.queryKey, data: q.state.data as Task[] | undefined, updatedAt: q.state.dataUpdatedAt }));
       const stamp = new Date().toISOString();
       qc.setQueriesData<Task[]>({ queryKey: ["tasks", "list"] }, (tasks) => {
         if (!tasks) return tasks;
@@ -138,7 +143,7 @@ export function useSetTaskDone() {
       return { previous };
     },
     onError: (_e, _v, ctx) => {
-      for (const [key, data] of ctx?.previous ?? []) qc.setQueryData(key, data);
+      for (const { key, data, updatedAt } of ctx?.previous ?? []) qc.setQueryData(key, data, { updatedAt });
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ["tasks"] }),
   });

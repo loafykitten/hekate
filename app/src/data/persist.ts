@@ -25,11 +25,16 @@ export function persistableKey(key: QueryKey): boolean {
   return true;
 }
 
-// Successful reads only. A refresh that failed (the service is down) leaves the query in the error
-// state with its last good data; that data is still kept, or going offline would erase it.
-export function shouldPersistQuery(query: Pick<Query, "queryKey" | "state">): boolean {
+// A menu read that holds good data. A refresh that failed (the service is down) leaves the query in
+// the error state with its last good data; that still counts, or going offline would erase it.
+export function menuData(query: Pick<Query, "queryKey" | "state">): boolean {
   const { status, data } = query.state;
   return (status === "success" || (status === "error" && data !== undefined)) && persistableKey(query.queryKey);
+}
+
+// What is stored: menu data fetched within the last week, however often it has been saved since.
+export function shouldPersistQuery(query: Pick<Query, "queryKey" | "state">, now = Date.now()): boolean {
+  return menuData(query) && now - query.state.dataUpdatedAt < PERSIST_MAX_AGE;
 }
 
 // localStorage that never throws: blocked, full or unavailable storage just means no cache.

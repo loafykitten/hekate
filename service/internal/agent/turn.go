@@ -79,7 +79,6 @@ func (a *Agent) runTurn(t *turn, prev *turn) {
 		synth = nil
 	}
 	r.pipe = newPipeline(ctx, synth, a.vocabulary(), r.emitSegment, r.log)
-	t.pipe.Store(r.pipe)
 
 	loopErr := r.loop(ctx)
 	r.pipe.finish()
@@ -449,7 +448,7 @@ func (r *turnRun) end(ctx context.Context, loopErr error) {
 	}
 
 	// Keep only what the user heard of an interrupted reply.
-	keep := r.pipe.last()
+	keep := t.delivered()
 	if status == proto.StatusInterrupted {
 		if h := t.heard.Load(); h != heardUnset {
 			keep = min(int(h), keep)

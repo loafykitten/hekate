@@ -373,24 +373,28 @@ func TestExecutorPanicIsAFailure(t *testing.T) {
 	}
 }
 
+// endsTheCaller is an executor that cancels the caller's context once it is
+// running, then succeeds only if its own context survived that.
+func endsTheCaller(cancel context.CancelFunc) Executor {
+	return func(ctx context.Context, _ json.RawMessage) (string, error) {
+		cancel()
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		return "finished", nil
+	}
+}
+
 func TestExecutorOutlivesTheCaller(t *testing.T) {
 	f := newFixture(t)
-	if err := f.svc.Register("slow", func(ctx context.Context, _ json.RawMessage) (string, error) {
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-time.After(50 * time.Millisecond):
-			return "finished", nil
-		}
-	}); err != nil {
+	ctx, cancel := context.WithCancel(t.Context())
+	if err := f.svc.Register("slow", endsTheCaller(cancel)); err != nil {
 		t.Fatal(err)
 	}
 	a, err := f.svc.Request(t.Context(), Request{Kind: "slow", Title: "Slow?"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(t.Context())
-	go func() { time.Sleep(10 * time.Millisecond); cancel() }()
 	// The caller's context ends mid-run; the action and its record must not.
 	got, err := f.svc.Decide(ctx, mustID(a.ID), DecisionOnce, "")
 	if err != nil || got.Status != StatusDone || str(got.Result) != "finished" {
@@ -417,14 +421,8 @@ func TestBroaderRuleCoversANarrowerRequest(t *testing.T) {
 
 func TestRuleRunOutlivesTheCaller(t *testing.T) {
 	f := newFixture(t)
-	if err := f.svc.Register("slow", func(ctx context.Context, _ json.RawMessage) (string, error) {
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-time.After(50 * time.Millisecond):
-			return "finished", nil
-		}
-	}); err != nil {
+	cancel := func() {} // the first run, by the owner's tap, is left alone
+	if err := f.svc.Register("slow", endsTheCaller(func() { cancel() })); err != nil {
 		t.Fatal(err)
 	}
 	slow := Request{Kind: "slow", Title: "Slow?", Scope: "s", ScopeLabel: "slow things"}
@@ -433,8 +431,8 @@ func TestRuleRunOutlivesTheCaller(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.decide(t, a, DecisionAlways)
-	ctx, cancel := context.WithCancel(t.Context())
-	go func() { time.Sleep(10 * time.Millisecond); cancel() }()
+	ctx, stop := context.WithCancel(t.Context())
+	cancel = stop
 	// The turn is interrupted mid-run; the rule's action and its record must not be.
 	got, err := f.svc.Request(ctx, slow)
 	if err != nil || got.Status != StatusDone || str(got.Result) != "finished" || str(got.DecidedBy) != DecidedByRule {

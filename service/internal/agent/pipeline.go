@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/loafykitten/hekate/service/internal/perform"
@@ -49,8 +48,7 @@ type pipeline struct {
 
 	mu      sync.Mutex
 	records []segRecord
-	playEnd time.Time    // when a client playing the segments as they arrive would finish
-	lastSeq atomic.Int64 // -1 until the first segment is emitted
+	playEnd time.Time // when a client playing the segments as they arrive would finish
 	closed  bool
 }
 
@@ -61,7 +59,6 @@ func newPipeline(ctx context.Context, synth voice.Synthesizer, vocab perform.Voc
 		jobs: make(chan *job, jobBuffer),
 		sem:  make(chan struct{}, synthConcurrency),
 	}
-	p.lastSeq.Store(-1)
 	p.emitW.Add(1)
 	go p.run()
 	return p
@@ -125,7 +122,6 @@ func (p *pipeline) run() {
 		p.records = append(p.records, segRecord{seq: seq, round: j.round, raw: j.raw, display: j.tagged.Display})
 		p.playEnd = later(p.playEnd, time.Now()).Add(time.Duration(seg.Duration*float64(time.Second)) + playGap)
 		p.mu.Unlock()
-		p.lastSeq.Store(int64(seq))
 		seq++
 	}
 }
@@ -140,9 +136,6 @@ func (p *pipeline) finish() {
 	p.emitW.Wait()
 	p.synthW.Wait()
 }
-
-// last is the highest emitted seq, or -1.
-func (p *pipeline) last() int { return int(p.lastSeq.Load()) }
 
 // The app leaves a short pause before each sentence (its lead and the gap
 // between queued ones, about 150 ms), and delivery, decoding and the output

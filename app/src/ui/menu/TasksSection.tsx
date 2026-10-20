@@ -203,7 +203,7 @@ export function TasksSection() {
           add();
         }}
       >
-        <TextField label={selected ? `Add to ${selected}` : "Add a task"} value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Oat milk" enterKeyHint="done" maxLength={300} />
+        <TextField label={selected ? `Add to ${selected}` : "Add a task"} value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="What needs doing?" enterKeyHint="done" maxLength={300} />
         <Button type="submit" variant="primary" busy={create.isPending} disabled={!draft.trim()} aria-label="Add task">
           <PlusIcon />
           Add

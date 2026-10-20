@@ -22,7 +22,9 @@ building and `HANDOFF.md` for the character slice.
    - `cd service && go vet ./... && go test ./...` (and `golangci-lint run` if installed)
    - `cd app && npm run check` (typecheck, lint, unit tests, build)
    - for UI changes, start the dev servers and run `npm run verify:screens -- app/verify-out/<name>`,
-     then look at the screenshots
+     then look at the screenshots. `npm run verify:tour -- verify-out/tour` screenshots every screen
+     (stage, a turn with cards, notices, the log, each menu section, empty and error states) on
+     phone and desktop with fixture data, for a UX pass
    - for offline-shell changes, `npm run build`, `npx vite preview --port 5318 --strictPort`, then
      `npm run verify:offline -- verify-out` (it needs the character files; see the script header)
 3. Push and open a PR with `gh pr create --fill` (or a written body: what, why, how verified).

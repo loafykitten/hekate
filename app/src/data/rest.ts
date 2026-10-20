@@ -53,6 +53,14 @@ export class ApiError extends Error {
   }
 }
 
+// The proxy answers these when the service itself is down or restarting.
+const GATEWAY = [502, 503, 504];
+
+// The service couldn't be reached at all (no network, or the proxy found nothing behind it).
+export function unreachable(e: unknown): boolean {
+  return e instanceof ApiError && (e.status === 0 || GATEWAY.includes(e.status));
+}
+
 type Query = Record<string, string | number | undefined>;
 
 export interface RequestOptions {
@@ -84,6 +92,7 @@ export async function request(method: string, path: string, { body, query, signa
     throw new ApiError("Hekate isn't reachable.", 0);
   }
   if (res.status === 204) return undefined;
+  if (GATEWAY.includes(res.status)) throw new ApiError("Hekate isn't reachable.", res.status);
   let json: unknown;
   try {
     json = await res.json();

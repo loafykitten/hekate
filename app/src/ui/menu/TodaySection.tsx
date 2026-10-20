@@ -99,7 +99,9 @@ export function TodaySection() {
           >
             Today&rsquo;s events
           </SectionTitle>
-          {events.isError && !events.data ? (
+          {calendar.isError && !calendar.data ? (
+            <StateMessage kind="error" title="Couldn't load events" onRetry={() => void calendar.refetch()} />
+          ) : events.isError && !events.data ? (
             <StateMessage kind="error" title="Couldn't load events" onRetry={() => void events.refetch()} />
           ) : !events.data ? (
             <StateMessage kind="loading" />

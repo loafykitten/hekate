@@ -23,6 +23,7 @@ import {
   type MemoryFields,
   type ReminderFields,
   type TaskFields,
+  unreachable,
 } from "./rest";
 
 // TanStack Query bindings for the menu. Queries fetch only while a section is on screen;
@@ -36,9 +37,12 @@ export function createQueryClient(onError: (message: string, key: string) => voi
     queryCache: new QueryCache({
       onError: (error, query) => {
         // Only a menu section's first failure (nothing to show yet) is worth a toast. The health
-        // poll and the log have their own ways of saying so.
+        // poll and the log have their own ways of saying so. The service being out of reach is one
+        // toast, however many sections found out.
         const section = String(query.queryKey[0]);
-        if (!query.meta?.quiet && query.state.data === undefined && (DOMAINS as readonly string[]).includes(section)) onError(describe(error), `rest-${String(query.queryKey[0])}`);
+        if (!query.meta?.quiet && query.state.data === undefined && (DOMAINS as readonly string[]).includes(section)) {
+          onError(describe(error), unreachable(error) ? "rest-unreachable" : `rest-${section}`);
+        }
       },
     }),
     mutationCache: new MutationCache({
@@ -52,7 +56,7 @@ export function createQueryClient(onError: (message: string, key: string) => voi
       onError: (error, _vars, _ctx, mutation) => {
         // A decision somebody else made first is not a failure: the card refetches and shows it.
         if (mutation.meta?.handles409 && error instanceof ApiError && error.status === 409) return;
-        onError(describe(error), "rest-mutation");
+        onError(describe(error), unreachable(error) ? "rest-unreachable" : "rest-mutation");
       },
     }),
     defaultOptions: {

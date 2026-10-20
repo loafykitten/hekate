@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, calendarApi, fetchWeather, memoryApi, remindersApi, request, tasksApi } from "./rest";
+import { ApiError, calendarApi, fetchWeather, memoryApi, remindersApi, request, tasksApi, unreachable } from "./rest";
 
 function respond(status: number, body?: unknown, ok = status >= 200 && status < 300) {
   const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<unknown>>(async () => ({
@@ -48,6 +48,17 @@ describe("request", () => {
   it("says so when the service can't be reached", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new TypeError("Failed to fetch"))));
     await expect(request("GET", "/tasks")).rejects.toMatchObject({ message: "Hekate isn't reachable.", status: 0 });
+  });
+
+  it("says the same when the proxy finds the service down, whatever the proxy's own words", async () => {
+    for (const status of [502, 503, 504]) {
+      respond(status, { error: "bad gateway" });
+      const err = await request("GET", "/tasks").catch((e: unknown) => e);
+      expect(err).toMatchObject({ message: "Hekate isn't reachable.", status });
+      expect(unreachable(err)).toBe(true);
+    }
+    respond(500, { error: "database is locked" });
+    expect(unreachable(await request("GET", "/tasks").catch((e: unknown) => e))).toBe(false);
   });
 });
 

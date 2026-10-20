@@ -233,9 +233,9 @@ Full message shapes live in `docs/PROTOCOL.md` alongside the code that implement
 Every milestone ships through the PR gate in `DEVELOPMENT.md` and deploys automatically on
 merge.
 
-Status (2026-10-20): M0–M4 are merged and running on the homelab, plus tap-to-talk, a desktop
+Status (2026-10-20): M0–M5 are merged and running on the homelab, plus tap-to-talk, a desktop
 mic that opens with the app, 24 character clips with idle variations, change requests, the
-Telegram backup channel and a voice-off toggle. Next: M5 (polish).
+Telegram backup channel, a voice-off toggle and a morning briefing the owner starts.
 
 | Milestone | Contents | Done when |
 |---|---|---|
@@ -244,7 +244,7 @@ Telegram backup channel and a voice-off toggle. Next: M5 (polish).
 | **M2 Daily life** ✅ | Tasks, lists, reminders + web push, memory, calendar (CalDAV), web search/read, weather, cards, menu | Ask her to add things, remind you, schedule; see it all in the menu and on the phone calendar |
 | **M3 Mail** ✅ | Two Zoho accounts over IMAP, sweep + classification, rules, approvals, noise report | She tells you what matters and cleans what you've agreed to |
 | **M4 Proactive** ✅ | Briefing, heartbeat, follow-ups, reflection + diary, self-inspection, ideas | She greets you with your day and reflects nightly |
-| **M5 Polish** | Viseme lip sync from TTS timings, expression map, offline shell, UX passes | — |
+| **M5 Polish** ✅ | Viseme lip sync from TTS timings, expression map, offline shell, UX passes | Her mouth makes the shapes of her words, the app opens offline, every screen reviewed |
 
 ### M5 as built (2026-10-20)
 
@@ -265,6 +265,12 @@ Telegram backup channel and a voice-off toggle. Next: M5 (polish).
   approvals, searches, the health poll, the conversation socket. Storage that is blocked or full
   just means no cache. Actions that need the service say "Hekate isn't reachable."
   `npm run verify:offline` covers it.
+- **Expression map**: ElevenLabs tags already drive her face since M1 (`[laughs]` squints and
+  smiles, `[sighs]` lowers the brows and lids; `app/src/conversation/schedule.ts`).
+- **UX pass**: `npm run verify:tour` screenshots every screen on phone and desktop. The review
+  fixed the service-down state (one "Hekate isn't reachable." toast instead of one raw proxy
+  error per section, and today's events say they couldn't load instead of spinning), the task
+  field's placeholder, and the calendar's day strip, which now fades at its edges.
 
 ### M4 as built (2026-10-20)
 

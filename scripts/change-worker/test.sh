@@ -99,7 +99,9 @@ case "\$kind" in
   sync)
     { git fetch --quiet origin main && git merge --quiet -X ours --no-edit origin/main; } >&2 ;;
   check)
-    [[ -e "\$fake/move-during-check" ]] && { rm "\$fake/move-during-check"; "$tmp/bin/move-main" "late-\$CHANGE_ID.txt" "late"; } ;;
+    [[ -e "\$fake/move-during-check" ]] && { rm "\$fake/move-during-check"; "$tmp/bin/move-main" "late-\$CHANGE_ID.txt" "late"; }
+    # Hekate goes away: point the worker's config at a closed port until the test restores it.
+    [[ -e "\$fake/hekate-down" ]] && echo "HEKATE_URL=http://127.0.0.1:1" >"$tmp/config/hekate/change-worker.env" ;;
 esac
 jq '{is_error: false, total_cost_usd: 0, structured_output: .}' "\$fake/\$kind.json"
 EOF
@@ -226,6 +228,16 @@ touch "$fake/close-fails"
 tick; expect "$id" working OPEN
 scenario="...and the next tick settles it with the run's own outcome"
 rm "$fake/close-fails"
+tick; expect "$id" rejected CLOSED
+[[ "$(field "$id" result)" == "Out of scope." ]] || fail "result $(field "$id" result)"
+
+scenario="Hekate is down when the run reports: stays working, the outcome kept"
+id="$(queue)"; build_opens "$id"
+echo '{"verdict":"reject","summary":"Out of scope."}' >"$fake/check.json"
+touch "$fake/hekate-down"
+tick; expect "$id" working CLOSED
+scenario="...and the next tick reports the run's own outcome once Hekate is back"
+echo "HEKATE_URL=http://127.0.0.1:$port" >"$tmp/config/hekate/change-worker.env"
 tick; expect "$id" rejected CLOSED
 [[ "$(field "$id" result)" == "Out of scope." ]] || fail "result $(field "$id" result)"
 

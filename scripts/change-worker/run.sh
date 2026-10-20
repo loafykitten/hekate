@@ -52,7 +52,12 @@ finish() {
       set -- "$@" --pr "$merged"
     fi
   fi
-  "$report" finish "$id" "$outcome" "$result" "$@"
+  # Checked explicitly: on the exit path this runs under `|| true`, where set -e is off.
+  if ! "$report" finish "$id" "$outcome" "$result" "$@"; then
+    log "change $id: cannot reach Hekate to report $outcome; leaving it for watch.sh"
+    finished=1 # the saved outcome is what watch.sh reports, not a generic failure
+    return 0
+  fi
   rm -f "$run/outcome.json"
   finished=1
   log "change $id: finished $outcome"

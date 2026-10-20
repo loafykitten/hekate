@@ -880,3 +880,41 @@ func TestAnOpenerMakesTheFirstCall(t *testing.T) {
 		t.Error("a failed briefing was settled as given")
 	}
 }
+
+// Someone starting to talk on another device stops a finished briefing that
+// may still be playing; it's freed only if it can't have finished yet.
+func TestHushFreesABriefingStillPlaying(t *testing.T) {
+	brief := Tool{Name: "brief", Description: "The day", Effect: EffectRead, Schema: json.RawMessage(`{"type":"object","properties":{}}`),
+		Run: func(context.Context, json.RawMessage) (Result, error) { return Result{Content: "Rain."}, nil }}
+	settled := make(chan bool, 4)
+	opener := func(context.Context, string) (Opening, bool) {
+		return Opening{Tool: "brief", Settle: func(given bool) { settled <- given }}, true
+	}
+	e := newEnv(t, func(int, llmReq) (int, []string) {
+		return 200, say("Morning, Rika. It's raining, so take the umbrella.")
+	}, envOpts{tools: []Tool{brief}, opener: opener})
+
+	e.agent.Say("c", "i", "good morning", false)
+	e.hub.waitTurnEnd(t, 1)
+	<-settled
+	e.agent.Hush() // read aloud, it takes seconds: still playing
+	if given := <-settled; given {
+		t.Error("a briefing hushed while it plays stayed settled as given")
+	}
+
+	e.agent.Say("c", "j", "good morning", false)
+	e.hub.waitTurnEnd(t, 3)
+	<-settled
+	e.agent.mu.Lock()
+	cur := e.agent.cur
+	e.agent.mu.Unlock()
+	cur.endMu.Lock()
+	cur.fin.plays = time.Now().Add(-time.Second) // long since heard
+	cur.endMu.Unlock()
+	e.agent.Hush()
+	select {
+	case given := <-settled:
+		t.Errorf("a briefing hushed after it played was settled again (%v)", given)
+	default:
+	}
+}

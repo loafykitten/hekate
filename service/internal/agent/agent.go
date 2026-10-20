@@ -132,6 +132,7 @@ type finished struct {
 	kept   int              // last seq stored
 	hushed bool             // clients were already told it was interrupted
 	settle func(given bool) // the opener's, if the turn had one
+	plays  time.Time        // estimated end of its playback
 	model  string
 	usage  proto.TurnUsage
 	at     time.Time
@@ -339,6 +340,9 @@ func (a *Agent) Hush() {
 		t.interrupt(t.delivered())
 	case !f.hushed && time.Since(f.at) <= lateInterruptWindow:
 		f.hushed = true
+		if f.settle != nil && time.Now().Before(f.plays) {
+			f.settle(false) // most likely stopped partway
+		}
 		_, text := collectMessages(t.id, f.rounds, f.segs, f.kept)
 		a.hub.Broadcast(proto.NewTurnEnd(t.id, proto.StatusInterrupted, text, f.model, f.usage))
 	}

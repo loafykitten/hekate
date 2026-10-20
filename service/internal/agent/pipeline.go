@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/loafykitten/hekate/service/internal/perform"
 	"github.com/loafykitten/hekate/service/internal/voice"
@@ -48,6 +49,7 @@ type pipeline struct {
 
 	mu      sync.Mutex
 	records []segRecord
+	playEnd time.Time    // when a client playing the segments as they arrive would finish
 	lastSeq atomic.Int64 // -1 until the first segment is emitted
 	closed  bool
 }
@@ -121,6 +123,7 @@ func (p *pipeline) run() {
 		p.emit(seg)
 		p.mu.Lock()
 		p.records = append(p.records, segRecord{seq: seq, round: j.round, raw: j.raw, display: j.tagged.Display})
+		p.playEnd = later(p.playEnd, time.Now()).Add(time.Duration(seg.Duration * float64(time.Second)))
 		p.mu.Unlock()
 		p.lastSeq.Store(int64(seq))
 		seq++
@@ -140,6 +143,20 @@ func (p *pipeline) finish() {
 
 // last is the highest emitted seq, or -1.
 func (p *pipeline) last() int { return int(p.lastSeq.Load()) }
+
+// playsUntil estimates when playback of what was emitted ends.
+func (p *pipeline) playsUntil() time.Time {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.playEnd
+}
+
+func later(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
+}
 
 func (p *pipeline) segments() []segRecord {
 	p.mu.Lock()

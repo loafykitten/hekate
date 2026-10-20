@@ -1,4 +1,5 @@
 import { createSyncStoragePersister } from "@tanstack/query-sync-storage-persister";
+import type { Persister } from "@tanstack/react-query-persist-client";
 import type { Query, QueryKey } from "@tanstack/react-query";
 import { DOMAINS } from "./queryKeys";
 
@@ -48,6 +49,13 @@ export function safeStorage(get: () => Storage | undefined = () => globalThis.lo
   };
 }
 
-export function createQueryPersister(storage = safeStorage()) {
+export function createQueryPersister(storage = safeStorage()): Persister {
   return createSyncStoragePersister({ storage: storage as Storage, key: PERSIST_KEY, throttleTime: 1000 });
+}
+
+// While a change is in flight (a task ticked off, say), the cache already shows it but the service
+// hasn't confirmed it. Nothing is stored then, so closing the app mid-change can't leave a copy
+// showing a change that never happened; the cache changes again once it settles, and that's stored.
+export function holdWhileChanging(persister: Persister, changing: () => boolean): Persister {
+  return { ...persister, persistClient: (client) => (changing() ? undefined : persister.persistClient(client)) };
 }

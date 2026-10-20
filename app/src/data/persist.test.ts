@@ -1,6 +1,6 @@
 import { dehydrate, QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
-import { createQueryPersister, PERSIST_KEY, persistableKey, safeStorage, shouldPersistQuery } from "./persist";
+import { createQueryPersister, holdWhileChanging, PERSIST_KEY, persistableKey, safeStorage, shouldPersistQuery } from "./persist";
 import { keys } from "./queryKeys";
 
 describe("what is persisted", () => {
@@ -91,5 +91,23 @@ describe("storage failures", () => {
       }),
     );
     expect(await broken.restoreClient()).toBeUndefined();
+  });
+});
+
+describe("holdWhileChanging", () => {
+  it("stores nothing while a change is in flight, so an unconfirmed tick-off is never kept", async () => {
+    const stored: unknown[] = [];
+    const inner = { persistClient: (c: unknown) => void stored.push(c), restoreClient: async () => undefined, removeClient: () => undefined };
+    const qc = new QueryClient();
+    const persister = holdWhileChanging(inner, () => qc.isMutating() > 0);
+    let finish!: () => void;
+    const pending = qc.getMutationCache().build(qc, { mutationFn: () => new Promise<void>((r) => (finish = r)) }).execute(undefined);
+    await Promise.resolve();
+    await persister.persistClient({ timestamp: 1, buster: "", clientState: dehydrate(qc) });
+    expect(stored).toHaveLength(0);
+    finish();
+    await pending;
+    await persister.persistClient({ timestamp: 2, buster: "", clientState: dehydrate(qc) });
+    expect(stored).toHaveLength(1);
   });
 });

@@ -5,7 +5,7 @@ import type { Stage } from "../character/stage";
 import { Conversation } from "../conversation/conversation";
 import { applyApproval } from "../data/approvals";
 import { createQueryClient } from "../data/hooks";
-import { createQueryPersister, PERSIST_BUSTER, PERSIST_MAX_AGE, shouldPersistQuery } from "../data/persist";
+import { createQueryPersister, holdWhileChanging, PERSIST_BUSTER, PERSIST_MAX_AGE, shouldPersistQuery } from "../data/persist";
 import { invalidationKeys } from "../data/queryKeys";
 import { CardStack } from "./cards/CardStack";
 import { ConnectionPill } from "./ConnectionPill";
@@ -33,12 +33,11 @@ function sectionFromUrl(url: string): Section | undefined {
   }
 }
 
-const persister = createQueryPersister();
-
 export function App() {
   const [stage, setStage] = useState<Stage>();
   const [conversation] = useState(() => new Conversation());
   const [queryClient] = useState<QueryClient>(() => createQueryClient((message, key) => conversation.toast("error", message, key)));
+  const [persister] = useState(() => holdWhileChanging(createQueryPersister(), () => queryClient.isMutating() > 0));
   const [logOpen, setLogOpen] = useState(false);
   const [menu, setMenu] = useState<{ open: boolean; section: Section }>(() => {
     const section = sectionFromUrl(location.href);

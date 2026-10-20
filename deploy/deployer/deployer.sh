@@ -3,6 +3,11 @@
 # image differs from what's running it restarts the service, waits for /healthz to report the
 # image's commit, and rolls back to the previous image if it doesn't. Each attempt is appended to
 # $STATE_DIR/deploy.log as a JSON line (Hekate reads this file about itself).
+#
+# Optional, from deployer.env: a failed deploy is sent to the owner's Telegram chat
+# (HEKATE_TELEGRAM_BOT_TOKEN, HEKATE_TELEGRAM_CHAT_ID), which works even while Hekate is down;
+# and while Hekate is healthy, HEALTHCHECK_URL is pinged every round, a dead-man's switch that
+# alerts the owner from outside when the pings stop (Hekate down, homelab off, network out).
 set -uo pipefail
 
 : "${STACK_DIR:?STACK_DIR must be the compose directory, mounted at the same path as on the host}"
@@ -14,6 +19,9 @@ INTERVAL="${INTERVAL:-60}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-90}"
 STATE_DIR="${STATE_DIR:-$STACK_DIR/state}"
 PREVIOUS="hekate-local:previous"
+TG_TOKEN="${HEKATE_TELEGRAM_BOT_TOKEN:-}"
+TG_CHAT="${HEKATE_TELEGRAM_CHAT_ID:-}"
+HEALTHCHECK_URL="${HEALTHCHECK_URL:-}"
 
 mkdir -p "$STATE_DIR"
 cd "$STACK_DIR" || exit 1
@@ -29,6 +37,22 @@ log() { # event, then key=value pairs
     fields="$fields + {\"$k\": \$$k}"
   done
   jq -nc "${args[@]}" "$fields" | tee -a "$STATE_DIR/deploy.log"
+}
+
+# alert TEXT: tells the owner on Telegram, if it's set up. curl never prints the URL (it holds the token).
+alert() {
+  [[ -n "$TG_TOKEN" && -n "$TG_CHAT" ]] || return 0
+  curl -fsS --max-time 15 -o /dev/null "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
+    --data-urlencode "chat_id=$TG_CHAT" --data-urlencode "text=$1" 2>/dev/null \
+    || log alert_failed
+}
+
+# heartbeat: pings the dead-man's switch, only while Hekate answers healthy.
+heartbeat() {
+  [[ -n "$HEALTHCHECK_URL" ]] || return 0
+  local body
+  body="$(curl -fsS --max-time 3 "$HEALTH_URL" 2>/dev/null)" && [[ "$(jq -r .ok <<<"$body")" == "true" ]] || return 0
+  curl -fsS --max-time 10 --retry 2 -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null || true
 }
 
 compose() { docker compose "$@"; }
@@ -88,16 +112,20 @@ deploy_locked() {
       && [[ "$(running_image)" == "$current" ]] \
       && healthy "$(image_commit "$current")"; then
       log deploy_failed_rolled_back commit="$commit" tail="$logs"
+      alert "Hekate: the deploy of ${commit:0:7} failed its health check and was rolled back. The previous version is running."
     else
       log rollback_failed commit="$commit" tail="$logs"
+      alert "Hekate: the deploy of ${commit:0:7} failed, and so did the rollback. Hekate may be down: hekatectl status on the homelab."
     fi
   else
     log deploy_failed commit="$commit" tail="$logs"
+    alert "Hekate: the deploy of ${commit:0:7} failed and there was nothing to roll back to. Hekate may be down."
   fi
 }
 
 log deployer_started image="$IMAGE:$TAG" interval="$INTERVAL"
 while true; do
   deploy_once
+  heartbeat
   sleep "$INTERVAL"
 done

@@ -264,11 +264,19 @@ worker that built and merged approved changes unattended ran for one evening and
 same day: the owner prefers to build them together.
 
 **Telegram.** Notifications and actions only, not a second chat. Hekate stays the first channel;
-Telegram is used when Hekate can't deliver: the homelab or the service is down (something off
-the homelab has to notice; to be decided now that there's no worker on the development machine), or a deploy failed and rolled back (the deployer reports it). Messages
-can carry buttons (approve or deny a proposal or a mail approval); a reply supplies deny
-feedback. The service long-polls the Bot API, so nothing is exposed to the internet, and only
-the owner's chat is accepted.
+Telegram is the backup:
+
+- A notification web push can't get to any device (none subscribed, or every send failed) goes
+  to the owner's chat instead: reminders, approvals asked outside a conversation, finished
+  changes. Approvals come with Allow and Deny buttons; a reply to one denies it with the reply as
+  the reason. The service long-polls the Bot API, so nothing is exposed, and only the owner's
+  chat is answered (`service/internal/telegram`).
+- A failed deploy (rolled back or not) is sent by the deployer itself, which works while Hekate
+  is down.
+- Outages: the deployer pings a healthchecks.io check each minute while Hekate is healthy; when
+  the pings stop, healthchecks.io's own Telegram integration tells the owner.
+
+Built 2026-10-19 (setup in `deploy/README.md`).
 
 **Voice off.** A speaker toggle in the dock and in Settings, remembered per device. Off means
 replies arrive as text at reading speed with gestures and expressions but no audio, and the

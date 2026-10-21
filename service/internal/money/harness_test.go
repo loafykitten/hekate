@@ -16,7 +16,7 @@ import (
 
 const (
 	testClientID = "client-id-123"
-	testSecret   = "plaid-secret-456"
+	testSecret   = "fake-secret"
 	testAccess   = "fake-access-1"
 )
 

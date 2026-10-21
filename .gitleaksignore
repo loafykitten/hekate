@@ -1,3 +1,5 @@
 # Reviewed false positives (gitleaks fingerprints). Each names a commit, file, rule and line.
 # A fake Plaid access token in the money package's test harness, since renamed.
 2bbe4878fe5932d0b97b9e0f1bd2466f8375c23f:service/internal/money/harness_test.go:generic-api-key:19
+# The fake Plaid secret in the same harness, as squash-merged to main; since renamed.
+7f367cc138883107adff62badbeae8fedd7f7eb5:service/internal/money/harness_test.go:generic-api-key:19

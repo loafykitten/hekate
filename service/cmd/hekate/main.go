@@ -135,7 +135,7 @@ func run() error {
 	toolList := slices.Concat(taskSvc.Tools(), remSvc.Tools(), memSvc.Tools())
 	sources := []agent.Source{
 		{Name: "What you know about {{tamer}}", Source: memSvc},
-		{Name: "Waiting on {{tamer}}", Source: approvalSvc},
+		{Name: "Approvals", Source: approvalSvc},
 	}
 	api := []func(*http.ServeMux){taskSvc.Routes, remSvc.Routes, pushSvc.Routes, memSvc.Routes, approvalSvc.Routes}
 

@@ -12,6 +12,12 @@ import (
 	"github.com/loafykitten/hekate/service/internal/store"
 )
 
+// askedApproval reports whether res says it put an action up for approval,
+// naming the approval its card shows.
+func askedApproval(res agent.Result) bool {
+	return res.Card != nil && strings.HasPrefix(res.Content, "Asked Rika to approve (approval #"+res.Card.ID+"); it will run when they allow it.")
+}
+
 func (f *fixture) tool(name string) agent.Tool {
 	f.t.Helper()
 	for _, tl := range f.svc.Tools() {
@@ -224,7 +230,7 @@ func TestMoreThanTenNeedsApproval(t *testing.T) {
 		if r.Kind != "mail_bulk" || r.Title != c.title || r.Scope != "" || p.Action != c.action || len(p.IDs) != 11 {
 			t.Errorf("%s: request %+v payload %+v", c.tool, r, p)
 		}
-		if !strings.Contains(res.Content, "Asked Rika to approve; it will run when they allow it") {
+		if !askedApproval(res) {
 			t.Errorf("%s: content %q", c.tool, res.Content)
 		}
 		if res.Card == nil || res.Card.Kind != "approval" || res.Card.Title != c.title {
@@ -257,7 +263,7 @@ func TestTrashAlwaysAsksWithScope(t *testing.T) {
 	if r.Kind != "mail_trash" || r.Title != "Move 2 messages from news@example.org to Trash?" || r.Scope != "from:news@example.org" || r.ScopeLabel != "mail from news@example.org" {
 		t.Errorf("same address: %+v", r)
 	}
-	if !strings.Contains(res.Content, "Asked Rika to approve; it will run when they allow it") || res.Card.Kind != "approval" {
+	if !askedApproval(res) || res.Card.Kind != "approval" {
 		t.Errorf("result %q %+v", res.Content, res.Card)
 	}
 	if !strings.Contains(r.Detail, "News: A1") {

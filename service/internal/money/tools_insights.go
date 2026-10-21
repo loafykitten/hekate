@@ -248,15 +248,19 @@ func (s *Service) upcomingTool() agent.Tool {
 				days = defaultUpcomingDays
 			}
 			days = min(days, maxUpcomingDays)
+			// Transactions, balances and pending read as one picture: a sync
+			// landing in between could count a payment twice or not at all.
+			s.dataMu.RLock()
 			rep, err := s.recurringReport(ctx)
-			if err != nil {
-				return agent.Result{}, err
+			var accounts []Account
+			var pending map[string]int64
+			if err == nil {
+				accounts, err = s.Accounts(ctx)
 			}
-			accounts, err := s.Accounts(ctx)
-			if err != nil {
-				return agent.Result{}, err
+			if err == nil {
+				pending, err = s.pendingByAccount(ctx, rep.currency)
 			}
-			pending, err := s.pendingByAccount(ctx, rep.currency)
+			s.dataMu.RUnlock()
 			if err != nil {
 				return agent.Result{}, err
 			}
@@ -521,7 +525,9 @@ func describeUpcoming(rep recurringReport, c cash, days int) string {
 	var out, in int64
 	for _, o := range window {
 		if o.income {
-			in += o.cents
+			if !o.late { // as in the running balance: late income isn't counted until it arrives
+				in += o.cents
+			}
 		} else {
 			out -= o.cents
 		}

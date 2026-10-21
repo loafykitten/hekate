@@ -103,9 +103,12 @@ type Service struct {
 	log         *slog.Logger
 	now         func() time.Time
 
-	syncMu    sync.Mutex     // one sync at a time
-	connectMu sync.Mutex     // one new bank saved at a time, after its repeat check
-	wg        sync.WaitGroup // background syncs, so tests can wait for them
+	syncMu    sync.Mutex // one sync at a time
+	connectMu sync.Mutex // one new bank saved at a time, after its repeat check
+	// dataMu: a bank's transactions and balances are written together under it, and
+	// readers that need both to agree (the cash look-ahead) read under it.
+	dataMu sync.RWMutex
+	wg     sync.WaitGroup // background syncs, so tests can wait for them
 	// Extra syncs after a bank is connected: Plaid gathers its history over the
 	// first minutes, so the first sync usually finds little. Tests clear it.
 	afterConnect []time.Duration

@@ -117,22 +117,26 @@ func (s *Service) syncSoon() {
 // syncItem brings one bank up to date: transactions first, then balances. It
 // records the outcome on the item, and returns the number of new transactions.
 func (s *Service) syncItem(ctx context.Context, it item) (int, error) {
+	// Both are fetched first, then written together, so a reader never sees new
+	// transactions beside old balances (or the other way round). If either fetch
+	// fails nothing is written: the cursor stays and the next sync starts over.
 	res, err := s.plaid.sync(ctx, it.accessToken, it.cursor)
 	if err != nil {
 		s.markFailed(ctx, it.id, err, false)
 		return 0, err
 	}
-	added, err := s.apply(ctx, it.id, res)
-	if err != nil {
-		s.markFailed(ctx, it.id, err, true)
-		return 0, err
-	}
 	accounts, err := s.plaid.accounts(ctx, it.accessToken)
 	if err != nil {
 		s.markFailed(ctx, it.id, err, false)
-		return added, err
+		return 0, err
 	}
-	if err := s.saveAccounts(ctx, it.id, accounts); err != nil {
+	s.dataMu.Lock()
+	added, err := s.apply(ctx, it.id, res)
+	if err == nil {
+		err = s.saveAccounts(ctx, it.id, accounts)
+	}
+	s.dataMu.Unlock()
+	if err != nil {
 		s.markFailed(ctx, it.id, err, true)
 		return added, err
 	}
@@ -399,7 +403,10 @@ func (s *Service) Connect(ctx context.Context, publicToken, institutionID, insti
 		s.revoke(ctx, access) // not kept here, so not kept at Plaid either
 		return Item{}, fmt.Errorf("store the bank: %w", err)
 	}
-	if err := s.saveAccounts(ctx, id, accounts); err != nil {
+	s.dataMu.Lock()
+	err = s.saveAccounts(ctx, id, accounts)
+	s.dataMu.Unlock()
+	if err != nil {
 		s.log.Warn("cannot store a new bank's accounts", "item", id, "error", err)
 	}
 	s.log.Info("bank connected", "item", id)
@@ -478,7 +485,10 @@ func (s *Service) Remove(ctx context.Context, itemID string) error {
 		s.log.Warn("bank removal failed at Plaid", "item", id, "error", err)
 		return errPlaid()
 	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM money_items WHERE id = ?`, id); err != nil { // the rows cascade
+	s.dataMu.Lock()
+	_, err = s.db.ExecContext(ctx, `DELETE FROM money_items WHERE id = ?`, id) // the rows cascade
+	s.dataMu.Unlock()
+	if err != nil {
 		return fmt.Errorf("delete the bank: %w", err)
 	}
 	s.log.Info("bank removed", "item", id)

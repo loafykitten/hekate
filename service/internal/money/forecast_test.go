@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 // checkingAccount is a Plaid checking account; available may be nil (the bank gave none).
@@ -161,6 +162,7 @@ func TestLateIncomeIsNotCountedUntilItArrives(t *testing.T) {
 		"not counted until it arrives",
 		"dips below zero",
 		"Next payday: 2026-10-30",
+		"income 4800.00 USD", // Oct 30 and Nov 13: not the late Oct 16
 	} {
 		if !strings.Contains(res.Content, want) {
 			t.Errorf("lacks %q:\n%s", want, res.Content)
@@ -168,5 +170,29 @@ func TestLateIncomeIsNotCountedUntilItArrives(t *testing.T) {
 	}
 	if strings.Contains(res.Content, "stays above zero") {
 		t.Errorf("the late paycheck covered the rent:\n%s", res.Content)
+	}
+}
+
+// The look-ahead reads transactions and balances as one picture: while a sync is
+// writing a bank's data, it waits.
+func TestTheLookAheadWaitsForASyncToFinishWriting(t *testing.T) {
+	f := newFixture(t)
+	f.connectWith(checkingAccount("acc-1", "Spending", 470, fp(470)))
+	f.svc.dataMu.Lock() // a sync halfway through writing
+	done := make(chan struct{})
+	go func() {
+		_, _ = f.tool("money_upcoming", `{}`)
+		close(done)
+	}()
+	select {
+	case <-done:
+		t.Fatal("the look-ahead read while a sync was writing")
+	case <-time.After(100 * time.Millisecond):
+	}
+	f.svc.dataMu.Unlock()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the look-ahead never finished")
 	}
 }

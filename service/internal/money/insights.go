@@ -98,6 +98,9 @@ type rowFilter struct {
 	from, to string // inclusive dates
 	category string // Plaid primary, normalized
 	text     string // words in the name or merchant
+	// openOnly leaves out accounts the bank stopped listing. A transaction whose
+	// account is unknown (a sync page that came before the accounts refresh) stays.
+	openOnly bool
 }
 
 // loadRows reads transactions in one currency, oldest first.
@@ -115,6 +118,9 @@ func (s *Service) loadRows(ctx context.Context, currency string, f rowFilter) ([
 	if f.category != "" {
 		where = append(where, `t.category = ?`)
 		args = append(args, f.category)
+	}
+	if f.openOnly {
+		where = append(where, `(a.account_id IS NULL OR a.active = 1)`)
 	}
 	if f.text != "" {
 		pat := "%" + likeEscape(f.text) + "%"
@@ -165,12 +171,19 @@ var cadences = []cadence{
 	{"yearly", 355, 375, 1.0 / 12, 2, 12},
 }
 
+// cadenceTwiceMonthly is pay on two days of the month (the 1st and 15th, say). It
+// is found from the days of the month, not the gaps, and is tried before the
+// gap-based cadences: its gaps are about 14 days, but unlike every two weeks it
+// never drifts through the month.
+var cadenceTwiceMonthly = cadence{"twice a month", 0, 0, 2, 6, 0}
+
 // recurring is a payee whose payments look regular, money out or in. What it is
 // (a bill, a subscription, income, or not regular at all) is the owner's to say:
 // label holds their answer, and is empty until they give one.
 type recurring struct {
 	id       string // payeeID: how the owner's label is kept
 	label    payeeLabel
+	anchors  [2]int // twice a month: the two days of the month
 	payee    string // the bank's text
 	account  string // the account it is charged to or paid into: the bank's text
 	class    string // acctChecking, acctCard or acctOther
@@ -223,28 +236,6 @@ func medianFloat(v []float64) float64 {
 	return (s[n/2-1] + s[n/2]) / 2
 }
 
-// dropPendingDuplicates removes a pending row when a posted one with the same
-// payee and amount sits within a week of it: the same charge seen twice.
-func dropPendingDuplicates(rows []txRow) []txRow {
-	var out []txRow
-	for _, r := range rows {
-		dup := false
-		if r.pending {
-			k := payeeKey(r.payee())
-			for _, o := range rows {
-				if !o.pending && o.cents == r.cents && payeeKey(o.payee()) == k && math.Abs(o.day.Sub(r.day).Hours()) <= 7*24 {
-					dup = true
-					break
-				}
-			}
-		}
-		if !dup {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
 // detectRecurring finds payees with a regular cadence. Transfers between the
 // owner's own accounts are left out; loan payments and rent stay in, as payments
 // that look regular (what they are is the owner's to say).
@@ -257,7 +248,7 @@ func detectRecurring(rows []txRow, today time.Time) (items []recurring, stopped 
 		account string // the same payee on two accounts is two patterns
 	}
 	groups := map[groupKey][]txRow{}
-	for _, r := range dropPendingDuplicates(rows) {
+	for _, r := range rows {
 		if r.category == catTransferIn || r.category == catTransferOut || r.cents == 0 {
 			continue
 		}
@@ -312,19 +303,24 @@ func classify(days []txRow, income bool) (recurring, bool) {
 	for i := 1; i < len(days); i++ {
 		gaps = append(gaps, days[i].day.Sub(days[i-1].day).Hours()/24)
 	}
-	m := medianFloat(gaps)
-	idx := slices.IndexFunc(cadences, func(c cadence) bool { return m >= c.lo && m <= c.hi })
-	if idx < 0 || len(days) < cadences[idx].minSeen {
-		return recurring{}, false
-	}
-	near := 0
-	for _, g := range gaps {
-		if math.Abs(g-m) <= 0.25*m {
-			near++
+	cad, gap := cadenceTwiceMonthly, 15
+	a, b, lastNominal, semi := fitTwiceMonthly(days)
+	if !semi {
+		m := medianFloat(gaps)
+		idx := slices.IndexFunc(cadences, func(c cadence) bool { return m >= c.lo && m <= c.hi })
+		if idx < 0 || len(days) < cadences[idx].minSeen {
+			return recurring{}, false
 		}
-	}
-	if near*2 <= len(gaps) {
-		return recurring{}, false
+		near := 0
+		for _, g := range gaps {
+			if math.Abs(g-m) <= 0.25*m {
+				near++
+			}
+		}
+		if near*2 <= len(gaps) {
+			return recurring{}, false
+		}
+		cad, gap = cadences[idx], int(math.Round(m))
 	}
 	amounts := make([]int64, len(days))
 	for i, d := range days {
@@ -332,7 +328,7 @@ func classify(days []txRow, income bool) (recurring, bool) {
 	}
 	latest := days[len(days)-1]
 	it := recurring{
-		income: income, cadence: cadences[idx], gap: int(math.Round(m)), typical: medianInt64(amounts),
+		income: income, cadence: cad, gap: gap, anchors: [2]int{a, b}, typical: medianInt64(amounts),
 		last: amounts[len(amounts)-1], previous: amounts[len(amounts)-2], seen: len(days), lastDay: latest.day, latest: latest,
 		payee: latest.payee(),
 	}
@@ -355,6 +351,9 @@ func classify(days []txRow, income bool) (recurring, bool) {
 		it.expected = it.last
 	}
 	it.next = it.step(it.lastDay)
+	if semi {
+		it.next = it.step(lastNominal)
+	}
 	return it, true
 }
 
@@ -362,6 +361,9 @@ func classify(days []txRow, income bool) (recurring, bool) {
 // month (rent on the 1st stays on the 1st; the 31st becomes the last day of a
 // shorter month); weekly ones step by their median gap.
 func (it recurring) step(d time.Time) time.Time {
+	if it.cadence.name == cadenceTwiceMonthly.name {
+		return nominalAfter(d, it.anchors[0], it.anchors[1])
+	}
 	if it.cadence.months == 0 {
 		return d.AddDate(0, 0, it.gap)
 	}
@@ -369,6 +371,94 @@ func (it recurring) step(d time.Time) time.Time {
 	first := time.Date(y, m+time.Month(it.cadence.months), 1, 0, 0, 0, 0, d.Location())
 	lastDay := first.AddDate(0, 1, -1).Day()
 	return time.Date(first.Year(), first.Month(), min(it.lastDay.Day(), lastDay), 0, 0, 0, 0, d.Location())
+}
+
+// nominalDate is the given day of a month, or the month's last day when it is shorter.
+func nominalDate(y int, m time.Month, day int) time.Time {
+	last := time.Date(y, m+1, 0, 0, 0, 0, 0, time.UTC).Day()
+	return time.Date(y, m, min(day, last), 0, 0, 0, 0, time.UTC)
+}
+
+// nominalsAround lists the dates the two anchor days fall on in the months around d.
+func nominalsAround(d time.Time, a, b int) []time.Time {
+	y, m, _ := d.Date()
+	var out []time.Time
+	for dm := -1; dm <= 2; dm++ {
+		out = append(out, nominalDate(y, m+time.Month(dm), a), nominalDate(y, m+time.Month(dm), b))
+	}
+	return out
+}
+
+// nominalAfter is the first anchor date after d.
+func nominalAfter(d time.Time, a, b int) time.Time {
+	var best time.Time
+	for _, n := range nominalsAround(d, a, b) {
+		if n.After(d) && (best.IsZero() || n.Before(best)) {
+			best = n
+		}
+	}
+	return best
+}
+
+const semiTolerance = 3 // days a payment may fall from its anchor day (weekends, holidays)
+
+// fitTwiceMonthly finds two days of the month (a < b) that every payment falls
+// within a few days of, with exactly two payments in every month between the
+// first and the last. Most payments must land within a day of an anchor, which a
+// schedule that merely drifts through the month (every two weeks) doesn't do.
+// It needs at least six payments. lastNominal is the anchor date of the latest.
+func fitTwiceMonthly(days []txRow) (a, b int, lastNominal time.Time, ok bool) {
+	if len(days) < cadenceTwiceMonthly.minSeen {
+		return 0, 0, time.Time{}, false
+	}
+	bestScore := -1
+	for x := 1; x <= 31; x++ {
+		for y := x + 10; y <= 31; y++ {
+			if x+31-y < 10 {
+				continue
+			}
+			score, exact, last, fits := tryAnchors(days, x, y)
+			if !fits || exact*10 < 6*len(days) {
+				continue
+			}
+			if bestScore < 0 || score < bestScore {
+				bestScore, a, b, lastNominal = score, x, y, last
+			}
+		}
+	}
+	return a, b, lastNominal, bestScore >= 0
+}
+
+// tryAnchors scores anchors x and y: the total distance of the payments from
+// their anchor dates, and how many are within a day.
+func tryAnchors(days []txRow, x, y int) (score, exact int, last time.Time, ok bool) {
+	var prev time.Time
+	for _, d := range days {
+		var near time.Time
+		dist := 1 << 30
+		for _, n := range nominalsAround(d.day, x, y) {
+			if dd := int(math.Abs(d.day.Sub(n).Hours() / 24)); dd < dist {
+				near, dist = n, dd
+			}
+		}
+		if dist > semiTolerance {
+			return 0, 0, time.Time{}, false
+		}
+		if !prev.IsZero() && !near.Equal(nominalAfter(prev, x, y)) {
+			return 0, 0, time.Time{}, false // a month with one, or three, or a skipped one
+		}
+		// Pay moves earlier for a weekend, never later, so a payment after the anchor counts double.
+		if d.day.After(near) {
+			score += 2 * dist
+		} else {
+			score += dist
+		}
+		if dist <= 1 {
+			exact++
+		}
+		prev = near
+	}
+	return score, exact, prev, true
 }
 
 // meaningful reports whether amount differs from ref by more than both $1 and 5%.
@@ -400,7 +490,7 @@ func (s *Service) recurringReport(ctx context.Context) (recurringReport, error) 
 	}
 	today := s.today()
 	rows, err := s.loadRows(ctx, currency, rowFilter{
-		from: today.AddDate(0, -recurringMonths, 0).Format(time.DateOnly), to: today.AddDate(0, 0, 7).Format(time.DateOnly),
+		from: today.AddDate(0, -recurringMonths, 0).Format(time.DateOnly), to: today.AddDate(0, 0, 7).Format(time.DateOnly), openOnly: true,
 	})
 	if err != nil {
 		return recurringReport{}, err

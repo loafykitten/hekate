@@ -127,12 +127,11 @@ func TestPayeeKey(t *testing.T) {
 
 // seedRecurring stores a year-ish of habits around the fixture's clock (2026-10-20).
 func seedRecurring(f *fixture) {
-	// Monthly subscription that went up on its latest charge, plus a pending copy of that charge.
+	// Monthly subscription that went up on its latest charge.
 	for i, d := range []string{"2026-06-03", "2026-07-03", "2026-08-03", "2026-09-03"} {
 		f.insert(fmt.Sprint("sub", i), d, "STREAMLY 4411", "Streamly", -1299, "ENTERTAINMENT", false)
 	}
 	f.insert("sub4", "2026-10-03", "STREAMLY 9902", "Streamly", -1599, "ENTERTAINMENT", false)
-	f.insert("sub5", "2026-10-04", "STREAMLY", "Streamly", -1599, "ENTERTAINMENT", true)
 	f.series("rent", "2026-10-01", "EXAMPLE PROPERTIES RENT", 30, 5, -120000, "RENT_AND_UTILITIES")
 	f.series("loan", "2026-10-05", "EXAMPLE AUTO LOAN", 30, 5, -25000, "LOAN_PAYMENTS")
 	f.series("pay", "2026-10-16", "ACME PAYROLL 1234", 14, 6, 240000, "INCOME")

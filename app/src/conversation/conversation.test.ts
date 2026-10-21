@@ -502,7 +502,7 @@ describe("Conversation: cards, notices and invalidation", () => {
     const play = vi.fn();
     t.conversation.attachStage({ character: { playGesture: play }, speech: {}, bubble: undefined } as never);
     t.socket.receive({ type: "notify", id: "n1", kind: "reminder", title: "Reminder", body: "Call the dentist", card: remindersCard });
-    expect(t.state().notices).toEqual([{ id: "n1", title: "Reminder", body: "Call the dentist", section: "reminders", card: true }]);
+    expect(t.state().notices).toEqual([{ id: "n1", title: "Reminder", body: "Call the dentist", section: "reminders", cardId: "r1" }]);
     expect(t.state().cards.map((c) => [c.card.kind, c.source])).toEqual([["reminders", "notify"]]);
     expect(play).toHaveBeenCalledWith("acknowledging");
     vi.advanceTimersByTime(13_000);

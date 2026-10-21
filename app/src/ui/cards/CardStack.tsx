@@ -45,10 +45,16 @@ export function CardStack({ hidden, onOpenSection, onCover }: Props) {
     const observer = new ResizeObserver(measure);
     observer.observe(el);
     window.addEventListener("resize", measure);
+    // The iOS keyboard moves the row (see useKeyboardInset) without resizing anything.
+    const vv = window.visualViewport;
+    vv?.addEventListener("resize", measure);
+    vv?.addEventListener("scroll", measure);
     measure();
     return () => {
       observer.disconnect();
       window.removeEventListener("resize", measure);
+      vv?.removeEventListener("resize", measure);
+      vv?.removeEventListener("scroll", measure);
       onCover(0);
     };
   }, [wide, visible, onCover]);

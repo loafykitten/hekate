@@ -247,3 +247,31 @@ func TestProfileTools(t *testing.T) {
 		t.Errorf("events = %d", f.events.count()-base)
 	}
 }
+
+// Who the owner is (name, pronouns) is theirs to set: the tools refuse it,
+// whatever the key's spelling, and the owner's own entries stay as they are.
+func TestProfileToolsLeaveIdentityToTheOwner(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.svc.SetProfile(t.Context(), "Pronouns", "she/her"); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ tool, args string }{
+		{"profile_set", `{"key":"Name","value":"Someone"}`},
+		{"profile_set", `{"key":"preferred name","value":"Someone"}`},
+		{"profile_set", `{"key":"pronouns","value":"they/them"}`},
+		{"profile_remove", `{"key":"PRONOUNS"}`},
+	} {
+		res, err := run(t, f, c.tool, c.args)
+		if err != nil || res.Content != ownerKeyRefused {
+			t.Errorf("%s %s: %v %q", c.tool, c.args, err, res.Content)
+		}
+	}
+	got, err := f.svc.Profile(t.Context())
+	if err != nil || len(got) != 1 || got[0].Key != "pronouns" || got[0].Value != "she/her" {
+		t.Errorf("profile = %+v, %v", got, err)
+	}
+	// Other people's names are ordinary profile lines.
+	if res, err := run(t, f, "profile_set", `{"key":"partner_name","value":"Alex"}`); err != nil || res.Content != "Profile saved: partner_name = Alex" {
+		t.Errorf("partner_name: %v %q", err, res.Content)
+	}
+}

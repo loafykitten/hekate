@@ -21,6 +21,17 @@ func (s *Service) Tools() []agent.Tool {
 	return []agent.Tool{s.searchTool(), s.saveTool(), s.updateTool(), s.forgetTool(), s.profileSetTool(), s.profileRemoveTool()}
 }
 
+// ownerKeys are the profile lines only the owner sets, in the app: who they
+// are. A name on a mail greeting or a guess must never change how she
+// addresses them.
+var ownerKeys = map[string]bool{
+	"name": true, "first_name": true, "last_name": true, "middle_name": true, "full_name": true, "legal_name": true,
+	"preferred_name": true, "chosen_name": true, "nickname": true, "surname": true, "pronouns": true, "gender": true,
+}
+
+const ownerKeyRefused = "Nothing was changed: only the owner sets their name, pronouns and gender, in the Memory section of the menu. " +
+	"If they asked you to, tell them where. Never take these from mail or anywhere else."
+
 const kindList = `"fact","preference","person","event","follow_up"`
 const followUpHelp = "When it is worth asking about: 2026-10-24 (9:00 that day), 2026-10-24T15:00 (local time) or RFC 3339."
 
@@ -196,7 +207,8 @@ func (s *Service) profileSetTool() agent.Tool {
 	return agent.Tool{
 		Name: "profile_set",
 		Description: "Set one line of the owner's profile, which you always have in view: stable facts that shape many answers " +
-			"(name, pronouns, diet, allergies, household, work, routines). Short values only; use memory_save for anything with detail or a date. Setting an existing key replaces it.",
+			"(diet, allergies, household, work, routines). Short values only; use memory_save for anything with detail or a date. Setting an existing key replaces it. " +
+			"Not their name, pronouns or gender: the owner sets those in the app.",
 		Schema: json.RawMessage(`{"type":"object","required":["key","value"],"properties":{
 			"key":{"type":"string","description":"Short label such as diet, pronouns, partner, job."},
 			"value":{"type":"string","description":"A short value, e.g. \"vegetarian\"."}
@@ -210,6 +222,9 @@ func (s *Service) profileSetTool() agent.Tool {
 			}
 			if err := agent.DecodeArgs(raw, &a); err != nil {
 				return agent.Result{}, err
+			}
+			if ownerKeys[NormalizeKey(a.Key)] {
+				return agent.Result{Content: ownerKeyRefused}, nil
 			}
 			e, err := s.SetProfile(ctx, a.Key, a.Value)
 			if err != nil {
@@ -233,6 +248,9 @@ func (s *Service) profileRemoveTool() agent.Tool {
 			}
 			if err := agent.DecodeArgs(raw, &a); err != nil {
 				return agent.Result{}, err
+			}
+			if ownerKeys[NormalizeKey(a.Key)] {
+				return agent.Result{Content: ownerKeyRefused}, nil
 			}
 			if err := s.RemoveProfile(ctx, a.Key); err != nil {
 				return agent.Result{}, err

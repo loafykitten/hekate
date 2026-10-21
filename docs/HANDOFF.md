@@ -35,9 +35,10 @@ What the slice (`app/`) does today:
 
 - Loads `assets/renamon-nukorio/renamon-{desktop,phone}.glb` (chosen by screen size) with toon
   shading and per-mesh outlines (three.js `OutlineEffect`, colors/thickness from the manifest).
-- Idle loop (`idle_2`); crossfades to the `talking` loop while speaking and back; 7 one-shot
-  gestures from a dev-only dropdown (`waving`, `thankful`, `acknowledging`, `dismissing`,
-  `excited`, `no`, `smh`).
+- Idle loop (`idle_2`) under everything, speech included: she acts out what she says with
+  gesture tags, and the `talking` clip is one of those gestures (it used to loop under all
+  speech, which looked the same every reply). The one-shot gestures can also be played from a
+  dev-only dropdown.
 - Type text and press Say: the dev server synthesizes speech with **macOS `say`** (placeholder),
   the mouth (`jawOpen` + a little `mouthSmile` morph) follows a per-utterance-normalized loudness
   envelope, and the bubble types the text out in sync with playback.

@@ -69,10 +69,9 @@ describe("rigFrom", () => {
     expect(rig.outline.byMesh.eyes).toBeNull();
   });
 
-  it("picks the calmest looping idle, the looping talk clip and the gestures", () => {
+  it("picks the calmest looping idle, and the gestures with the talk clip among them", () => {
     expect(rig.clips.idle).toBe("idle_calm");
-    expect(rig.clips.talk).toBe("chat");
-    expect(rig.clips.gestures).toEqual(["wave", "shake", "glance"]);
+    expect(rig.clips.gestures).toEqual(["wave", "shake", "glance", "chat"]);
     expect(rig.clips.headDriven).toEqual(["idle_busy", "shake"]);
   });
 

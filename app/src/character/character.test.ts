@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Character, type CharacterRig } from "./character";
 import { TailMotion, type TailInput } from "./tail";
 
-// A one-bone character with an idle loop, a talk loop, a gesture and two fidgets.
+// A one-bone character with an idle loop, a gesture and two fidgets.
 function tiny() {
   const root = new THREE.Group();
   const head = new THREE.Bone();
@@ -18,10 +18,10 @@ function tiny() {
     mouth: [],
     blink: [],
     outline: { byMesh: {}, fallback: null },
-    clips: { idle: "idle", talk: "talk", gestures: ["wave"], fidgets: ["glance", "shift"], headDriven: [] },
+    clips: { idle: "idle", gestures: ["wave"], fidgets: ["glance", "shift"], headDriven: [] },
     procedural: { tail: [], ears: [], chinLift: 0 },
   };
-  const c = Character.fromScene(root, [clip("idle", 4), clip("talk", 4), clip("wave", 2), clip("glance", 2), clip("shift", 9)], rig);
+  const c = Character.fromScene(root, [clip("idle", 4), clip("wave", 2), clip("glance", 2), clip("shift", 9)], rig);
   c.blinkEnabled = false;
   return c;
 }

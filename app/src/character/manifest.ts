@@ -50,8 +50,9 @@ function clipsOf(animations: NonNullable<Manifest["animations"]>): CharacterRig[
   const idle = idles.find((a) => !strong(a)) ?? idles[0];
   return {
     idle: idle?.name,
-    talk: byCategory("talk").find((a) => a.loop)?.name,
-    gestures: byCategory("gesture").map((a) => a.name),
+    // A talking clip is one gesture among many, played when she tags it, not a loop under all
+    // speech: one loop for every reply looked the same every time.
+    gestures: [...byCategory("gesture"), ...byCategory("talk")].map((a) => a.name),
     fidgets: animations.filter((a) => a.idle_variation && !a.loop).map((a) => a.name),
     headDriven: animations.filter(strong).map((a) => a.name),
   };

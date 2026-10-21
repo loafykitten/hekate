@@ -45,7 +45,9 @@ func (g *gestureSource) Names() ([]string, error) {
 	return names, nil
 }
 
-// readGestures returns the names of animations in the "gesture" category.
+// readGestures returns the names of animations she can play with a tag: the
+// "gesture" category and the "talk" one (a talking clip is one gesture among
+// many, for explaining, not a loop under all speech).
 func readGestures(path string) ([]string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -62,7 +64,7 @@ func readGestures(path string) ([]string, error) {
 	}
 	names := []string{}
 	for _, a := range m.Animations {
-		if a.Category == "gesture" && a.Name != "" {
+		if (a.Category == "gesture" || a.Category == "talk") && a.Name != "" {
 			names = append(names, a.Name)
 		}
 	}

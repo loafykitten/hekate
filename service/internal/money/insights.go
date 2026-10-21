@@ -146,8 +146,12 @@ var cadences = []cadence{
 	{"yearly", 355, 375, 1.0 / 12, 2, 12},
 }
 
-// recurring is a payee with a regular rhythm, money out (a bill) or in (income).
+// recurring is a payee whose payments look regular, money out or in. What it is
+// (a bill, a subscription, income, or not regular at all) is the owner's to say:
+// label holds their answer, and is empty until they give one.
 type recurring struct {
+	id       string // payeeID: how the owner's label is kept
+	label    payeeLabel
 	payee    string // the bank's text
 	income   bool
 	cadence  cadence
@@ -161,6 +165,14 @@ type recurring struct {
 	lastDay  time.Time
 	next     time.Time
 	latest   txRow
+}
+
+// status is what the owner called it, or "unconfirmed".
+func (r recurring) status() string {
+	if r.label.kind == "" {
+		return "unconfirmed"
+	}
+	return r.label.kind
 }
 
 // monthly is the item's cost or pay per month, in cents.
@@ -209,7 +221,8 @@ func dropPendingDuplicates(rows []txRow) []txRow {
 }
 
 // detectRecurring finds payees with a regular cadence. Transfers between the
-// owner's own accounts are left out; loan payments and rent stay in as bills.
+// owner's own accounts are left out; loan payments and rent stay in, as payments
+// that look regular (what they are is the owner's to say).
 // Rows are oldest first. A pattern whose last occurrence is long overdue has
 // stopped: it is counted in stopped, not returned.
 func detectRecurring(rows []txRow, today time.Time) (items []recurring, stopped int) {
@@ -245,6 +258,7 @@ func detectRecurring(rows []txRow, today time.Time) (items []recurring, stopped 
 				stopped++
 				continue
 			}
+			it.id = payeeID(gk.key, gk.income)
 			items = append(items, it)
 		}
 	}
@@ -326,8 +340,9 @@ func abs64(v int64) int64 {
 // recurringReport is what money_recurring and money_upcoming both read.
 type recurringReport struct {
 	currency string
-	items    []recurring
+	items    []recurring // not the ones the owner called not_recurring
 	stopped  int
+	hidden   int // payees the owner called not_recurring
 	today    time.Time
 }
 
@@ -343,8 +358,21 @@ func (s *Service) recurringReport(ctx context.Context) (recurringReport, error) 
 	if err != nil {
 		return recurringReport{}, err
 	}
-	items, stopped := detectRecurring(rows, today)
-	return recurringReport{currency: currency, items: items, stopped: stopped, today: today}, nil
+	found, stopped := detectRecurring(rows, today)
+	labels, err := s.labels(ctx)
+	if err != nil {
+		return recurringReport{}, err
+	}
+	rep := recurringReport{currency: currency, stopped: stopped, today: today}
+	for _, it := range found {
+		it.label = labels[it.id]
+		if it.label.kind == kindNotRecurring {
+			rep.hidden++
+			continue
+		}
+		rep.items = append(rep.items, it)
+	}
+	return rep, nil
 }
 
 // occurrence is one expected payment or payday in the look-ahead.
@@ -353,11 +381,12 @@ type occurrence struct {
 	cents  int64 // signed: money in (+) or out (-)
 	payee  string
 	income bool
-	late   bool // its date has passed without it showing up
+	status string // bill, subscription, income or unconfirmed
+	late   bool   // its date has passed without it showing up
 }
 
 // project lists each item's expected occurrences from today to horizon, soonest
-// first, bills before income on the same day (the cautious order).
+// first, payments out before income on the same day (the cautious order).
 func project(items []recurring, today, horizon time.Time) []occurrence {
 	var out []occurrence
 	for _, it := range items {
@@ -366,7 +395,7 @@ func project(items []recurring, today, horizon time.Time) []occurrence {
 			sign = 1
 		}
 		for d := it.next; !d.After(horizon); d = it.step(d) {
-			o := occurrence{day: d, cents: sign * it.expected, payee: it.payee, income: it.income}
+			o := occurrence{day: d, cents: sign * it.expected, payee: it.payee, income: it.income, status: it.status()}
 			if d.Before(today) {
 				o.day, o.late = today, true
 			}

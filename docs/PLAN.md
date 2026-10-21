@@ -246,6 +246,45 @@ Telegram backup channel, a voice-off toggle and a morning briefing the owner sta
 | **M4 Proactive** ✅ | Briefing, heartbeat, follow-ups, reflection + diary, self-inspection, ideas | She greets you with your day and reflects nightly |
 | **M5 Polish** ✅ | Viseme lip sync from TTS timings, expression map, offline shell, UX passes | Her mouth makes the shapes of her words, the app opens offline, every screen reviewed |
 
+### Queued (2026-10-20)
+
+Agreed with the owner, not started. Built in this order, each through the PR gate.
+
+**1. Evening check-in.** She asks once, near bedtime: one push ("How did today go?") at a set time,
+by default 30 minutes before waking hours end, and only on days the owner hasn't already talked the
+day over with her that evening. Tapping it opens the app and starts the check-in: the turn opens
+with a call that gathers the day (tasks done and still open, today's events, anything she
+followed up on, tomorrow's first commitments), and she asks how it went. The answer is ordinary
+conversation, so the nightly reflection already reads it into the diary. Never repeats, never
+nags. Settings → Routines (and `routine_settings`): on or off, and the time. Reuses the agent's
+opener and the routines scheduler from the briefing and heartbeat.
+
+**2. Small UX things** left from the M5 tour:
+- On phone, cards cover her lower half: frame her higher while cards are up, or make cards more
+  compact there.
+- The speech bubble holds its full height while words appear, which reads as empty space
+  mid-sentence: let it grow with the revealed text without jumping.
+- A notice that comes with a card (reminder, approval) shows a toast and the card at once: show one.
+
+**3. Read-only bank data, for help with money.** Researched 2026-10-20:
+- The owner's bank has no public API, so data goes through an aggregator. Plaid's free Trial plan
+  (new US developers from April 2026: real data, up to 10 connected banks, read-only products only:
+  transactions, balances, liabilities, investments) is the free path. A third-party directory lists
+  the bank as connectable through Plaid; confirm it in Plaid Link before building further.
+- Fallbacks: SimpleFIN Bridge (about $15 a year, read-only by design), or importing the bank's
+  monthly statements by hand. Not considered: Teller (couldn't confirm coverage, and its API's TLS
+  certificate had lapsed when checked), or logging in to a bank's private app API (against its
+  terms, fragile, and it means holding the bank password).
+- Shape: Plaid Link in the app connects an account; the service keeps the access token and the
+  Plaid keys on the homelab only, and syncs with `/transactions/sync` on a schedule (polling: the
+  service isn't reachable from the internet, so no webhooks). No money-moving products are ever
+  enabled. Tools for her to read accounts, balances, transactions and spending by category and
+  month, with cards; a Money section in the menu. Merchant names and memos are untrusted data,
+  like mail. Transactions stay in the homelab database and never reach logs.
+- What she does with it: notice patterns and changes (a subscription that went up, spending
+  running ahead of last month, a bill due before payday), answer questions, and help plan. She
+  isn't a licensed advisor and says so when a question needs one.
+
 ### M5 as built (2026-10-20)
 
 - **Viseme lip sync**: the service turns the voice's per-character timing into timed mouth shapes

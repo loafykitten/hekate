@@ -146,3 +146,27 @@ func TestSameDayPaymentsShowARealTransactionOnTheCard(t *testing.T) {
 		t.Errorf("want the latest original row (s-b, -5.00), got %+v", it)
 	}
 }
+
+// A paycheck that is late may not come: it isn't credited to the forecast, and
+// bills are weighed against the next one that is on time.
+func TestLateIncomeIsNotCountedUntilItArrives(t *testing.T) {
+	f := newFixture(t)
+	f.connectWith(checkingAccount("acc-1", "Spending", 470, fp(470)))
+	f.seriesOn("acc-1", "pay", "2026-10-02", "ACME PAYROLL", 14, 4, 240000, "INCOME") // Oct 16 hasn't come
+	f.seriesOn("acc-1", "rent", "2026-09-24", "EXAMPLE PROPERTIES RENT", 30, 3, -120000, "RENT_AND_UTILITIES")
+	f.label("ACME PAYROLL", true, "income", "")
+	f.label("EXAMPLE PROPERTIES RENT", false, "bill", "")
+	res, _ := f.tool("money_upcoming", `{}`)
+	for _, want := range []string{
+		"not counted until it arrives",
+		"dips below zero",
+		"Next payday: 2026-10-30",
+	} {
+		if !strings.Contains(res.Content, want) {
+			t.Errorf("lacks %q:\n%s", want, res.Content)
+		}
+	}
+	if strings.Contains(res.Content, "stays above zero") {
+		t.Errorf("the late paycheck covered the rent:\n%s", res.Content)
+	}
+}

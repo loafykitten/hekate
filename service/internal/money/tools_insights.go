@@ -274,7 +274,11 @@ func (s *Service) upcomingTool() agent.Tool {
 func walk(start int64, occs []occurrence, currency string) (lines []string, low int64, lowDay, firstNeg string) {
 	bal, low := start, start
 	for _, o := range occs {
-		bal += o.cents
+		// Income that is late may not come: it isn't counted until it arrives. A late
+		// payment out still counts (the cautious way round).
+		if !o.late || o.cents <= 0 {
+			bal += o.cents
+		}
 		if bal < low {
 			low, lowDay = bal, o.day.Format(time.DateOnly)
 		}
@@ -394,14 +398,19 @@ func forecastAccount(rep recurringReport, a checkingAcct, chk, unOut []recurring
 
 // findPayday is the next confirmed income into checking; with none confirmed, a
 // detected deposit into checking stands in (unconfirmed true).
+// findPayday is the next income into checking that is on time: a late one may not
+// come, so bills aren't weighed against it.
 func findPayday(rep recurringReport, confirmedAll []occurrence, unIn []recurring) (payday *occurrence, unconfirmed bool) {
 	for i, o := range confirmedAll {
-		if o.income {
+		if o.income && !o.late {
 			return &confirmedAll[i], false
 		}
 	}
-	if cand := project(unIn, rep.today, rep.today.AddDate(0, 0, 124)); len(cand) > 0 {
-		return &cand[0], true
+	cand := project(unIn, rep.today, rep.today.AddDate(0, 0, 124))
+	for i, o := range cand {
+		if !o.late {
+			return &cand[i], true
+		}
 	}
 	return nil, false
 }
@@ -661,7 +670,10 @@ func describeUpcoming(rep recurringReport, c cash, days int) string {
 func upcomingLine(o occurrence, balance int64, showBalance bool, currency string) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%s | %s | %s: %s", o.day.Format(time.DateOnly), centsText(o.cents, currency), o.status, oneLine(o.payee, 80))
-	if o.late {
+	switch {
+	case o.late && o.cents > 0:
+		sb.WriteString(" (expected earlier, not seen yet: not counted until it arrives)")
+	case o.late:
 		sb.WriteString(" (expected earlier, not seen yet)")
 	}
 	if showBalance {

@@ -61,7 +61,7 @@ func (s *Service) describeTrends(ctx context.Context, n int, category, q string)
 	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MIN(date), '') FROM money_transactions WHERE currency = ?`, currency).Scan(&first); err != nil {
 		return "", fmt.Errorf("read first transaction: %w", err)
 	}
-	f := rowFilter{from: months[0] + "-01", to: today.AddDate(0, 0, 7).Format(time.DateOnly), text: q}
+	f := rowFilter{from: months[0] + "-01", to: today.Format(time.DateOnly), text: q}
 	if category != "" {
 		f.category = normalizeCategory(category)
 	}

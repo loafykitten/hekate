@@ -196,3 +196,28 @@ func TestTheLookAheadWaitsForASyncToFinishWriting(t *testing.T) {
 		t.Fatal("the look-ahead never finished")
 	}
 }
+
+// A sync whose balances can't be stored leaves nothing behind: not its
+// transactions, not its cursor.
+func TestAFailedBalanceWriteRollsBackTheSync(t *testing.T) {
+	f := newFixture(t)
+	f.connect()
+	var before string
+	_ = f.store.DB().QueryRow(`SELECT cursor FROM money_items`).Scan(&before)
+	f.plaid.syncPages(map[string]map[string]any{
+		before: page([]any{txn("t-new", "2026-10-20", "EXAMPLE SHOP", "", 25, "GENERAL_MERCHANDISE", false)}, nil, nil, "c-next", false),
+	})
+	if _, err := f.store.DB().Exec(`CREATE TRIGGER no_balances BEFORE INSERT ON money_accounts BEGIN SELECT RAISE(ABORT, 'disk full'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.SyncAll(t.Context()); err == nil {
+		t.Fatal("a sync whose balances couldn't be stored succeeded")
+	}
+	var n int
+	var cursor string
+	_ = f.store.DB().QueryRow(`SELECT COUNT(*) FROM money_transactions WHERE transaction_id = 't-new'`).Scan(&n)
+	_ = f.store.DB().QueryRow(`SELECT cursor FROM money_items`).Scan(&cursor)
+	if n != 0 || cursor != before {
+		t.Errorf("after the failed write: %d new transactions kept, cursor %q (was %q)", n, cursor, before)
+	}
+}

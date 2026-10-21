@@ -2,6 +2,7 @@ package money
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strconv"
@@ -131,10 +132,7 @@ func (s *Service) syncItem(ctx context.Context, it item) (int, error) {
 		return 0, err
 	}
 	s.dataMu.Lock()
-	added, err := s.apply(ctx, it.id, res)
-	if err == nil {
-		err = s.saveAccounts(ctx, it.id, accounts)
-	}
+	added, err := s.apply(ctx, it.id, res, accounts)
 	s.dataMu.Unlock()
 	if err != nil {
 		s.markFailed(ctx, it.id, err, true)
@@ -151,7 +149,7 @@ func (s *Service) syncItem(ctx context.Context, it item) (int, error) {
 // apply stores one finished pass and its cursor in a single transaction, so a
 // pass that stops halfway leaves nothing behind. It returns how many of the
 // added transactions were new here.
-func (s *Service) apply(ctx context.Context, itemID int64, res syncResult) (int, error) {
+func (s *Service) apply(ctx context.Context, itemID int64, res syncResult, accounts []plaidAccount) (int, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("begin sync: %w", err)
@@ -209,22 +207,31 @@ func (s *Service) apply(ctx context.Context, itemID int64, res syncResult) (int,
 		res.Cursor, historyOf(res.Status), itemID); err != nil {
 		return 0, fmt.Errorf("save the sync cursor: %w", err)
 	}
+	// The balances commit with the transactions: one picture, or neither.
+	if err := s.saveAccounts(ctx, tx, itemID, accounts); err != nil {
+		return 0, err
+	}
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("commit sync: %w", err)
 	}
 	return fresh, nil
 }
 
+// execer is a database or a transaction in one.
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
 // saveAccounts upserts the accounts and their balances. Accounts the bank no
 // longer lists (closed) are retired: their balances aren't shown any more, but
 // the rows stay so old transactions keep their names.
-func (s *Service) saveAccounts(ctx context.Context, itemID int64, accounts []plaidAccount) error {
+func (s *Service) saveAccounts(ctx context.Context, db execer, itemID int64, accounts []plaidAccount) error {
 	now := stamp(s.now())
 	listed := make([]any, 0, len(accounts)+1)
 	listed = append(listed, itemID)
 	for _, a := range accounts {
 		listed = append(listed, a.ID)
-		_, err := s.db.ExecContext(ctx, `
+		_, err := db.ExecContext(ctx, `
 			INSERT INTO money_accounts (account_id, item_id, name, official_name, mask, type, subtype,
 				current_cents, available_cents, limit_cents, currency, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -245,7 +252,7 @@ func (s *Service) saveAccounts(ctx context.Context, itemID int64, accounts []pla
 		return nil // an empty answer retires nothing: more likely a hiccup than every account closed
 	}
 	marks := strings.TrimSuffix(strings.Repeat("?,", len(accounts)), ",")
-	if _, err := s.db.ExecContext(ctx, `UPDATE money_accounts SET active = 0 WHERE item_id = ? AND account_id NOT IN (`+marks+`)`, listed...); err != nil { //nolint:gosec // only placeholders are joined in
+	if _, err := db.ExecContext(ctx, `UPDATE money_accounts SET active = 0 WHERE item_id = ? AND account_id NOT IN (`+marks+`)`, listed...); err != nil { // only placeholders are joined in
 		return fmt.Errorf("retire closed accounts: %w", err)
 	}
 	return nil
@@ -404,7 +411,7 @@ func (s *Service) Connect(ctx context.Context, publicToken, institutionID, insti
 		return Item{}, fmt.Errorf("store the bank: %w", err)
 	}
 	s.dataMu.Lock()
-	err = s.saveAccounts(ctx, id, accounts)
+	err = s.saveAccounts(ctx, s.db, id, accounts)
 	s.dataMu.Unlock()
 	if err != nil {
 		s.log.Warn("cannot store a new bank's accounts", "item", id, "error", err)

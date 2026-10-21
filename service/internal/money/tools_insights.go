@@ -256,8 +256,12 @@ func (s *Service) upcomingTool() agent.Tool {
 			if err != nil {
 				return agent.Result{}, err
 			}
+			pending, err := s.pendingByAccount(ctx, rep.currency)
+			if err != nil {
+				return agent.Result{}, err
+			}
 			return agent.Result{
-				Content: describeUpcoming(rep, cashOnHand(accounts, rep.currency), days),
+				Content: describeUpcoming(rep, cashOnHand(accounts, rep.currency, pending), days),
 				Stored:  keptNote("Looked ahead at", "upcoming payments and income"),
 			}, nil
 		}),
@@ -335,22 +339,125 @@ func kindCounts(list []recurring) (bills, subs, income int) {
 	return bills, subs, income
 }
 
-// describeUpcoming projects the owner-confirmed items over the next days from
-// the cash on hand. Only items on a checking account move the checking balance:
-// card charges (which add to what is owed) and items in savings or other
-// accounts are listed apart, and so are items that only look regular.
+// forAccount keeps the items on one account.
+func forAccount(list []recurring, id string) []recurring {
+	var out []recurring
+	for _, it := range list {
+		if it.accountID == id {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+// forecast is one checking account's own look-ahead: its items run against its
+// own balance.
+type forecast struct {
+	acct       checkingAcct
+	lines      []string
+	low        int64
+	lowDay     string
+	firstNeg   string
+	due        int64 // its confirmed payments before the next payday
+	moreBefore int64 // its unconfirmed payments before the next payday
+	unConfN    int   // its unconfirmed payments out
+	unConfSum  int64 // those that fall in the window
+	ifLow      int64 // the lowest point if the unconfirmed ones also come
+	ifDay      string
+}
+
+func forecastAccount(rep recurringReport, a checkingAcct, chk, unOut []recurring, end time.Time, payday *occurrence) forecast {
+	cur := rep.currency
+	mine, mineUn := forAccount(chk, a.id), forAccount(unOut, a.id)
+	f := forecast{acct: a, unConfN: len(mineUn)}
+	f.lines, f.low, f.lowDay, f.firstNeg = walk(a.cents, project(mine, rep.today, end), cur)
+	for _, o := range project(mineUn, rep.today, end) {
+		f.unConfSum -= o.cents
+	}
+	if f.unConfSum != 0 {
+		_, f.ifLow, f.ifDay, _ = walk(a.cents, project(slices.Concat(mine, mineUn), rep.today, end), cur)
+	}
+	if payday != nil {
+		for _, o := range project(mine, rep.today, payday.day) {
+			if !o.income && o.day.Before(payday.day) {
+				f.due -= o.cents
+			}
+		}
+		for _, o := range project(mineUn, rep.today, payday.day) {
+			if o.day.Before(payday.day) {
+				f.moreBefore -= o.cents
+			}
+		}
+	}
+	return f
+}
+
+// findPayday is the next confirmed income into checking; with none confirmed, a
+// detected deposit into checking stands in (unconfirmed true).
+func findPayday(rep recurringReport, confirmedAll []occurrence, unIn []recurring) (payday *occurrence, unconfirmed bool) {
+	for i, o := range confirmedAll {
+		if o.income {
+			return &confirmedAll[i], false
+		}
+	}
+	if cand := project(unIn, rep.today, rep.today.AddDate(0, 0, 124)); len(cand) > 0 {
+		return &cand[0], true
+	}
+	return nil, false
+}
+
+func whenText(p *occurrence, today time.Time) string {
+	switch {
+	case p.late:
+		return "due now (expected earlier, not seen yet)"
+	case p.day.Equal(today):
+		return "today"
+	}
+	return p.day.Format(time.DateOnly)
+}
+
+func verdictText(balance, due int64, currency string) string {
+	left := balance - due
+	if left < 0 {
+		return fmt.Sprintf("short by %s", centsText(-left, currency))
+	}
+	return fmt.Sprintf("leaving %s", centsText(left, currency))
+}
+
+// describeUpcoming projects the owner-confirmed items over the next days. Each
+// checking account's items run against that account's own balance: another
+// account's money can't cover a bill that comes out of this one. Card charges
+// (which add to what is owed), items in savings or other accounts, and items that
+// only look regular are listed apart.
 func describeUpcoming(rep recurringReport, c cash, days int) string {
 	cur := rep.currency
 	end := rep.today.AddDate(0, 0, days)
 	g := groupItems(rep.items)
 	confirmed := g.confirmed()
+	multi := len(c.accounts) > 1
+	estimated := 0
+	for _, a := range c.accounts {
+		if a.estimated {
+			estimated++
+		}
+	}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Cash look-ahead for the next %d days (through %s). %s\n", days, end.Format(time.DateOnly), estimateNote)
 	sb.WriteString("Everyday spending (food, gas, shopping) is not included, so the real balance will run lower.\n")
-	if c.checkingN > 0 {
-		fmt.Fprintf(&sb, "Checking now: %s (available balances).", centsText(c.checking, cur))
-	} else {
+	switch {
+	case c.checkingN == 0:
 		sb.WriteString("No checking account balance is available, so running balances are skipped.")
+	case multi:
+		fmt.Fprintf(&sb, "Checking now: %d accounts, %s combined", c.checkingN, centsText(c.checking, cur))
+		if estimated == 0 {
+			sb.WriteString(" (available balances).")
+		} else {
+			fmt.Fprintf(&sb, " (%d of them have no available balance at the bank, so their figure is the current balance adjusted for pending payments and deposits: an estimate).", estimated)
+		}
+	case estimated > 0:
+		fmt.Fprintf(&sb, "Checking now: %s (an estimate: the bank gave no available balance, so this is the current balance adjusted for pending payments and deposits).", centsText(c.checking, cur))
+	default:
+		fmt.Fprintf(&sb, "Checking now: %s (available balances).", centsText(c.checking, cur))
 	}
 	if c.savings != 0 {
 		fmt.Fprintf(&sb, " Savings and other deposit accounts: %s.", centsText(c.savings, cur))
@@ -359,8 +466,18 @@ func describeUpcoming(rep recurringReport, c cash, days int) string {
 		fmt.Fprintf(&sb, " Credit cards owe %s in total (%s).", centsText(c.owed, cur), plural(c.cards, "card", "cards"))
 	}
 	sb.WriteString("\n")
-	if c.checkingN > 0 && c.checking < 0 {
-		fmt.Fprintf(&sb, "WARNING: checking is already below zero now (%s), before anything ahead.\n", centsText(c.checking, cur))
+	if overdrawn := slices.IndexFunc(c.accounts, func(a checkingAcct) bool { return a.cents < 0 }); overdrawn >= 0 {
+		if multi {
+			n := 0
+			for _, a := range c.accounts {
+				if a.cents < 0 {
+					n++
+				}
+			}
+			fmt.Fprintf(&sb, "WARNING: %d of %d checking accounts are already below zero now, before anything ahead (details below).\n", n, len(c.accounts))
+		} else {
+			fmt.Fprintf(&sb, "WARNING: checking is already below zero now (%s), before anything ahead.\n", centsText(c.checking, cur))
+		}
 	}
 	if len(rep.items) == 0 {
 		sb.WriteString("No recurring payments or income were detected, so there is nothing to project.")
@@ -373,7 +490,20 @@ func describeUpcoming(rep recurringReport, c cash, days int) string {
 		return sb.String()
 	}
 
-	chk, card, other := byAccount(confirmed)
+	chkAll, card, other := byAccount(confirmed)
+	// Items on a checking account with no balance figure can't be run against one.
+	known := map[string]bool{}
+	for _, a := range c.accounts {
+		known[a.id] = true
+	}
+	var chk []recurring
+	for _, it := range chkAll {
+		if known[it.accountID] {
+			chk = append(chk, it)
+		} else {
+			other = append(other, it)
+		}
+	}
 	unOutChk, unInChk := onChecking(g.unOut), onChecking(g.unIn)
 
 	// Project past the window too, to find the next payday.
@@ -395,34 +525,113 @@ func describeUpcoming(rep recurringReport, c cash, days int) string {
 		fmt.Fprintf(&sb, "Confirmed items on a credit card (%d) or in savings or another account (%d) are listed apart: they don't move the checking balance.\n", len(card), len(other))
 	}
 
-	unOut := project(unOutChk, rep.today, end)
-	var lines []string
-	if c.checkingN > 0 {
-		var low int64
-		var lowDay, firstNeg string
-		lines, low, lowDay, firstNeg = walk(c.checking, window, cur)
-		fmt.Fprintf(&sb, "Lowest point: %s.\n", lowText(low, lowDay, cur))
-		if c.checking < 0 {
+	payday, unconfirmedPay := findPayday(rep, all, unInChk)
+	var fcs []forecast
+	for _, a := range c.accounts {
+		fcs = append(fcs, forecastAccount(rep, a, chk, unOutChk, end, payday))
+	}
+
+	var body []string
+	switch {
+	case c.checkingN == 0:
+		body = []string{"Confirmed by the owner, on checking:"}
+		for _, o := range window {
+			body = append(body, upcomingLine(o, 0, false, cur))
+		}
+		if len(window) == 0 {
+			body[0] += " nothing falls in this window."
+		}
+	case !multi:
+		f := fcs[0]
+		fmt.Fprintf(&sb, "Lowest point: %s.\n", lowText(f.low, f.lowDay, cur))
+		switch {
+		case f.acct.cents < 0:
 			// Already said above: only how low it goes from here.
-			fmt.Fprintf(&sb, "On these estimates it goes as low as %s.\n", centsText(low, cur))
-		} else if firstNeg != "" {
-			fmt.Fprintf(&sb, "WARNING: on these estimates checking dips below zero on %s (lowest %s) unless money is moved in.\n", firstNeg, centsText(low, cur))
-		} else {
+			fmt.Fprintf(&sb, "On these estimates it goes as low as %s.\n", centsText(f.low, cur))
+		case f.firstNeg != "":
+			fmt.Fprintf(&sb, "WARNING: on these estimates checking dips below zero on %s (lowest %s) unless money is moved in.\n", f.firstNeg, centsText(f.low, cur))
+		default:
 			sb.WriteString("On these estimates checking stays above zero through the window.\n")
 		}
-		sb.WriteString(paydayText(rep, unInChk, unOutChk, c, all))
-		if len(unOut) > 0 {
-			_, uLow, uDay, _ := walk(c.checking, project(slices.Concat(chk, unOutChk), rep.today, end), cur)
-			var sum int64
-			for _, o := range unOut {
-				sum -= o.cents
+		if payday == nil {
+			sb.WriteString("No income into checking has been confirmed or detected, so there is no payday to compare against.\n")
+		} else {
+			label := "Next payday"
+			if unconfirmedPay {
+				label = "Next payday (a regular deposit the owner hasn't confirmed as income)"
 			}
-			fmt.Fprintf(&sb, "Not confirmed yet (left out of the figures above): %s going out of checking, %s in the window. If these also come, the lowest point would be %s.\n",
-				plural(len(unOutChk), "payment", "payments"), centsText(sum, cur), lowText(uLow, uDay, cur))
+			fmt.Fprintf(&sb, "%s: %s. Confirmed payments from checking expected before then: %s, against %s in checking now: %s.\n",
+				label, whenText(payday, rep.today), centsText(f.due, cur), centsText(f.acct.cents, cur), verdictText(f.acct.cents, f.due, cur))
+			if f.moreBefore > 0 {
+				fmt.Fprintf(&sb, "Unconfirmed payments out before then would add %s.\n", centsText(f.moreBefore, cur))
+			}
 		}
-	} else {
-		for _, o := range window {
-			lines = append(lines, upcomingLine(o, 0, false, cur))
+		if f.unConfSum != 0 {
+			fmt.Fprintf(&sb, "Not confirmed yet (left out of the figures above): %s going out of checking, %s in the window. If these also come, the lowest point would be %s.\n",
+				plural(f.unConfN, "payment", "payments"), centsText(f.unConfSum, cur), lowText(f.ifLow, f.ifDay, cur))
+		}
+		body = []string{"Confirmed by the owner, on checking:"}
+		body = append(body, f.lines...)
+		if len(f.lines) == 0 {
+			body[0] += " nothing falls in this window."
+		}
+	default:
+		short := 0
+		for _, f := range fcs {
+			if f.firstNeg != "" || f.acct.cents < 0 {
+				short++
+			}
+		}
+		sb.WriteString("Each checking account's own items run against its own balance (details per account below); another account's money doesn't cover them.\n")
+		if short > 0 {
+			fmt.Fprintf(&sb, "WARNING: %d of %d checking accounts would dip below zero on these estimates unless money is moved in from another account.\n", short, len(fcs))
+		} else {
+			sb.WriteString("On these estimates every checking account stays above zero through the window.\n")
+		}
+		switch {
+		case payday == nil:
+			sb.WriteString("No income into checking has been confirmed or detected, so there is no payday to compare against.\n")
+		case unconfirmedPay:
+			fmt.Fprintf(&sb, "Next payday: %s (a regular deposit the owner hasn't confirmed as income).\n", whenText(payday, rep.today))
+		default:
+			fmt.Fprintf(&sb, "Next payday: %s.\n", whenText(payday, rep.today))
+		}
+		if payday != nil {
+			for _, a := range c.accounts {
+				if a.id == payday.accountID {
+					body = append(body, fmt.Sprintf("The next payday lands in %s.", oneLine(a.name, 60)))
+				}
+			}
+		}
+		for _, f := range fcs {
+			name := oneLine(f.acct.name, 60)
+			head := fmt.Sprintf("Checking account %s, now %s", name, centsText(f.acct.cents, cur))
+			if f.acct.estimated {
+				head += " (estimated from the current balance and pending)"
+			}
+			body = append(body, head+":")
+			body = append(body, f.lines...)
+			if len(f.lines) == 0 {
+				body = append(body, "Nothing confirmed falls in this window.")
+			}
+			body = append(body, fmt.Sprintf("Lowest point of %s: %s.", name, lowText(f.low, f.lowDay, cur)))
+			switch {
+			case f.acct.cents < 0:
+				body = append(body, fmt.Sprintf("WARNING: %s is already below zero now and goes as low as %s unless money is moved in from another account.", name, centsText(f.low, cur)))
+			case f.firstNeg != "":
+				body = append(body, fmt.Sprintf("WARNING: %s would dip below zero on %s (lowest %s) unless money is moved in from another account.", name, f.firstNeg, centsText(f.low, cur)))
+			}
+			if payday != nil {
+				body = append(body, fmt.Sprintf("Before the next payday: confirmed payments out of %s %s, against %s in it now: %s.",
+					name, centsText(f.due, cur), centsText(f.acct.cents, cur), verdictText(f.acct.cents, f.due, cur)))
+				if f.moreBefore > 0 {
+					body = append(body, fmt.Sprintf("Unconfirmed payments out of %s before then would add %s.", name, centsText(f.moreBefore, cur)))
+				}
+			}
+			if f.unConfSum != 0 {
+				body = append(body, fmt.Sprintf("Not confirmed yet, out of %s: %s in the window; if these also come, its lowest point would be %s.",
+					name, centsText(f.unConfSum, cur), lowText(f.ifLow, f.ifDay, cur)))
+			}
 		}
 	}
 	if len(g.unIn) > 0 {
@@ -431,12 +640,6 @@ func describeUpcoming(rep recurringReport, c cash, days int) string {
 	if len(g.unOut)+len(g.unIn) > 0 {
 		sb.WriteString(askNote + "\n")
 	}
-
-	body := []string{"Confirmed by the owner, on checking:"}
-	if len(lines) == 0 {
-		body[0] += " nothing falls in this window."
-	}
-	body = append(body, lines...)
 	apart := func(title string, list []recurring) {
 		occs := project(list, rep.today, end)
 		if len(occs) == 0 {
@@ -453,63 +656,6 @@ func describeUpcoming(rep recurringReport, c cash, days int) string {
 	sb.WriteString("Date | amount | what | checking after\n")
 	sb.WriteString(fenced(body))
 	return sb.String()
-}
-
-// paydayText compares what is due before the next payday with the checking
-// balance. The payday is the next confirmed income paid into checking; with none
-// confirmed, a detected deposit stands in and is said to be unconfirmed.
-func paydayText(rep recurringReport, unIn, unOut []recurring, c cash, confirmedAll []occurrence) string {
-	cur := rep.currency
-	var payday *occurrence
-	unconfirmed := false
-	for i, o := range confirmedAll {
-		if o.income {
-			payday = &confirmedAll[i]
-			break
-		}
-	}
-	if payday == nil {
-		if cand := project(unIn, rep.today, rep.today.AddDate(0, 0, 124)); len(cand) > 0 {
-			payday, unconfirmed = &cand[0], true
-		}
-	}
-	if payday == nil {
-		return "No income into checking has been confirmed or detected, so there is no payday to compare against.\n"
-	}
-	var due int64
-	for _, o := range confirmedAll {
-		if !o.income && o.day.Before(payday.day) {
-			due -= o.cents
-		}
-	}
-	when := payday.day.Format(time.DateOnly)
-	switch {
-	case payday.late:
-		when = "due now (expected earlier, not seen yet)"
-	case payday.day.Equal(rep.today):
-		when = "today"
-	}
-	label := "Next payday"
-	if unconfirmed {
-		label = "Next payday (a regular deposit the owner hasn't confirmed as income)"
-	}
-	left := c.checking - due
-	verdict := fmt.Sprintf("leaving %s", centsText(left, cur))
-	if left < 0 {
-		verdict = fmt.Sprintf("short by %s", centsText(-left, cur))
-	}
-	text := fmt.Sprintf("%s: %s. Confirmed payments from checking expected before then: %s, against %s in checking now: %s.\n",
-		label, when, centsText(due, cur), centsText(c.checking, cur), verdict)
-	var more int64
-	for _, o := range project(unOut, rep.today, payday.day) {
-		if o.day.Before(payday.day) {
-			more -= o.cents
-		}
-	}
-	if more > 0 {
-		text += fmt.Sprintf("Unconfirmed payments out before then would add %s.\n", centsText(more, cur))
-	}
-	return text
 }
 
 func upcomingLine(o occurrence, balance int64, showBalance bool, currency string) string {

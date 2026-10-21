@@ -23,6 +23,7 @@ type txRow struct {
 	accountType            string // Plaid's: depository, credit, loan...
 	accountSubtype         string // checking, savings, credit card...
 	date                   string
+	orig                   *txRow    // for a day's payments summed into one row: the latest real one
 	day                    time.Time // date at midnight UTC, for day arithmetic
 	name, merchant         string
 	cents                  int64
@@ -181,28 +182,29 @@ var cadenceTwiceMonthly = cadence{"twice a month", 0, 0, 2, 6, 0}
 // (a bill, a subscription, income, or not regular at all) is the owner's to say:
 // label holds their answer, and is empty until they give one.
 type recurring struct {
-	id       string // payeeID: how the owner's label is kept
-	label    payeeLabel
-	anchors  [2]int // twice a month: the two days of the month
-	payee    string // the bank's text
-	account  string // the account it is charged to or paid into: the bank's text
-	class    string // acctChecking, acctCard or acctOther
-	income   bool
-	cadence  cadence
-	gap      int   // median days between occurrences
-	typical  int64 // median amount, cents (positive)
-	last     int64 // latest amount, cents (positive)
-	previous int64 // the one before it
-	changed  bool  // the latest amount differs meaningfully from the one before
-	chSeen   bool  // some amount among the last three occurrences differed from its predecessor
-	chFrom   int64 // that change: from, to, and the day it first showed
-	chTo     int64
-	chDay    time.Time
-	expected int64 // what the next one should be: the new amount if it changed, else the typical
-	seen     int
-	lastDay  time.Time
-	next     time.Time
-	latest   txRow
+	id        string // payeeID: how the owner's label is kept
+	label     payeeLabel
+	anchors   [2]int // twice a month: the two days of the month
+	payee     string // the bank's text
+	accountID string
+	account   string // the account it is charged to or paid into: the bank's text
+	class     string // acctChecking, acctCard or acctOther
+	income    bool
+	cadence   cadence
+	gap       int   // median days between occurrences
+	typical   int64 // median amount, cents (positive)
+	last      int64 // latest amount, cents (positive)
+	previous  int64 // the one before it
+	changed   bool  // the latest amount differs meaningfully from the one before
+	chSeen    bool  // some amount among the last three occurrences differed from its predecessor
+	chFrom    int64 // that change: from, to, and the day it first showed
+	chTo      int64
+	chDay     time.Time
+	expected  int64 // what the next one should be: the new amount if it changed, else the typical
+	seen      int
+	lastDay   time.Time
+	next      time.Time
+	latest    txRow
 }
 
 // status is what the owner called it, or "unconfirmed".
@@ -266,11 +268,14 @@ func detectRecurring(rows []txRow, today time.Time) (items []recurring, stopped 
 		// One entry per day: two deposits on the same day are one payday.
 		var days []txRow
 		for _, r := range g {
+			real := r
 			if n := len(days); n > 0 && days[n-1].date == r.date {
 				days[n-1].cents += r.cents
 				days[n-1].id, days[n-1].pending = r.id, r.pending
+				days[n-1].orig = &real
 				continue
 			}
+			r.orig = &real
 			days = append(days, r)
 		}
 		if it, ok := classify(days, gk.income); ok {
@@ -327,12 +332,17 @@ func classify(days []txRow, income bool) (recurring, bool) {
 		amounts[i] = abs64(d.cents)
 	}
 	latest := days[len(days)-1]
+	// The summed figure serves detection only; what is shown is a real transaction.
+	shown := latest
+	if latest.orig != nil {
+		shown = *latest.orig
+	}
 	it := recurring{
 		income: income, cadence: cad, gap: gap, anchors: [2]int{a, b}, typical: medianInt64(amounts),
-		last: amounts[len(amounts)-1], previous: amounts[len(amounts)-2], seen: len(days), lastDay: latest.day, latest: latest,
+		last: amounts[len(amounts)-1], previous: amounts[len(amounts)-2], seen: len(days), lastDay: latest.day, latest: shown,
 		payee: latest.payee(),
 	}
-	it.account, it.class = latest.account, latest.accountClass()
+	it.accountID, it.account, it.class = latest.accountID, latest.account, latest.accountClass()
 	it.changed = meaningful(it.last, it.previous)
 	for i := len(amounts) - 1; i >= 1 && i >= len(amounts)-3; i-- {
 		if meaningful(amounts[i], amounts[i-1]) {
@@ -514,14 +524,15 @@ func (s *Service) recurringReport(ctx context.Context) (recurringReport, error) 
 
 // occurrence is one expected payment or payday in the look-ahead.
 type occurrence struct {
-	day     time.Time
-	cents   int64 // signed: money in (+) or out (-)
-	payee   string
-	income  bool
-	account string // the account's name: the bank's text
-	class   string // acctChecking, acctCard or acctOther
-	status  string // bill, subscription, income or unconfirmed
-	late    bool   // its date has passed without it showing up
+	day       time.Time
+	cents     int64 // signed: money in (+) or out (-)
+	payee     string
+	income    bool
+	accountID string
+	account   string // the account's name: the bank's text
+	class     string // acctChecking, acctCard or acctOther
+	status    string // bill, subscription, income or unconfirmed
+	late      bool   // its date has passed without it showing up
 }
 
 // project lists each item's expected occurrences from today to horizon, soonest
@@ -534,7 +545,7 @@ func project(items []recurring, today, horizon time.Time) []occurrence {
 			sign = 1
 		}
 		for d := it.next; !d.After(horizon); d = it.step(d) {
-			o := occurrence{day: d, cents: sign * it.expected, payee: it.payee, income: it.income, status: it.status(), account: it.account, class: it.class}
+			o := occurrence{day: d, cents: sign * it.expected, payee: it.payee, income: it.income, status: it.status(), accountID: it.accountID, account: it.account, class: it.class}
 			if d.Before(today) {
 				o.day, o.late = today, true
 			}
@@ -556,15 +567,26 @@ func project(items []recurring, today, horizon time.Time) []occurrence {
 	return out
 }
 
-// cash is what the owner has on hand, in cents.
-type cash struct {
-	checking, savings, owed int64
-	checkingN, cards        int
+// checkingAcct is one checking account's spendable balance.
+type checkingAcct struct {
+	id, name  string
+	cents     int64
+	estimated bool // no available figure: the current balance adjusted for pending
 }
 
-// cashOnHand sums the available (else current) balances of checking accounts,
-// other deposit accounts apart, and what the credit cards owe.
-func cashOnHand(accounts []Account, currency string) cash {
+// cash is what the owner has on hand, in cents.
+type cash struct {
+	checking, savings, owed int64 // checking is the sum over accounts
+	checkingN, cards        int
+	accounts                []checkingAcct
+}
+
+// cashOnHand sums the available balances of checking accounts, other deposit
+// accounts apart, and what the credit cards owe. With no available figure the
+// current balance is used, adjusted for the account's pending money out and in
+// (pending: net pending cents by account id) since the bank's current balance
+// leaves them out.
+func cashOnHand(accounts []Account, currency string, pending map[string]int64) cash {
 	var c cash
 	for _, a := range accounts {
 		if a.Currency != currency {
@@ -572,17 +594,20 @@ func cashOnHand(accounts []Account, currency string) cash {
 		}
 		switch a.Type {
 		case "depository":
-			bal := a.Balance.Available
-			if bal == nil {
-				bal = a.Balance.Current
-			}
-			if bal == nil {
+			var cents int64
+			estimated := false
+			switch {
+			case a.Balance.Available != nil:
+				cents = int64(math.Round(*a.Balance.Available * 100))
+			case a.Balance.Current != nil:
+				cents, estimated = int64(math.Round(*a.Balance.Current*100))+pending[a.ID], true
+			default:
 				continue
 			}
-			cents := int64(math.Round(*bal * 100))
 			if strings.EqualFold(a.Subtype, "checking") {
 				c.checking += cents
 				c.checkingN++
+				c.accounts = append(c.accounts, checkingAcct{id: a.ID, name: a.Name, cents: cents, estimated: estimated})
 			} else {
 				c.savings += cents
 			}
@@ -594,6 +619,25 @@ func cashOnHand(accounts []Account, currency string) cash {
 		}
 	}
 	return c
+}
+
+// pendingByAccount is each account's net pending money (in +, out -), in cents.
+func (s *Service) pendingByAccount(ctx context.Context, currency string) (map[string]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT account_id, SUM(amount_cents) FROM money_transactions WHERE pending = 1 AND currency = ? GROUP BY account_id`, currency)
+	if err != nil {
+		return nil, fmt.Errorf("read pending: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]int64{}
+	for rows.Next() {
+		var id string
+		var sum int64
+		if err := rows.Scan(&id, &sum); err != nil {
+			return nil, fmt.Errorf("read pending: %w", err)
+		}
+		out[id] = sum
+	}
+	return out, rows.Err() //nolint:wrapcheck // plain iteration error
 }
 
 // monthTrend is one calendar month of the trends tool.

@@ -229,7 +229,7 @@ export function CalendarSection() {
     const el = stripRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
-      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return; // a sideways swipe scrolls it already
+      if (e.ctrlKey || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return; // zooming, or a sideways swipe that scrolls it already
       const next = Math.min(el.scrollWidth - el.clientWidth, Math.max(0, el.scrollLeft + e.deltaY));
       if (next === el.scrollLeft) return;
       e.preventDefault();

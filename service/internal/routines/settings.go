@@ -1,6 +1,7 @@
 // Package routines holds Renamon's routines and their settings: the heartbeat
-// that nudges the owner during waking hours when something needs them, and the
-// morning briefing she gives when the owner starts their day with her.
+// that nudges the owner during waking hours when something needs them, the
+// morning briefing she gives when the owner starts their day with her, and the
+// evening check-in where she asks how the day went.
 package routines
 
 import (
@@ -25,7 +26,9 @@ const DomainRoutines = "routines"
 
 const (
 	settingsKey = "routines"
-	briefedKey  = "routines.briefed_on" // the local day the "good morning" briefing was last given
+	briefedKey  = "routines.briefed_on"       // the local day the "good morning" briefing was last given
+	checkedKey  = "routines.checked_in_on"    // the last day talked over at a check-in
+	askedKey    = "routines.checkin_asked_on" // the last day the check-in notice went out for
 )
 
 // Settings are the owner's choices for the routines, as GET /api/routines returns them.
@@ -33,16 +36,20 @@ type Settings struct {
 	Heartbeat   bool   `json:"heartbeat"`    // nudges on or off
 	WakingStart string `json:"waking_start"` // HH:MM: nudges only between these
 	WakingEnd   string `json:"waking_end"`
+	CheckIn     bool   `json:"checkin"`    // the evening check-in on or off
+	CheckInAt   string `json:"checkin_at"` // HH:MM: when she asks
 }
 
-// Defaults: nudges on, 08:00 to 22:00.
-var defaults = Settings{Heartbeat: true, WakingStart: "08:00", WakingEnd: "22:00"}
+// Defaults: nudges on, 08:00 to 22:00; the check-in on, at midnight.
+var defaults = Settings{Heartbeat: true, WakingStart: "08:00", WakingEnd: "22:00", CheckIn: true, CheckInAt: "00:00"}
 
 // Patch changes some settings; nil fields stay.
 type Patch struct {
 	Heartbeat   *bool   `json:"heartbeat"`
 	WakingStart *string `json:"waking_start"`
 	WakingEnd   *string `json:"waking_end"`
+	CheckIn     *bool   `json:"checkin"`
+	CheckInAt   *string `json:"checkin_at"`
 }
 
 // Pusher delivers web push (with the Telegram fallback in production).
@@ -83,8 +90,9 @@ type Service struct {
 	log       *slog.Logger
 	now       func() time.Time
 
-	mu       sync.Mutex // settings read-modify-write, and claiming the day's briefing
+	mu       sync.Mutex // settings read-modify-write, and claiming the day's briefing or check-in
 	briefing string     // the day whose good-morning briefing is under way, or ""
+	checking string     // the day whose tapped check-in is under way, or ""
 }
 
 // New builds the service.
@@ -137,10 +145,13 @@ func (s *Service) Update(ctx context.Context, p Patch) (Settings, error) {
 	if p.Heartbeat != nil {
 		cur.Heartbeat = *p.Heartbeat
 	}
+	if p.CheckIn != nil {
+		cur.CheckIn = *p.CheckIn
+	}
 	for _, f := range []struct {
 		in  *string
 		out *string
-	}{{p.WakingStart, &cur.WakingStart}, {p.WakingEnd, &cur.WakingEnd}} {
+	}{{p.WakingStart, &cur.WakingStart}, {p.WakingEnd, &cur.WakingEnd}, {p.CheckInAt, &cur.CheckInAt}} {
 		if f.in == nil {
 			continue
 		}
@@ -162,6 +173,7 @@ func (s *Service) Update(ctx context.Context, p Patch) (Settings, error) {
 	}
 	if s.jobs != nil {
 		s.jobs.Wake(HeartbeatJob)
+		s.jobs.Wake(CheckInJob)
 	}
 	s.events.Invalidate(DomainRoutines)
 	return cur, nil

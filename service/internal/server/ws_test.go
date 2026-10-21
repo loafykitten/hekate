@@ -40,8 +40,9 @@ type fakeConv struct {
 		before int64
 		limit  int
 	}
-	sayCh chan said
-	busy  bool
+	sayCh     chan said
+	checkInCh chan said // text holds the day
+	busy      bool
 }
 
 type said struct {
@@ -49,7 +50,9 @@ type said struct {
 	quiet            bool
 }
 
-func newFakeConv() *fakeConv { return &fakeConv{sayCh: make(chan said, 8)} }
+func newFakeConv() *fakeConv {
+	return &fakeConv{sayCh: make(chan said, 8), checkInCh: make(chan said, 8)}
+}
 
 func (f *fakeConv) ConversationID() string { return "default" }
 func (f *fakeConv) Busy() bool {
@@ -64,6 +67,9 @@ func (f *fakeConv) Say(origin, id, text string, quiet bool) {
 	f.said = append(f.said, said{origin, id, text, quiet})
 	f.mu.Unlock()
 	f.sayCh <- said{origin, id, text, quiet}
+}
+func (f *fakeConv) CheckIn(origin, id, day string, quiet bool) {
+	f.checkInCh <- said{origin, id, day, quiet}
 }
 func (f *fakeConv) Interrupt(turnID string, h int) {
 	f.mu.Lock()
@@ -218,6 +224,18 @@ func TestSayInterruptAndValidation(t *testing.T) {
 	send(t, c, map[string]any{"type": "say", "text": "no id"})
 	if m := readMsg(t, c); m["code"] != "bad_message" {
 		t.Errorf("no id: %v", m)
+	}
+	send(t, c, map[string]any{"type": "checkin", "id": "c1", "day": "2026-10-20", "quiet": true})
+	if got := <-conv.checkInCh; got.origin != ready["client_id"] || got.id != "c1" || got.text != "2026-10-20" || !got.quiet {
+		t.Errorf("check-in = %+v", got)
+	}
+	send(t, c, map[string]any{"type": "checkin", "id": "c2"})
+	if got := <-conv.checkInCh; got.id != "c2" || got.text != "" || got.quiet {
+		t.Errorf("check-in without a day = %+v", got)
+	}
+	send(t, c, map[string]any{"type": "checkin"})
+	if m := readMsg(t, c); m["code"] != "bad_message" {
+		t.Errorf("check-in without an id: %v", m)
 	}
 	send(t, c, map[string]any{"type": "dance"})
 	if m := readMsg(t, c); m["code"] != "bad_message" {

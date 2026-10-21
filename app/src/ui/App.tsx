@@ -33,6 +33,15 @@ function sectionFromUrl(url: string): Section | undefined {
   }
 }
 
+// `?checkin=2026-10-20`: a tapped check-in notification, for that day.
+function checkInFromUrl(url: string): string | undefined {
+  try {
+    return new URL(url, location.href).searchParams.get("checkin") ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function App() {
   const [stage, setStage] = useState<Stage>();
   const [conversation] = useState(() => new Conversation());
@@ -70,6 +79,16 @@ export function App() {
     };
   }, [conversation]);
 
+  // Opened by the check-in notification: start it once (a reload doesn't start it again).
+  useEffect(() => {
+    const day = checkInFromUrl(location.href);
+    if (day === undefined) return;
+    conversation.startCheckIn(day);
+    const url = new URL(location.href);
+    url.searchParams.delete("checkin");
+    history.replaceState(history.state, "", url);
+  }, [conversation]);
+
   useEffect(() => {
     conversation.attachStage(stage);
     return () => conversation.attachStage(undefined);
@@ -88,7 +107,8 @@ export function App() {
   // An approval changed (here or on another device): every card and list showing it updates.
   useEffect(() => conversation.onApprovalChange((approval) => applyApproval(queryClient, approval)), [conversation, queryClient]);
 
-  // A notification tapped while the app is open asks it to show the right section.
+  // A notification tapped while the app is open asks it to show the right section, or to start
+  // the check-in.
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
     const onMessage = (e: MessageEvent) => {
@@ -96,10 +116,12 @@ export function App() {
       if (data?.type !== "open-url" || typeof data.url !== "string") return;
       const section = sectionFromUrl(data.url);
       if (section) openMenu(section);
+      const day = checkInFromUrl(data.url);
+      if (day !== undefined) conversation.startCheckIn(day);
     };
     navigator.serviceWorker.addEventListener("message", onMessage);
     return () => navigator.serviceWorker.removeEventListener("message", onMessage);
-  }, [openMenu]);
+  }, [conversation, openMenu]);
 
   return (
     <PersistQueryClientProvider

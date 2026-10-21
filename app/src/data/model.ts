@@ -488,17 +488,22 @@ export function asJournalDay(v: unknown): JournalDay | undefined {
 
 // The owner's choices for her routines (GET /api/routines).
 export interface RoutineSettings {
-  heartbeat: boolean; // check-in nudges
+  heartbeat: boolean; // nudges
   waking_start: string; // HH:MM
   waking_end: string;
+  checkin: boolean; // the evening check-in
+  checkin_at: string; // HH:MM
 }
 
 export function asRoutineSettings(v: unknown): RoutineSettings | undefined {
   if (!isRec(v) || typeof v.heartbeat !== "boolean" || !isStr(v.waking_start) || !isStr(v.waking_end)) return undefined;
+  if (typeof v.checkin !== "boolean" || !isStr(v.checkin_at)) return undefined;
   return {
     heartbeat: v.heartbeat,
     waking_start: v.waking_start,
     waking_end: v.waking_end,
+    checkin: v.checkin,
+    checkin_at: v.checkin_at,
   };
 }
 

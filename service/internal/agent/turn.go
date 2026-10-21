@@ -69,6 +69,9 @@ func (a *Agent) runTurn(t *turn, prev *turn) {
 
 	if err := r.begin(); err != nil {
 		r.log.Error("cannot start turn", "error", err)
+		if t.opening != nil && t.opening.Settle != nil {
+			t.opening.Settle(false)
+		}
 		a.hub.Broadcast(proto.NewError(proto.CodeLLMError, "Something went wrong on my side. Try again?", t.inputID))
 		return
 	}
@@ -95,9 +98,11 @@ func (r *turnRun) begin() error {
 		InputID: t.inputID, Origin: t.origin, UserText: t.userText, StartedAt: r.start}); err != nil {
 		return fmt.Errorf("record turn: %w", err)
 	}
+	// A turn started without words (a tapped check-in) saves the note for the
+	// model and no display text, so the log doesn't show it.
 	if err := a.store.AddMessages(ctx, []store.Message{{
 		ConversationID: ConversationID, TurnID: t.id, Role: store.RoleUser,
-		Text: t.userText, Content: t.userText, CreatedAt: r.start,
+		Text: t.userText, Content: cmp.Or(t.userText, t.note), CreatedAt: r.start,
 	}}); err != nil {
 		return fmt.Errorf("record message: %w", err)
 	}
@@ -181,11 +186,16 @@ func (r *turnRun) loop(ctx context.Context) error {
 // the model had made it, so the reply answers its result. It returns the
 // round the model starts at.
 func (r *turnRun) open(ctx context.Context) (int, error) {
-	if r.a.opener == nil {
-		return 0, nil
-	}
-	op, ok := r.a.opener(ctx, r.t.userText)
-	if !ok {
+	var op Opening
+	switch {
+	case r.t.opening != nil:
+		op = *r.t.opening
+	case r.a.opener != nil:
+		var ok bool
+		if op, ok = r.a.opener(ctx, r.t.userText); !ok {
+			return 0, nil
+		}
+	default:
 		return 0, nil
 	}
 	r.settle = op.Settle

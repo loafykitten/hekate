@@ -22,7 +22,8 @@
     "verify:briefing": "node scripts/verify/briefing.mjs",
     "verify:lipsync": "node scripts/verify/lipsync.mjs",
     "verify:offline": "node scripts/verify/offline.mjs",
-    "verify:tour": "node scripts/verify/tour.mjs"
+    "verify:tour": "node scripts/verify/tour.mjs",
+    "verify:checkin": "node scripts/verify/checkin.mjs"
   },
   "dependencies": {
     "@tanstack/query-sync-storage-persister": "5.104.5",

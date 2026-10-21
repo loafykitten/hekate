@@ -67,6 +67,7 @@ shape is made; with no visemes the mouth follows loudness alone.
 | `ptt_end` | `id`, `quiet?` | Released. The server transcribes, sends `transcript`, then starts a turn (`quiet` as for `say`). |
 | `ptt_cancel` | `id` | Discard the audio. |
 | `interrupt` | `heard_seq` (last segment seq the user heard at least partly, or -1), `turn_id` (the turn `heard_seq` describes) | Stop that turn. The server keeps segments up to `heard_seq` in history, and ignores an interrupt for a turn that is no longer the current one. |
+| `checkin` | `id`, `day?`, `quiet?` | The owner tapped the evening check-in (see Routines). `day` (YYYY-MM-DD) is the day its notification asked about; without it, the current one. Starts a turn with an empty `user_text`, opened with an `evening_checkin` call, unless there's nothing to start: then nothing is sent back. `quiet` as for `say`. |
 
 An `interrupt` that arrives after the turn already ended (the client was still playing queued audio) trims the saved reply to `heard_seq` and broadcasts a second `turn_end` with status `interrupted`, so every client stops playing that turn. With no recent turn it is ignored. New input while a turn is running interrupts that turn first. The client sends `interrupt` with its `heard_seq` only for a turn it started (it knows what was heard); for another device's turn it just sends the input, and the server interrupts that turn keeping what it delivered.
 
@@ -403,7 +404,7 @@ can still come back, and the owner can forget it again. Retired memories can be 
 
 ### Routines
 
-The heartbeat runs every 30 minutes during waking hours. It looks for an event with a place to get
+The heartbeat sends nudges: it runs every 30 minutes during waking hours. It looks for an event with a place to get
 to starting in 10 to 75 minutes, tasks overdue by an hour (or from an earlier day), unread mail
 that needs a reply or matters and has waited 20 minutes (under a day old), and follow-ups that
 are due, then sends one `notify` (kind `nudge`) and a push about whatever it hasn't mentioned
@@ -422,9 +423,24 @@ was given in full: not failed, and not stopped while it could still be playing (
 new input on any device). Later greetings that day are just greetings. She
 can call the tool herself any time she's asked for the briefing or what's on today.
 
+The evening check-in asks once a day, at `checkin_at` (midnight by default), how the day went: one
+`notify` (kind `checkin`, id `checkin-<day>`, title "How did today go?") and a push whose url is
+`/?checkin=<day>`. The day it asks about is the local date until 06:00 the next morning, so a
+check-in after midnight is about the day that just ended. It isn't sent when that day was already
+talked over (the `evening_checkin` tool ran for it) or already asked about, and a notice that
+reached no one isn't retried. Tapping the push opens the app, which sends `checkin` with that day
+(and drops the parameter from the address); the in-app notice's button sends it without one. The
+turn opens with an `evening_checkin` call: what was done that day (closed tasks and each completion
+of a repeating one), tasks still open and due that day or earlier, tasks due the next day, that
+day's calendar, the next 24 hours' first three events and follow-ups due, with up to three cards.
+The owner's side of that turn is a note for the model only: history shows her reply alone. A turn
+that fails or is cut short frees the day for another tap. She can call the tool herself when the
+owner wants to talk the day over, which also counts.
+
 ```jsonc
 // RoutineSettings
-{ "heartbeat": true, "waking_start": "08:00", "waking_end": "22:00" }   // HH:MM local; the window may pass midnight
+{ "heartbeat": true, "waking_start": "08:00", "waking_end": "22:00",   // HH:MM local; the window may pass midnight
+  "checkin": true, "checkin_at": "00:00" }                              // the evening check-in and when it asks
 ```
 
 | Method & path | Body | Returns |
@@ -435,7 +451,7 @@ can call the tool herself any time she's asked for the briefing or what's on tod
 ### Ideas and routine runs
 
 Renamon notes improvement ideas with `idea_log` (at most 10 a day; an open idea with the same text
-isn't saved twice). Routines are the scheduled background jobs (reflection, heartbeat);
+isn't saved twice). Routines are the scheduled background jobs (reflection, heartbeat, check-in);
 each run is recorded and kept 90 days.
 
 ```jsonc
@@ -482,6 +498,6 @@ from stored or fetched data, never from model text. Shapes of `data` by `kind`:
 
 | type | fields | meaning |
 |---|---|---|
-| `notify` | `id`, `kind: "reminder" \| "approval" \| "change" \| "nudge"`, `title`, `body`, `card?` | Something fired, or she needs a decision she asked for outside a conversation (e.g. a rule from the weekly noise report). The app shows it even with no turn running. |
+| `notify` | `id`, `kind: "reminder" \| "approval" \| "change" \| "nudge" \| "checkin"`, `title`, `body`, `card?` | Something fired, or she needs a decision she asked for outside a conversation (e.g. a rule from the weekly noise report). The app shows it even with no turn running. |
 | `approval` | `approval: Approval` | An approval was created or changed (decided, ran, expired). Clients update any card showing it. |
 | `invalidate` | `domains: ("tasks" \| "reminders" \| "calendar" \| "memory" \| "weather" \| "mail" \| "approvals" \| "changes" \| "ideas" \| "journal" \| "routines")[]` | Data changed; refetch those menu sections (`weather`: the home place changed). |

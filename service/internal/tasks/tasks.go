@@ -246,6 +246,38 @@ func (s *Service) List(ctx context.Context, f Filter) ([]Task, error) {
 	return out, nil
 }
 
+// DoneSince lists what was finished at or after since, newest first: tasks
+// completed then, and each completion of a repeating task, as that occurrence
+// (its due, and when it was done).
+func (s *Service) DoneSince(ctx context.Context, since time.Time, limit int) ([]Task, error) {
+	if limit <= 0 || limit > maxRows {
+		limit = maxRows
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+columns+` FROM tasks
+		 WHERE deleted_at IS NULL AND completed_at >= ?
+		 UNION ALL
+		 SELECT t.id, t.title, t.notes, t.list, c.due, t.rrule, t.priority, c.completed_at, t.created_at, t.updated_at
+		   FROM task_completions c JOIN tasks t ON t.id = c.task_id
+		  WHERE t.deleted_at IS NULL AND c.completed_at >= ?
+		 ORDER BY completed_at DESC, id DESC LIMIT ?`, stamp(since), stamp(since), limit)
+	if err != nil {
+		return nil, fmt.Errorf("tasks done: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := []Task{}
+	for rows.Next() {
+		t, err := s.scan(rows)
+		if err != nil {
+			return nil, fmt.Errorf("tasks done: %w", err)
+		}
+		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("tasks done: %w", err)
+	}
+	return out, nil
+}
+
 // Lists returns every list that has a task, with its open count.
 func (s *Service) Lists(ctx context.Context) ([]ListInfo, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT MIN(list), COALESCE(SUM(completed_at IS NULL), 0)

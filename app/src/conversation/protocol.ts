@@ -100,7 +100,7 @@ export interface CapabilitiesChanged {
 // Something fired with no turn running (a reminder, an approval she asks for, a change that
 // finished). `card` has the same shape as a turn's card. `kind` stays a string so a newer
 // service's kinds still show as a plain banner.
-export type NotifyKind = "reminder" | "approval" | "change" | "nudge";
+export type NotifyKind = "reminder" | "approval" | "change" | "nudge" | "checkin";
 export interface Notify {
   type: "notify";
   id: string;
@@ -144,6 +144,8 @@ export type ClientMessage =
   | { type: "ptt_start"; id: string; sample_rate: number }
   | { type: "ptt_end"; id: string; quiet?: boolean }
   | { type: "ptt_cancel"; id: string }
+  // The evening check-in the owner tapped; `day` is the day its notification asked about.
+  | { type: "checkin"; id: string; day?: string; quiet?: boolean }
   | { type: "interrupt"; heard_seq: number; turn_id?: string };
 
 export const MAX_TEXT_LENGTH = 4000;

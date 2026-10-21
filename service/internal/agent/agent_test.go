@@ -881,6 +881,58 @@ func TestAnOpenerMakesTheFirstCall(t *testing.T) {
 	}
 }
 
+func TestATappedCheckInStartsATurnWithoutWords(t *testing.T) {
+	gather := Tool{Name: "evening", Description: "The day", Effect: EffectRead, Schema: json.RawMessage(`{"type":"object","properties":{}}`),
+		Run: func(context.Context, json.RawMessage) (Result, error) {
+			return Result{Content: "Groceries done; the call is tomorrow."}, nil
+		}}
+	settled := make(chan bool, 2)
+	var asked []string
+	checkIn := func(_ context.Context, day string) (Opening, bool) {
+		asked = append(asked, day)
+		return Opening{Tool: "evening", Settle: func(given bool) { settled <- given }}, day == "2026-10-19"
+	}
+	e := newEnv(t, func(int, llmReq) (int, []string) {
+		return 200, say("You got the groceries done. How did the rest of today go?")
+	}, envOpts{tools: []Tool{gather}, checkIn: checkIn})
+
+	e.agent.CheckIn("c", "stale", "2026-10-12", true) // a notice from another day: nothing starts
+	e.agent.CheckIn("c", "i", "2026-10-19", true)
+	ev := e.hub.waitTurnEnd(t, 1)
+	if !<-settled {
+		t.Error("a check-in given in full was settled as not given")
+	}
+	if !slices.Equal(asked, []string{"2026-10-12", "2026-10-19"}) {
+		t.Errorf("asked for days %q", asked)
+	}
+	starts := ofType[proto.TurnStart](ev)
+	if len(starts) != 1 || starts[0].InputID != "i" || starts[0].UserText != "" {
+		t.Fatalf("turn starts = %+v", starts)
+	}
+	if segs := ofType[proto.Segment](ev); len(segs) == 0 || segs[0].AudioB64 != nil {
+		t.Errorf("a quiet check-in: segments = %+v", segs)
+	}
+
+	// The model reads a note in the owner's place, then the call already made.
+	reqs := e.llm.requests()
+	if len(reqs) != 1 {
+		t.Fatalf("requests = %d", len(reqs))
+	}
+	m := reqs[0].Messages
+	user, asst, tool := m[len(m)-3], m[len(m)-2], m[len(m)-1]
+	if user["role"] != "user" || user["content"] != checkInNote || asst["tool_calls"] == nil || tool["content"] != "Groceries done; the call is tomorrow." {
+		t.Errorf("opened messages = %v / %v / %v", user, asst, tool)
+	}
+	// The log shows her question, not the note.
+	visible, err := e.agent.Messages(t.Context(), 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(visible) != 1 || visible[0].Role != "assistant" {
+		t.Errorf("visible history = %+v", visible)
+	}
+}
+
 // A finished briefing may still be playing. Stopping it then (an interrupt,
 // even during its last sentence; talking or typing on any device) frees the
 // day; the same after it can have finished playing doesn't.

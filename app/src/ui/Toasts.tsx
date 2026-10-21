@@ -19,6 +19,18 @@ export function Toasts({ onOpenSection }: { onOpenSection: (section: Section) =>
             <strong>{n.title}</strong>
             {n.body && <span>{n.body}</span>}
           </span>
+          {n.checkIn && (
+            <button
+              type="button"
+              className={styles.action}
+              onClick={() => {
+                conversation.startCheckIn(undefined, true);
+                conversation.dismissNotice(n.id);
+              }}
+            >
+              Talk it over
+            </button>
+          )}
           {n.section && (
             <button
               type="button"

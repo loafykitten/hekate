@@ -63,7 +63,7 @@ export default defineConfig({
     }),
   ],
   // three.js alone is ~700 kB minified; one app chunk is fine for a single-user PWA behind a service worker.
-  build: { chunkSizeWarningLimit: 1100 },
+  build: { chunkSizeWarningLimit: 1200 },
   server: {
     // Loopback only by default; `HEKATE_LAN=1 npm run dev` to try it from a phone on the LAN.
     host: process.env.HEKATE_LAN === "1",

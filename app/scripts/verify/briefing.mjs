@@ -46,7 +46,7 @@ for (const [vname, viewport] of [["phone", { width: 390, height: 844 }], ["deskt
   await page.route("**/api/**", (route) => {
     const p = new URL(route.request().url()).pathname;
     if (p === "/api/ws") return route.fallback();
-    if (p === "/api/routines") return json(route, { heartbeat: true, waking_start: "08:00", waking_end: "22:00" });
+    if (p === "/api/routines") return json(route, { heartbeat: true, waking_start: "08:00", waking_end: "22:00", checkin: true, checkin_at: "00:00" });
     if (p === "/api/weather") return json(route, weather);
     if (p === "/api/tasks") return json(route, { tasks: [] });
     if (p === "/api/reminders") return json(route, { reminders: [] });

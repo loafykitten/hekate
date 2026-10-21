@@ -110,6 +110,14 @@ func (s *Server) say(origin, id, text string, quiet bool) {
 	s.conv.Say(origin, id, text, quiet)
 }
 
+// checkIn starts the evening check-in: input like any other.
+func (s *Server) checkIn(origin, id, day string, quiet bool) {
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	s.inputs++
+	s.conv.CheckIn(origin, id, day, quiet)
+}
+
 // New creates a Server. Directories are opened lazily per request through
 // os.Root so a missing or replaced directory never crashes the process.
 func New(o Options) *Server {

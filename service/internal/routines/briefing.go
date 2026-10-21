@@ -166,7 +166,7 @@ func (s *Service) gatherDay(ctx context.Context, now time.Time) (string, []proto
 			}
 			b.WriteString("\n")
 			if len(events) > 0 {
-				if c := s.cardOf(s.cal, now, ahead, events); c != nil {
+				if c := s.cardOf(s.cal, "events:briefing", "Coming up", now, ahead, events); c != nil {
 					cards = append(cards, *c)
 				}
 			}
@@ -266,14 +266,14 @@ func pickCards(cards []proto.Card) []proto.Card {
 }
 
 // cardOf builds the events card when the calendar can (the real service).
-func (s *Service) cardOf(src EventSource, from, to time.Time, events []calendar.Event) *proto.Card {
+func (s *Service) cardOf(src EventSource, id, title string, from, to time.Time, events []calendar.Event) *proto.Card {
 	cs, ok := src.(interface {
 		EventsCard(id, title string, from, to time.Time, events []calendar.Event) *agent.Card
 	})
 	if !ok {
 		return nil
 	}
-	return cs.EventsCard("events:briefing", "Coming up", from, to, events)
+	return cs.EventsCard(id, title, from, to, events)
 }
 
 // clock is a time as the briefing says it: the weekday too when it isn't today.

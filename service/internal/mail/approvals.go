@@ -174,7 +174,8 @@ func (s *Service) ask(ctx context.Context, r approvals.Request) (agent.Result, e
 	case a.Status == approvals.StatusFailed:
 		res.Content = "It was allowed but failed: " + result + ". Tell the user."
 	default:
-		res.Content = fmt.Sprintf("Asked %s to approve; it will run when they allow it. Do not do it another way meanwhile.", s.owner)
+		res.Content = fmt.Sprintf("Asked %s to approve (approval #%s); it will run when they allow it. Do not do it another way meanwhile. "+
+			"This only says you asked: on later turns, Approvals in your prompt says whether it is still waiting.", s.owner, a.ID)
 	}
 	return res, nil
 }

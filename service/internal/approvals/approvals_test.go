@@ -549,31 +549,49 @@ func TestNotify(t *testing.T) {
 
 func TestPromptContext(t *testing.T) {
 	f := newFixture(t)
-	if got, err := f.svc.PromptContext(t.Context(), f.clock.Now()); err != nil || got != "" {
+	if got, err := f.svc.PromptContext(t.Context(), f.clock.Now()); err != nil || got != "Nothing is waiting for an answer." {
 		t.Fatalf("empty context = %q, %v", got, err)
 	}
 	done := f.request(t, "from:@example.com")
 	f.decide(t, done, DecisionOnce)
 	denied := f.request(t, "")
 	f.decide(t, denied, DecisionDeny)
-	f.clock.advance(time.Hour)
-	f.request(t, "")
-	f.clock.advance(10 * time.Minute)
 
+	// The markers' boundary is random; pin it to compare.
+	pin := func(s string) string {
+		return regexp.MustCompile(`boundary="[^"]+"`).ReplaceAllString(s, `boundary="B"`)
+	}
+	q := func(s string) string { return `<approval_text boundary="B">` + s + `</approval_text boundary="B">` }
+	// Once everything is decided it says so outright: her history still holds "asked".
 	got, err := f.svc.PromptContext(t.Context(), f.clock.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The markers' boundary is random; pin it to compare.
-	got = regexp.MustCompile(`boundary="[^"]+"`).ReplaceAllString(got, `boundary="B"`)
-	q := func(s string) string { return `<approval_text boundary="B">` + s + `</approval_text boundary="B">` }
 	want := untrustedNote + `
-- asked 10 min ago: ` + q("Move 14 newsletters to Trash?") + `
+Nothing is waiting for an answer.
 
 Decided recently:
-- denied 1 h ago: ` + q("Move 14 newsletters to Trash?") + `
-- allowed 1 h ago: ` + q("Move 14 newsletters to Trash? → Moved 14 messages")
-	if got != want {
+- #` + denied.ID + ` denied just now: ` + q("Move 14 newsletters to Trash?") + `
+- #` + done.ID + ` allowed just now: ` + q("Move 14 newsletters to Trash? → Moved 14 messages")
+	if got = pin(got); got != want {
+		t.Errorf("context =\n%s\nwant\n%s", got, want)
+	}
+
+	f.clock.advance(time.Hour)
+	waiting := f.request(t, "")
+	f.clock.advance(10 * time.Minute)
+	got, err = f.svc.PromptContext(t.Context(), f.clock.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = untrustedNote + `
+Waiting for an answer:
+- #` + waiting.ID + ` asked 10 min ago: ` + q("Move 14 newsletters to Trash?") + `
+
+Decided recently:
+- #` + denied.ID + ` denied 1 h ago: ` + q("Move 14 newsletters to Trash?") + `
+- #` + done.ID + ` allowed 1 h ago: ` + q("Move 14 newsletters to Trash? → Moved 14 messages")
+	if got = pin(got); got != want {
 		t.Errorf("context =\n%s\nwant\n%s", got, want)
 	}
 

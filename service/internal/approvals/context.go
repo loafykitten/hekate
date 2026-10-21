@@ -20,7 +20,9 @@ const (
 var _ agent.ContextSource = (*Service)(nil)
 
 // PromptContext tells her what waits on the owner and what was decided in the
-// last 12 hours and how it went. It is empty when there is nothing to say.
+// last 12 hours and how it went, each by number so she can match it to the
+// request she made. Her history keeps the "asked" tool result after the owner
+// decides, so this says outright when nothing waits.
 func (s *Service) PromptContext(ctx context.Context, now time.Time) (string, error) {
 	pending, err := s.List(ctx, ListPending)
 	if err != nil {
@@ -37,12 +39,17 @@ func (s *Service) PromptContext(ctx context.Context, now time.Time) (string, err
 		return fmt.Sprintf("<approval_text boundary=%q>%s</approval_text boundary=%q>", nonce, oneLine(text), nonce)
 	}
 	var b strings.Builder
+	if len(pending) == 0 {
+		b.WriteString("Nothing is waiting for an answer.\n")
+	} else {
+		b.WriteString("Waiting for an answer:\n")
+	}
 	for i, a := range pending {
 		if i == maxPending {
 			fmt.Fprintf(&b, "- and %d more\n", len(pending)-maxPending)
 			break
 		}
-		fmt.Fprintf(&b, "- asked %s: %s\n", ago(now, a.CreatedAt), quote(a.Title))
+		fmt.Fprintf(&b, "- #%s asked %s: %s\n", a.ID, ago(now, a.CreatedAt), quote(a.Title))
 	}
 	n := 0
 	for _, a := range recent {
@@ -50,26 +57,23 @@ func (s *Service) PromptContext(ctx context.Context, now time.Time) (string, err
 		if err != nil || now.Sub(at) > decidedLookback || n == maxDecided {
 			continue
 		}
-		if n == 0 && b.Len() > 0 {
-			b.WriteString("\n")
-		}
 		if n == 0 {
-			b.WriteString("Decided recently:\n")
+			b.WriteString("\nDecided recently:\n")
 		}
 		n++
 		text := a.Title
 		if a.Result != nil && *a.Result != "" {
 			text += " → " + *a.Result
 		}
-		fmt.Fprintf(&b, "- %s %s: %s", verdict(a), ago(now, *a.DecidedAt), quote(text))
+		fmt.Fprintf(&b, "- #%s %s %s: %s", a.ID, verdict(a), ago(now, *a.DecidedAt), quote(text))
 		if a.Note != nil {
 			// The owner wrote it, so it sits outside the markers.
 			fmt.Fprintf(&b, " (the owner's reason: %q)", oneLine(*a.Note))
 		}
 		b.WriteString("\n")
 	}
-	if b.Len() == 0 {
-		return "", nil
+	if len(pending) == 0 && n == 0 {
+		return strings.TrimSpace(b.String()), nil
 	}
 	return untrustedNote + "\n" + strings.TrimSpace(b.String()), nil
 }

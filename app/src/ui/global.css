@@ -10,7 +10,18 @@ body,
 }
 
 html {
-  background: linear-gradient(var(--bg-top), var(--bg-bottom));
+  /* The solid color is what iOS paints outside the page (it ignores gradients there). */
+  background: var(--bg-bottom) linear-gradient(var(--bg-top), var(--bg-bottom));
+}
+
+/* Installed on iOS 26+ with viewport-fit=cover and the black-translucent status bar, the viewport
+   comes up short by the status bar's height while the page is no taller than it (WebKit 301108):
+   everything fixed stops above a blank strip at the bottom. A page that tall gets the full screen.
+   The cap keeps an opaque status bar (inset 0, 100lvh the whole screen) from scrolling. */
+@media (display-mode: standalone) {
+  html {
+    min-height: min(100lvh, calc(100% + env(safe-area-inset-top)));
+  }
 }
 
 body {

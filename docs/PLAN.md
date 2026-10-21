@@ -266,7 +266,7 @@ opener and the routines scheduler from the briefing and heartbeat.
   mid-sentence: let it grow with the revealed text without jumping.
 - A notice that comes with a card (reminder, approval) shows a toast and the card at once: show one.
 
-**3. Read-only bank data, for help with money.** Researched 2026-10-20:
+**3. Read-only bank data, for help with money** ✅ (see `PROTOCOL.md`, Money). Researched 2026-10-20:
 - The owner's bank has no public API, so data goes through an aggregator. Plaid's free Trial plan
   (new US developers from April 2026: real data, up to 10 connected banks, read-only products only:
   transactions, balances, liabilities, investments) is the free path. A third-party directory lists

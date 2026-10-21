@@ -30,5 +30,7 @@ describe("invalidationKeys", () => {
     for (const key of [keys.mailStatus, keys.mailSummary, keys.mailMessages("q", "", ""), keys.mailMessage("1"), keys.mailRules]) expect(prefixOf(key)).toEqual(["mail"]);
     for (const key of [keys.approvals("pending"), keys.approval("1"), keys.approvalRules]) expect(prefixOf(key)).toEqual(["approvals"]);
     expect(prefixOf(keys.changes)).toEqual(["changes"]);
+    for (const key of [keys.moneyStatus, keys.moneyAccounts, keys.moneyTransactions("q", ""), keys.moneySpending("2026-10")]) expect(prefixOf(key)).toEqual(["money"]);
+    expect(invalidationKeys(["money"])).toEqual([["money"]]);
   });
 });

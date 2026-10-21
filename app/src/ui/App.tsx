@@ -6,6 +6,7 @@ import { Conversation } from "../conversation/conversation";
 import { applyApproval } from "../data/approvals";
 import { createQueryClient } from "../data/hooks";
 import { createQueryPersister, holdWhileChanging, PERSIST_BUSTER, PERSIST_MAX_AGE, shouldPersistQuery } from "../data/persist";
+import { OAUTH_PATH } from "../data/plaid";
 import { invalidationKeys } from "../data/queryKeys";
 import { CardStack } from "./cards/CardStack";
 import { ConnectionPill } from "./ConnectionPill";
@@ -26,6 +27,8 @@ const GesturePicker = import.meta.env.DEV ? lazy(() => import("./dev/GesturePick
 // `?menu=reminders` (and the url in a push notification) opens the menu on that section.
 function sectionFromUrl(url: string): Section | undefined {
   try {
+    // A bank's own sign-in sends the browser back to /money/oauth; the Money section finishes it.
+    if (new URL(url, location.href).pathname.replace(/\/+$/, "") === OAUTH_PATH) return "money";
     const value = new URL(url, location.href).searchParams.get("menu");
     return isSection(value) ? value : undefined;
   } catch {

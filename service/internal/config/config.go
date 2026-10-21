@@ -70,6 +70,12 @@ type Config struct {
 	MailAccounts []MailAccount
 	MailSweep    time.Duration // how often the inbox is checked and classified
 
+	// Bank data (Plaid, read-only). No client id and secret means money is not configured.
+	PlaidClientID    string
+	PlaidSecret      Secret
+	PlaidEnv         string // "production" or "sandbox"
+	PlaidRedirectURI string // optional https URL banks that link through their own site return to
+
 	// Web search (Brave). An empty key means web_search is unavailable.
 	BraveAPIKey Secret
 
@@ -173,6 +179,22 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 		}
 	}
 
+	cfg.PlaidClientID = str("PLAID_CLIENT_ID", "")
+	cfg.PlaidSecret = Secret(str("PLAID_SECRET", ""))
+	if (cfg.PlaidClientID == "") != (cfg.PlaidSecret == "") {
+		errs = append(errs, errors.New("PLAID_CLIENT_ID and PLAID_SECRET go together: set both or neither"))
+	}
+	cfg.PlaidEnv = strings.ToLower(str("PLAID_ENV", "production"))
+	if cfg.PlaidEnv != "production" && cfg.PlaidEnv != "sandbox" {
+		errs = append(errs, fmt.Errorf("PLAID_ENV: %q is not production or sandbox", cfg.PlaidEnv))
+	}
+	cfg.PlaidRedirectURI = str("PLAID_REDIRECT_URI", "")
+	if cfg.PlaidRedirectURI != "" {
+		if u, err := url.Parse(cfg.PlaidRedirectURI); err != nil || u.Scheme != "https" || u.Host == "" {
+			errs = append(errs, fmt.Errorf("PLAID_REDIRECT_URI: %q must be an https:// URL", cfg.PlaidRedirectURI))
+		}
+	}
+
 	model := func(prefix, defName, defEffort string) Model {
 		m := Model{Name: str(prefix, defName), Effort: strings.ToLower(str(prefix+"_EFFORT", defEffort))}
 		if !slices.Contains(efforts, m.Effort) {
@@ -270,6 +292,8 @@ func (c Config) LogValue() slog.Value {
 		slog.String("caldav_calendar", c.CalDAVCalendar),
 		slog.Any("mail_accounts", c.mailAccountNames()),
 		slog.Duration("mail_sweep", c.MailSweep),
+		slog.Bool("money_configured", c.PlaidClientID != ""),
+		slog.String("plaid_env", c.PlaidEnv),
 		slog.Bool("web_search_configured", c.BraveAPIKey != ""),
 		slog.String("units", c.Units),
 		slog.String("push_subject", c.PushSubject),

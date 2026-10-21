@@ -189,6 +189,14 @@ export const MailIcon = (p: SVGProps<SVGSVGElement>) => (
   </Icon>
 );
 
+export const MoneyIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <rect x="3" y="6.5" width="18" height="11" rx="3" />
+    <circle cx="12" cy="12" r="2.5" />
+    <path d="M6.5 12h.01M17.5 12h.01" />
+  </Icon>
+);
+
 export const ShieldIcon = (p: SVGProps<SVGSVGElement>) => (
   <Icon {...p}>
     <path d="M12 3.5 5 6v5.5c0 4.2 2.8 7.2 7 9 4.2-1.8 7-4.8 7-9V6l-7-2.5Z" />

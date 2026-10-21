@@ -14,6 +14,7 @@ import {
   calendarApi,
   fetchWeather,
   mailApi,
+  moneyApi,
   type ApprovalDecision,
   type MailQuery,
   memoryApi,
@@ -396,3 +397,45 @@ export function usePatchRoutines() {
   return useDomainMutation(["routines"], (fields: Partial<RoutineSettings>) => routinesApi.patch(fields));
 }
 
+
+// --- money ---------------------------------------------------------------------------------
+
+export function useMoneyStatus(enabled = true) {
+  return useQuery({ queryKey: keys.moneyStatus, queryFn: ({ signal }) => moneyApi.status(signal), enabled });
+}
+
+export function useMoneyAccounts(enabled = true) {
+  return useQuery({ queryKey: keys.moneyAccounts, queryFn: ({ signal }) => moneyApi.accounts(signal), enabled });
+}
+
+export function useMoneyTransactions(params: { q: string; category: string }, enabled = true) {
+  return useQuery({
+    queryKey: keys.moneyTransactions(params.q, params.category),
+    queryFn: ({ signal }) => moneyApi.transactions({ q: params.q || undefined, category: params.category || undefined, limit: 100 }, signal),
+    placeholderData: keepPreviousData,
+    enabled,
+  });
+}
+
+export function useMoneySpending(month: string, enabled = true) {
+  return useQuery({
+    queryKey: keys.moneySpending(month),
+    queryFn: ({ signal }) => moneyApi.spending(month, signal),
+    placeholderData: keepPreviousData,
+    enabled,
+  });
+}
+
+export function useAddMoneyItem() {
+  return useDomainMutation(["money"], ({ publicToken, institution }: { publicToken: string; institution: { id: string; name: string } }) =>
+    moneyApi.addItem(publicToken, institution),
+  );
+}
+
+export function useRemoveMoneyItem() {
+  return useDomainMutation(["money"], (id: string) => moneyApi.removeItem(id));
+}
+
+export function useSyncMoney() {
+  return useDomainMutation(["money"], () => moneyApi.sync());
+}

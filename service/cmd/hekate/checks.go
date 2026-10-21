@@ -9,6 +9,7 @@ import (
 	"github.com/loafykitten/hekate/service/internal/inspect"
 	"github.com/loafykitten/hekate/service/internal/llm"
 	"github.com/loafykitten/hekate/service/internal/mail"
+	"github.com/loafykitten/hekate/service/internal/money"
 	"github.com/loafykitten/hekate/service/internal/push"
 	"github.com/loafykitten/hekate/service/internal/telegram"
 	"github.com/loafykitten/hekate/service/internal/voice"
@@ -16,7 +17,7 @@ import (
 )
 
 // healthChecks are what self_status reports on, one line each.
-func healthChecks(llmClient *llm.Client, tts bool, stt voice.Transcriber, cal *calendar.Service, mailSvc *mail.Service,
+func healthChecks(llmClient *llm.Client, tts bool, stt voice.Transcriber, cal *calendar.Service, mailSvc *mail.Service, moneySvc *money.Service,
 	pushSvc *push.Service, tg *telegram.Service, webSvc *web.Service) []inspect.Check {
 	configured := func(ok bool, yes, no string) (bool, string) {
 		if ok {
@@ -66,6 +67,35 @@ func healthChecks(llmClient *llm.Client, tts bool, stt voice.Transcriber, cal *c
 					state += ", last checked " + *a.LastSweepAt
 				}
 				parts = append(parts, fmt.Sprintf("%s %s", a.Name, state))
+			}
+			return ok, strings.Join(parts, "; ")
+		}},
+		{Name: "Bank data", Run: func(ctx context.Context) (bool, string) {
+			if !moneySvc.Configured() {
+				return false, "not set up"
+			}
+			items, err := moneySvc.Items(ctx)
+			if err != nil {
+				return false, "can't read the bank status: " + err.Error()
+			}
+			if len(items) == 0 {
+				return true, "no bank connected yet"
+			}
+			ok := true
+			parts := make([]string, 0, len(items))
+			for _, it := range items {
+				state := "fine"
+				if it.Status != money.StatusOK {
+					ok = false
+					state = it.Status
+					if it.Error != "" {
+						state += ": " + it.Error
+					}
+				}
+				if it.LastSyncAt != nil {
+					state += ", last synced " + *it.LastSyncAt
+				}
+				parts = append(parts, fmt.Sprintf("%s %s", it.Institution, state))
 			}
 			return ok, strings.Join(parts, "; ")
 		}},

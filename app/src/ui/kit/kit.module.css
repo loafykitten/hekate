@@ -119,9 +119,14 @@
   height: 20px;
 }
 
-.iconBtn:hover {
+.iconBtn:hover:not(:disabled) {
   background: var(--surface);
   color: var(--fg);
+}
+
+.iconBtn:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 /* Fields */

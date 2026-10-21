@@ -15,7 +15,8 @@ import { clearLink, linkedAccounts, linkErrorText, oauthResume, openLink, readLi
 import { moneyApi } from "../../data/rest";
 import { relativeTime } from "../../data/time";
 import { useConversation } from "../ConversationContext";
-import { Button, Chip, ConfirmButton, SectionTitle, StateMessage, TextField } from "../kit/kit";
+import { ChevronIcon } from "../icons";
+import { Button, Chip, ConfirmButton, IconButton, SectionTitle, StateMessage, TextField } from "../kit/kit";
 import { useDebounced } from "../kit/useDebounced";
 import { useMenuActive } from "./MenuContext";
 import { AccountName, SpendingBars, TransactionRow } from "./moneyParts";
@@ -73,7 +74,7 @@ export function MoneySection() {
         <Banks items={items} active={active} link={link} setNote={setNote} />
       )}
       {items.length === 0 && (
-        <div>
+        <div className={money.connect}>
           <Button variant="primary" busy={link.busy} onClick={() => void link.connect()}>
             Connect a bank
           </Button>
@@ -326,13 +327,13 @@ function Spending({ active }: { active: boolean }) {
       <SectionTitle>Spending</SectionTitle>
       <div className={styles.stack} style={{ gap: "var(--space-3)" }}>
         <div className={styles.monthBar}>
-          <Button compact variant="quiet" aria-label="Previous month" onClick={() => setMonth(shiftMonth(month, -1))}>
-            &lsaquo;
-          </Button>
+          <IconButton label="Previous month" onClick={() => setMonth(shiftMonth(month, -1))}>
+            <ChevronIcon style={{ rotate: "180deg" }} />
+          </IconButton>
           <h4 className={styles.monthName}>{monthLabel(month)}</h4>
-          <Button compact variant="quiet" aria-label="Next month" disabled={month >= thisMonth} onClick={() => setMonth(shiftMonth(month, 1))}>
-            &rsaquo;
-          </Button>
+          <IconButton label="Next month" disabled={month >= thisMonth} onClick={() => setMonth(shiftMonth(month, 1))}>
+            <ChevronIcon />
+          </IconButton>
         </div>
         {spending.isError && !data ? (
           <StateMessage kind="error" title="Couldn't load spending" onRetry={() => void spending.refetch()}>

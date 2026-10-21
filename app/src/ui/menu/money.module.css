@@ -274,3 +274,9 @@
   color: var(--fg-subtle);
   white-space: nowrap;
 }
+
+/* Connecting the first bank: the button sits under the empty state's message. */
+.connect {
+  display: flex;
+  justify-content: center;
+}

@@ -90,7 +90,8 @@ function withQuery(path: string, query?: Query): string {
   return s ? `${path}?${s}` : path;
 }
 
-// Returns the parsed JSON body, or undefined for 204.
+// Returns the parsed JSON body, or undefined for 204 and 202 (accepted: the work runs later, and
+// there's nothing to report yet).
 export async function request(method: string, path: string, { body, query, signal }: RequestOptions = {}): Promise<unknown> {
   let res: Response;
   try {
@@ -104,7 +105,7 @@ export async function request(method: string, path: string, { body, query, signa
     if (e instanceof DOMException && e.name === "AbortError") throw e;
     throw new ApiError("Hekate isn't reachable.", 0);
   }
-  if (res.status === 204) return undefined;
+  if (res.status === 204 || res.status === 202) return undefined;
   let json: unknown;
   try {
     json = await res.json();

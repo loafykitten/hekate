@@ -222,6 +222,23 @@ export function CalendarSection() {
     selectedRef.current?.scrollIntoView({ inline: "center", block: "nearest" });
   }, [anchor, month, configured]);
 
+  // A mouse wheel only scrolls up and down: over the strip it moves the days sideways, until the
+  // strip reaches its end and the menu scrolls on.
+  const stripRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = stripRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return; // zooming, or a sideways swipe that scrolls it already
+      const next = Math.min(el.scrollWidth - el.clientWidth, Math.max(0, el.scrollLeft + e.deltaY));
+      if (next === el.scrollLeft) return;
+      e.preventDefault();
+      el.scrollLeft = next;
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [configured]);
+
   if (status.isPending) return <StateMessage kind="loading" />;
   if (status.isError && !status.data) {
     return (
@@ -254,7 +271,7 @@ export function CalendarSection() {
             <ChevronIcon />
           </IconButton>
         </div>
-        <div className={styles.strip} role="group" aria-label="Jump to a day">
+        <div ref={stripRef} className={styles.strip} role="group" aria-label="Jump to a day">
           {monthDays.map((k) => {
             const weekday = weekdayOf(k);
             const selected = k === anchor;

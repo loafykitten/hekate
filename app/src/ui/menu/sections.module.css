@@ -43,6 +43,15 @@
   display: none;
 }
 
+/* A mouse wheel can't scroll a row sideways, and the scrollbar is hidden: with a mouse or
+   trackpad the chips wrap onto more lines instead of running off the edge. */
+@media (hover: hover) and (pointer: fine) {
+  .chips {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+}
+
 .form {
   display: flex;
   flex-direction: column;
@@ -298,6 +307,24 @@
 
 .strip::-webkit-scrollbar {
   display: none;
+}
+
+/* With a mouse, a thin scrollbar says the days go on (and can be dragged). */
+@media (hover: hover) and (pointer: fine) {
+  .strip {
+    scrollbar-width: thin;
+    scrollbar-color: var(--hairline) transparent;
+  }
+
+  .strip::-webkit-scrollbar {
+    display: block;
+    height: 6px;
+  }
+
+  .strip::-webkit-scrollbar-thumb {
+    border-radius: 3px;
+    background: var(--hairline);
+  }
 }
 
 .dayCell {

@@ -33,6 +33,11 @@ describe("request", () => {
     expect(await request("DELETE", "/tasks/1")).toBeUndefined();
   });
 
+  it("returns undefined for an empty 202, like Sync now's", async () => {
+    respond(202);
+    expect(await request("POST", "/money/sync")).toBeUndefined();
+  });
+
   it("throws the service's error message with the status", async () => {
     respond(400, { error: "title is required" });
     await expect(request("POST", "/tasks", { body: {} })).rejects.toMatchObject({ message: "title is required", status: 400 });

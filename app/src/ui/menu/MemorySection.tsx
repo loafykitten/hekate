@@ -218,15 +218,17 @@ export function MemorySection() {
   const [view, setView] = useState<View>("memories");
   return (
     <div className={styles.stack}>
-      <Segmented<View>
-        label="Show"
-        options={[
-          { value: "memories", label: "Memories" },
-          { value: "diary", label: "Diary" },
-        ]}
-        value={view}
-        onChange={setView}
-      />
+      <div>
+        <Segmented<View>
+          label="Show"
+          options={[
+            { value: "memories", label: "Memories" },
+            { value: "diary", label: "Diary" },
+          ]}
+          value={view}
+          onChange={setView}
+        />
+      </div>
       {view === "memories" ? <Memories active={active} /> : <DiaryView active={active} />}
     </div>
   );

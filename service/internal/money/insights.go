@@ -605,6 +605,7 @@ type monthTrend struct {
 	categories []trendCategory
 	partial    bool
 	noData     bool // before the first stored transaction
+	startsLate bool // history begins partway through this month
 }
 
 type trendCategory struct {
@@ -649,6 +650,8 @@ func buildTrends(rows []txRow, months []string, firstData string, today time.Tim
 		if len(firstData) < 7 || m < firstData[:7] {
 			mt.noData = true
 		}
+		// The first month with data is only partly there unless it starts on the 1st.
+		mt.startsLate = len(firstData) >= 10 && m == firstData[:7] && firstData[8:10] != "01"
 		if withCategories {
 			for cat, c := range t.byCategory {
 				mt.categories = append(mt.categories, trendCategory{CategoryLabel(cat), c.spent})

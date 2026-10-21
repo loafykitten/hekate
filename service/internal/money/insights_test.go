@@ -214,7 +214,7 @@ func TestTrendsTool(t *testing.T) {
 
 	// A payee filter, and months before the first stored transaction.
 	q, _ := f.tool("money_trends", `{"months":6,"q":"cafe"}`)
-	for _, want := range []string{"payees matching \"cafe\"", "2026-05: no data", "2026-06: no data", "2026-07: out 10.00 USD", "Average over the 3 complete months: out 63.33 USD"} {
+	for _, want := range []string{"payees matching \"cafe\"", "2026-05: no data", "2026-06: no data", "2026-07 (history starts mid-month: partial): out 10.00 USD", "Average over the 2 complete months: out 90.00 USD"} {
 		if !strings.Contains(q.Content, want) {
 			t.Errorf("q view lacks %q:\n%s", want, q.Content)
 		}
@@ -250,5 +250,15 @@ func TestMonthlyItemsKeepTheirDayOfTheMonth(t *testing.T) {
 	weekly := recurring{cadence: cadences[0], gap: 7, lastDay: day("2026-10-20")}
 	if next := weekly.step(weekly.lastDay).Format(time.DateOnly); next != "2026-10-27" {
 		t.Errorf("a weekly charge next comes %s", next)
+	}
+}
+
+func TestUpcomingWarnsWhenCheckingIsAlreadyNegative(t *testing.T) {
+	f := newFixture(t)
+	f.plaid.handle(pathAccounts, func(map[string]any) (int, any) { return 200, map[string]any{"accounts": []any{checking(-100)}} })
+	f.connect()
+	res, err := f.tool("money_upcoming", `{}`)
+	if err != nil || !strings.Contains(res.Content, "WARNING: checking is already below zero now") || strings.Contains(res.Content, "stays above zero") {
+		t.Errorf("a checking account already overdrawn: %q, %v", res.Content, err)
 	}
 }

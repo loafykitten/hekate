@@ -359,6 +359,9 @@ func describeUpcoming(rep recurringReport, c cash, days int) string {
 		fmt.Fprintf(&sb, " Credit cards owe %s in total (%s).", centsText(c.owed, cur), plural(c.cards, "card", "cards"))
 	}
 	sb.WriteString("\n")
+	if c.checkingN > 0 && c.checking < 0 {
+		fmt.Fprintf(&sb, "WARNING: checking is already below zero now (%s), before anything ahead.\n", centsText(c.checking, cur))
+	}
 	if len(rep.items) == 0 {
 		sb.WriteString("No recurring payments or income were detected, so there is nothing to project.")
 		return sb.String()
@@ -399,7 +402,10 @@ func describeUpcoming(rep recurringReport, c cash, days int) string {
 		var lowDay, firstNeg string
 		lines, low, lowDay, firstNeg = walk(c.checking, window, cur)
 		fmt.Fprintf(&sb, "Lowest point: %s.\n", lowText(low, lowDay, cur))
-		if firstNeg != "" {
+		if c.checking < 0 {
+			// Already said above: only how low it goes from here.
+			fmt.Fprintf(&sb, "On these estimates it goes as low as %s.\n", centsText(low, cur))
+		} else if firstNeg != "" {
 			fmt.Fprintf(&sb, "WARNING: on these estimates checking dips below zero on %s (lowest %s) unless money is moved in.\n", firstNeg, centsText(low, cur))
 		} else {
 			sb.WriteString("On these estimates checking stays above zero through the window.\n")

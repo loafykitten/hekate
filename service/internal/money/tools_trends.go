@@ -85,7 +85,7 @@ func (s *Service) describeTrends(ctx context.Context, n int, category, q string)
 		what, plural(n, "month", "months"), currency)
 	var done []monthTrend
 	for _, m := range trends {
-		if !m.partial && !m.noData {
+		if !m.partial && !m.noData && !m.startsLate {
 			done = append(done, m)
 		}
 	}
@@ -135,6 +135,9 @@ func trendLine(m monthTrend, currency string) string {
 	}
 	var sb strings.Builder
 	sb.WriteString(m.month)
+	if m.startsLate {
+		sb.WriteString(" (history starts mid-month: partial)")
+	}
 	if m.partial {
 		sb.WriteString(" (so far, partial)")
 	}

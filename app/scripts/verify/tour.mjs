@@ -231,7 +231,7 @@ async function open(browser, viewport, query, { mode = "full", onSay } = {}) {
     if (p === "/api/journal") return json(route, { days: JOURNAL });
     if (p === "/api/changes") return json(route, { changes: CHANGES });
     if (p === "/api/ideas") return json(route, { ideas: IDEAS });
-    if (p === "/api/routines") return json(route, { heartbeat: true, waking_start: "07:30", waking_end: "22:30" });
+    if (p === "/api/routines") return json(route, { heartbeat: true, waking_start: "07:30", waking_end: "22:30", checkin: true, checkin_at: "00:00" });
     if (p === "/api/approvals") return json(route, { approvals: q.get("status") === "recent" ? [approval(3, { status: "done", result: "Moved 3 messages to Trash", decided_by: "owner", decided_at: ago(40) })] : APPROVALS });
     if (p === "/api/approvals/rules") return json(route, { rules: [{ id: "2", kind: "mail_trash", scope_label: "mail from example.com", uses: 3, created_at: ago(5000) }, { id: "3", kind: "mail_unsubscribe", scope_label: "Trailhead Weekly", uses: 0, created_at: ago(900) }] });
     if (p === "/api/mail/status") return json(route, mode === "nomail" ? { configured: false, accounts: [] } : { configured: true, accounts: [{ name: "personal", address: "rika@example.com", ok: true, error: "", last_sweep_at: ago(4), inbox_count: 212 }, { name: "work", address: "rika@example.org", ok: true, error: "", last_sweep_at: ago(4), inbox_count: 31 }] });

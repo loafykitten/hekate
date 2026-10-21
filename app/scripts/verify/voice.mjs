@@ -19,7 +19,7 @@ async function wire(page, sent) {
     if (p === "/api/ws") return route.fallback();
     if (p === "/api/approvals/rules") return json(route, { rules: [] });
     if (p === "/api/approvals") return json(route, { approvals: [] });
-    if (p === "/api/routines") return json(route, { heartbeat: true, waking_start: "08:00", waking_end: "22:00" });
+    if (p === "/api/routines") return json(route, { heartbeat: true, waking_start: "08:00", waking_end: "22:00", checkin: true, checkin_at: "00:00" });
     if (p === "/api/conversation/messages") return json(route, { messages: [] });
     if (p === "/api/health") return json(route, { status: "ok", version: "dev" });
     return route.fulfill({ status: 204 });

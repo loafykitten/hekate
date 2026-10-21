@@ -55,6 +55,9 @@ type Payload struct {
 	Body  string `json:"body"`
 	URL   string `json:"url"`
 	Tag   string `json:"tag"`
+	// NoBackup keeps it off the backup channel when web push reaches no
+	// device: it's only useful tapped in the app, like the evening check-in.
+	NoBackup bool `json:"-"`
 }
 
 // Subscription is a browser's PushSubscription.toJSON().

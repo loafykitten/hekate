@@ -33,6 +33,15 @@ function sectionFromUrl(url: string): Section | undefined {
   }
 }
 
+// `?checkin=2026-10-20`: a tapped check-in notification, for that day.
+function checkInFromUrl(url: string): string | undefined {
+  try {
+    return new URL(url, location.href).searchParams.get("checkin") ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function App() {
   const [stage, setStage] = useState<Stage>();
   const [conversation] = useState(() => new Conversation());
@@ -54,6 +63,13 @@ export function App() {
   }, []);
   const closeMenu = useCallback(() => setMenu((m) => ({ ...m, open: false })), []);
   const selectSection = useCallback((section: Section) => setMenu({ open: true, section }), []);
+  // The check-in's notice button: she answers on the stage, so nothing should cover it. Called from
+  // the tap itself, so her voice can play.
+  const checkInNow = useCallback(() => {
+    closeMenu();
+    closeLog();
+    conversation.startCheckIn(undefined, true);
+  }, [conversation, closeMenu, closeLog]);
 
   useEffect(() => {
     conversation.start();
@@ -68,6 +84,16 @@ export function App() {
       document.removeEventListener("visibilitychange", retry);
       conversation.stop();
     };
+  }, [conversation]);
+
+  // Opened by the check-in notification: start it once (a reload doesn't start it again).
+  useEffect(() => {
+    const day = checkInFromUrl(location.href);
+    if (day === undefined) return;
+    conversation.startCheckIn(day);
+    const url = new URL(location.href);
+    url.searchParams.delete("checkin");
+    history.replaceState(history.state, "", url);
   }, [conversation]);
 
   useEffect(() => {
@@ -88,7 +114,8 @@ export function App() {
   // An approval changed (here or on another device): every card and list showing it updates.
   useEffect(() => conversation.onApprovalChange((approval) => applyApproval(queryClient, approval)), [conversation, queryClient]);
 
-  // A notification tapped while the app is open asks it to show the right section.
+  // A notification tapped while the app is open asks it to show the right section, or to start
+  // the check-in.
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
     const onMessage = (e: MessageEvent) => {
@@ -96,10 +123,17 @@ export function App() {
       if (data?.type !== "open-url" || typeof data.url !== "string") return;
       const section = sectionFromUrl(data.url);
       if (section) openMenu(section);
+      const day = checkInFromUrl(data.url);
+      if (day !== undefined) {
+        // She answers on the stage: nothing should cover it.
+        closeMenu();
+        closeLog();
+        conversation.startCheckIn(day);
+      }
     };
     navigator.serviceWorker.addEventListener("message", onMessage);
     return () => navigator.serviceWorker.removeEventListener("message", onMessage);
-  }, [openMenu]);
+  }, [conversation, openMenu, closeMenu, closeLog]);
 
   return (
     <PersistQueryClientProvider
@@ -121,7 +155,7 @@ export function App() {
         <Dock onOpenLog={openLog} logOpen={logOpen || menu.open} />
         <LogSheet open={logOpen} onClose={closeLog} />
         <Menu open={menu.open} section={menu.section} onSection={selectSection} onClose={closeMenu} />
-        <Toasts onOpenSection={selectSection} />
+        <Toasts onOpenSection={selectSection} onCheckIn={checkInNow} />
         {GesturePicker && stage?.character && (
           <Suspense>
             <GesturePicker character={stage.character} />

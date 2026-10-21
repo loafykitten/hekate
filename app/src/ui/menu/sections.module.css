@@ -158,7 +158,8 @@
   border-bottom: 1px solid var(--hairline);
 }
 
-.settingRow:last-child {
+.settingRow:last-child,
+.settingRow.joined {
   border-bottom: 0;
 }
 

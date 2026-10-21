@@ -389,6 +389,60 @@ describe("Conversation: voice off", () => {
   });
 });
 
+describe("Conversation: the evening check-in", () => {
+  const stage = (speech: FakeSpeech) => ({ speech, bubble: undefined, character: undefined }) as never;
+  const checkIns = (t: ReturnType<typeof setup>) => t.socket.json.filter((m) => m.type === "checkin");
+
+  it("opened by its notification, waits for the scene, then asks once and in the bubble while audio is locked", () => {
+    const t = setup();
+    t.conversation.startCheckIn("2026-10-20");
+    expect(checkIns(t)).toEqual([]); // no scene yet
+    const speech = new FakeSpeech();
+    speech.running = false; // no gesture yet: the browser holds audio back
+    t.conversation.attachStage(stage(speech));
+    expect(checkIns(t)).toEqual([{ type: "checkin", id: expect.any(String), day: "2026-10-20", quiet: true }]);
+    t.conversation.attachStage(stage(speech));
+    expect(checkIns(t)).toHaveLength(1);
+  });
+
+  it("waits for the connection", () => {
+    const t = setup();
+    t.conversation.attachStage(stage(new FakeSpeech()));
+    t.socket.drop();
+    t.conversation.startCheckIn("2026-10-20");
+    t.conversation.client.reconnectNow();
+    FakeSocket.last.open();
+    expect(FakeSocket.last.json.filter((m) => m.type === "checkin")).toEqual([]);
+    FakeSocket.last.receive(READY);
+    expect(FakeSocket.last.json.filter((m) => m.type === "checkin")).toEqual([{ type: "checkin", id: expect.any(String), day: "2026-10-20" }]);
+  });
+
+  it("speaks when audio already plays here, or when started from the notice's button", () => {
+    const t = setup();
+    const speech = new FakeSpeech();
+    t.conversation.attachStage(stage(speech));
+    t.conversation.startCheckIn("2026-10-20");
+    expect(checkIns(t).at(-1)).not.toHaveProperty("quiet");
+    speech.running = false;
+    t.conversation.startCheckIn(undefined, true);
+    expect(speech.unlocks).toBe(1);
+    expect(checkIns(t).at(-1)).toEqual({ type: "checkin", id: expect.any(String) });
+  });
+
+  it("is quiet with her voice off", () => {
+    const t = setup({ storage: memoryStorage({ "hekate.voice": "off" }) });
+    t.conversation.attachStage(stage(new FakeSpeech()));
+    t.conversation.startCheckIn(undefined, true);
+    expect(checkIns(t).at(-1)).toMatchObject({ quiet: true });
+  });
+
+  it("shows its notify as a notice that can start it", () => {
+    const t = setup();
+    t.socket.receive({ type: "notify", id: "checkin-2026-10-20", kind: "checkin", title: "How did today go?", body: "" });
+    expect(t.state().notices).toEqual([{ id: "checkin-2026-10-20", title: "How did today go?", body: "", checkIn: true }]);
+  });
+});
+
 const memoryCard = (id = "m1") => ({ kind: "memory", id, title: "Saved", data: { items: [] } });
 const remindersCard = { kind: "reminders", id: "r1", title: "Reminder", data: { items: [], highlight: ["7"] } };
 

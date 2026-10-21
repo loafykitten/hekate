@@ -23,7 +23,11 @@ import (
 	"github.com/loafykitten/hekate/service/internal/tasks"
 )
 
-type fakeTasks struct{ list []tasks.Task }
+type fakeTasks struct{ list, done []tasks.Task }
+
+func (f *fakeTasks) DoneSince(context.Context, time.Time, int) ([]tasks.Task, error) {
+	return f.done, nil
+}
 
 func (f *fakeTasks) List(_ context.Context, flt tasks.Filter) ([]tasks.Task, error) {
 	if flt.Status != tasks.StatusOpen || flt.DueBefore == nil {
@@ -33,13 +37,23 @@ func (f *fakeTasks) List(_ context.Context, flt tasks.Filter) ([]tasks.Task, err
 }
 
 type fakeCal struct {
-	events []calendar.Event
-	err    error
+	events  []calendar.Event
+	err     error
+	inRange bool // only timed events starting in [from, to), like a real query of short events
 }
 
 func (f *fakeCal) Configured() bool { return true }
-func (f *fakeCal) Events(context.Context, time.Time, time.Time) ([]calendar.Event, error) {
-	return f.events, f.err
+func (f *fakeCal) Events(_ context.Context, from, to time.Time) ([]calendar.Event, error) {
+	if !f.inRange {
+		return f.events, f.err
+	}
+	var out []calendar.Event
+	for _, e := range f.events {
+		if start, err := time.Parse(time.RFC3339, e.Start); err == nil && !start.Before(from) && start.Before(to) {
+			out = append(out, e)
+		}
+	}
+	return out, f.err
 }
 
 type fakeMail struct{ attention []mail.Message }
@@ -364,10 +378,10 @@ func TestRoutineSettingsTool(t *testing.T) {
 		res, err := tool.Run(t.Context(), json.RawMessage(args))
 		return res.Content, err
 	}
-	if out, err := run(`{}`); err != nil || out != "Check-in nudges are on, between 08:00 and 22:00." {
+	if out, err := run(`{}`); err != nil || out != "Nudges are on, between 08:00 and 22:00. The evening check-in is on, at 00:00." {
 		t.Errorf("report: %q %v", out, err)
 	}
-	if out, err := run(`{"heartbeat": false, "waking_start": "9:05"}`); err != nil || !strings.Contains(out, "nudges are off") || !strings.Contains(out, "between 09:05") {
+	if out, err := run(`{"heartbeat": false, "waking_start": "9:05"}`); err != nil || !strings.Contains(out, "Nudges are off") || !strings.Contains(out, "between 09:05") {
 		t.Errorf("update: %q %v", out, err)
 	}
 	if _, err := run(`{"waking_start": "noonish"}`); err == nil {

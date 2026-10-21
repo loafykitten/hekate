@@ -213,8 +213,9 @@ func run() error {
 	sources = append(sources, agent.Source{Name: "Your diary", Source: reflectSvc})
 	api = append(api, reflectSvc.Routes)
 
-	// Routines: the heartbeat nudges during waking hours, and the morning
-	// briefing is gathered when the owner starts their day with her.
+	// Routines: the heartbeat nudges during waking hours, the morning briefing
+	// is gathered when the owner starts their day with her, and the evening
+	// check-in asks how the day went.
 	routineSvc, err := routines.New(routines.Options{
 		Store: db, Jobs: runner, Tasks: taskSvc, Calendar: calSvc, Mail: mailSvc, FollowUps: memSvc,
 		Reminders: remSvc, Weather: weatherSvc, Location: cfg.Location, Events: hub, Push: notifier, Logger: logger.Logger,
@@ -223,6 +224,7 @@ func run() error {
 		return fmt.Errorf("build routines: %w", err)
 	}
 	runner.Add(routineSvc.HeartbeatJobDef())
+	runner.Add(routineSvc.CheckInJobDef())
 	toolList = slices.Concat(toolList, routineSvc.Tools())
 	api = append(api, routineSvc.Routes)
 
@@ -244,6 +246,7 @@ func run() error {
 		Deep:      cfg.ModelDeep,
 		AssetsDir: cfg.AssetsDir,
 		Opener:    routineSvc.Opener,
+		CheckIn:   routineSvc.CheckIn,
 	})
 	if err != nil {
 		return fmt.Errorf("build agent: %w", err)

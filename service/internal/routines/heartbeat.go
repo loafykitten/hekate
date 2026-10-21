@@ -54,6 +54,7 @@ const (
 type (
 	TaskSource interface {
 		List(ctx context.Context, f tasks.Filter) ([]tasks.Task, error)
+		DoneSince(ctx context.Context, since time.Time, limit int) ([]tasks.Task, error)
 	}
 	EventSource interface {
 		Configured() bool
@@ -241,24 +242,10 @@ func (s *Service) unsent(ctx context.Context, all []nudge) ([]nudge, error) {
 func (s *Service) deliver(ctx context.Context, now time.Time, list []nudge) (int, error) {
 	title, body, shown := compose(list)
 	id := "nudge-" + now.UTC().Format("20060102T150405")
-	// It reached the owner if an open app took it, a push service took it, or
-	// the backup channel did. Otherwise nothing counts as sent: the next
-	// heartbeat tries again.
+	// Unless it reached the owner, nothing counts as sent: the next heartbeat
+	// tries again.
 	notice := proto.NewNotify(id, proto.NotifyKindNudge, title, body, nil)
-	delivered := false
-	if r, ok := s.events.(interface{ NotifyReach(proto.Notify) int }); ok {
-		delivered = r.NotifyReach(notice) > 0
-	} else {
-		s.events.Notify(notice)
-	}
-	if s.pusher != nil {
-		res, err := s.pusher.Send(ctx, push.Payload{Title: title, Body: body, URL: "/?menu=today", Tag: "nudge"}, push.UrgencyNormal)
-		if err != nil {
-			s.log.Warn("heartbeat push failed", "error", err, "sent", res.Sent)
-		}
-		delivered = delivered || (err == nil && res.Sent > 0) || res.Backup
-	}
-	if !delivered {
+	if !s.reach(ctx, notice, push.Payload{Title: title, Body: body, URL: "/?menu=today", Tag: "nudge"}) {
 		return 0, nil
 	}
 	db := s.st.DB()
@@ -271,6 +258,26 @@ func (s *Service) deliver(ctx context.Context, now time.Time, list []nudge) (int
 		s.log.Warn("cannot prune old nudges", "error", err)
 	}
 	return len(shown), nil
+}
+
+// reach shows the notice in open apps and pushes it, and reports whether it
+// reached the owner: an open app took it, a push service took it, or the
+// backup channel did.
+func (s *Service) reach(ctx context.Context, notice proto.Notify, p push.Payload) bool {
+	delivered := false
+	if r, ok := s.events.(interface{ NotifyReach(proto.Notify) int }); ok {
+		delivered = r.NotifyReach(notice) > 0
+	} else {
+		s.events.Notify(notice)
+	}
+	if s.pusher != nil {
+		res, err := s.pusher.Send(ctx, p, push.UrgencyNormal)
+		if err != nil {
+			s.log.Warn("push failed", "kind", notice.Kind, "error", err, "sent", res.Sent)
+		}
+		delivered = delivered || (err == nil && res.Sent > 0) || res.Backup
+	}
+	return delivered
 }
 
 // compose turns nudges into a notice: overdue tasks and waiting mail are

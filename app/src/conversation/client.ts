@@ -170,6 +170,13 @@ export class ConversationClient {
     return this.send(quiet ? { type: "say", id, text, quiet } : { type: "say", id, text }) ? id : undefined;
   }
 
+  checkIn(day?: string, quiet = false): string | undefined {
+    if (!this.canSend()) return undefined;
+    this.interruptForNewInput();
+    const id = newId();
+    return this.send({ type: "checkin", id, ...(day ? { day } : {}), ...(quiet ? { quiet } : {}) }) ? id : undefined;
+  }
+
   pttStart(sampleRate = PTT_SAMPLE_RATE): string | undefined {
     if (!this.canSend()) return undefined;
     this.interruptForNewInput();

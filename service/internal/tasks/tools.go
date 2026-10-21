@@ -317,6 +317,17 @@ func (s *Service) changedCard(ctx context.Context, list string, changed []Task, 
 
 // Card is a `tasks` card titled title, highlighting the given ids.
 func Card(title string, items []Task, highlight []string) (*agent.Card, error) {
+	return card(title, items, highlight, false)
+}
+
+// RecordCard is a `tasks` card of what was done, shown without controls: an
+// item may be one completion of a repeating task, which the series' controls
+// can't undo.
+func RecordCard(title string, items []Task) (*agent.Card, error) {
+	return card(title, items, nil, true)
+}
+
+func card(title string, items []Task, highlight []string, record bool) (*agent.Card, error) {
 	if len(items) > maxCardItems {
 		items = items[:maxCardItems]
 	}
@@ -326,7 +337,8 @@ func Card(title string, items []Task, highlight []string) (*agent.Card, error) {
 	data := struct {
 		Items     []Task   `json:"items"`
 		Highlight []string `json:"highlight,omitempty"`
-	}{items, highlight}
+		Record    bool     `json:"record,omitempty"`
+	}{items, highlight, record}
 	b, err := json.Marshal(data)
 	if err != nil {
 		return nil, fmt.Errorf("encode tasks card: %w", err)

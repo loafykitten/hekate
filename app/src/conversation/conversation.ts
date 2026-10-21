@@ -30,6 +30,8 @@ export interface Notice {
   body: string;
   // The menu section it belongs to, when it has one.
   section?: "reminders" | "today" | "changes";
+  // The evening check-in: its button starts one.
+  checkIn?: boolean;
 }
 
 
@@ -146,6 +148,8 @@ export class Conversation {
   private readonly deck = new CardDeck(() => this.emit());
   private notices: Notice[] = [];
   private noticeTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // A check-in the owner tapped, waiting for the connection and the scene.
+  private wantedCheckIn?: { day?: string; audible: boolean };
   private invalidateListeners = new Set<(domains: string[]) => void>();
   private approvalListeners = new Set<(approval: Approval) => void>();
 
@@ -211,6 +215,7 @@ export class Conversation {
       this.player = new SegmentPlayer(host);
       this.player.onChange(() => this.emit());
     }
+    this.maybeCheckIn();
     this.emit();
   }
 
@@ -296,6 +301,25 @@ export class Conversation {
     this.setCaption(trimmed);
     this.emit();
     return true;
+  }
+
+  // Starts the evening check-in the owner tapped: she asks how the day went. `day` is the day its
+  // notification asked about; the service starts nothing for another day's, or a day already
+  // talked over. It waits for the connection and the scene, so a notification that opened the app
+  // works too. From a gesture (the notice's button) her voice can play; otherwise she speaks only
+  // if audio is already playing on this device, and answers in the bubble if not.
+  startCheckIn(day?: string, fromGesture = false) {
+    if (fromGesture) this.unlockAudio();
+    this.wantedCheckIn = { day, audible: fromGesture };
+    this.maybeCheckIn();
+  }
+
+  private maybeCheckIn() {
+    const want = this.wantedCheckIn;
+    if (!want || !this.connected || !this.client.ready || !this.player) return;
+    this.wantedCheckIn = undefined;
+    this.interruptIfBusy();
+    this.client.checkIn(want.day, !this.voice || !(want.audible || this.stage?.speech.running));
   }
 
   // Press of the talk button (or Space). Starts push-to-talk, ends a latched one, or interrupts
@@ -439,6 +463,7 @@ export class Conversation {
     if (capabilities.stt) this.mic.prepare?.();
     this.live = [];
     this.historyEpoch++;
+    this.maybeCheckIn();
     this.emit();
     this.emitInvalidate(["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes", "ideas", "journal", "routines"]);
   }
@@ -542,6 +567,7 @@ export class Conversation {
       title: m.title || "Hekate",
       body: m.body || "",
       section: noticeSection(m.kind),
+      ...(m.kind === "checkin" ? { checkIn: true } : {}),
     };
     clearTimeout(this.noticeTimers.get(notice.id));
     this.notices = [...this.notices.filter((n) => n.id !== notice.id), notice].slice(-2);

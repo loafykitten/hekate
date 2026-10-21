@@ -92,7 +92,7 @@ export function CardView({ card, onClose, onOpenSection }: Omit<FrameProps, "chi
   let content: ReactNode;
   switch (card.kind) {
     case "tasks":
-      content = <TasksCard items={card.data.items} highlight={card.data.highlight} />;
+      content = <TasksCard items={card.data.items} highlight={card.data.highlight} record={card.data.record} />;
       break;
     case "reminders":
       content = <RemindersCard items={card.data.items} highlight={card.data.highlight} />;
@@ -140,7 +140,7 @@ function Empty({ children }: { children: ReactNode }) {
 
 // --- tasks ---------------------------------------------------------------------------------
 
-function TasksCard({ items, highlight }: { items: Task[]; highlight: string[] }) {
+function TasksCard({ items, highlight, record }: { items: Task[]; highlight: string[]; record?: boolean }) {
   const now = useNow();
   const setDone = useSetTaskDone();
   const [local, setLocal] = useState<Record<string, Task>>({});
@@ -163,7 +163,7 @@ function TasksCard({ items, highlight }: { items: Task[]; highlight: string[] })
   return (
     <div className={styles.list}>
       {tasks.map((t) => (
-        <TaskRow key={t.id} task={t} now={now} compact highlight={highlight.includes(t.id)} showList={new Set(tasks.map((x) => x.list)).size > 1} onToggle={(done) => toggle(t, done)} busy={setDone.isPending && setDone.variables?.id === t.id} />
+        <TaskRow key={t.id} task={t} now={now} compact highlight={highlight.includes(t.id)} showList={new Set(tasks.map((x) => x.list)).size > 1} onToggle={record ? undefined : (done) => toggle(t, done)} busy={setDone.isPending && setDone.variables?.id === t.id} />
       ))}
     </div>
   );

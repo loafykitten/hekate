@@ -260,6 +260,7 @@ type env struct {
 
 type envOpts struct {
 	opener  func(ctx context.Context, userText string) (Opening, bool)
+	checkIn func(ctx context.Context, day string) (Opening, bool)
 	synth   voice.Synthesizer
 	tools   []Tool
 	sources []Source
@@ -311,7 +312,7 @@ func newEnv(t *testing.T, script func(n int, req llmReq) (int, []string), o envO
 	a, err := New(Options{
 		LLM: client, Store: db, Hub: h, Synth: o.synth, Tools: reg, Context: o.sources, Tamer: "Rika",
 		Location: time.UTC, Chat: testChat, Deep: testDeep, AssetsDir: writeManifest(t, "waving", "thankful"),
-		Limits: o.limits, Opener: o.opener,
+		Limits: o.limits, Opener: o.opener, CheckIn: o.checkIn,
 		Now: func() time.Time { return time.Date(2026, 10, 19, 14, 5, 0, 0, time.UTC) },
 	})
 	if err != nil {

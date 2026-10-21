@@ -214,6 +214,7 @@ const (
 	TypePTTEnd    = "ptt_end"
 	TypePTTCancel = "ptt_cancel"
 	TypeInterrupt = "interrupt"
+	TypeCheckIn   = "checkin"
 )
 
 // ClientMessage is any client-to-server text frame; fields not used by a type are zero.
@@ -224,7 +225,8 @@ type ClientMessage struct {
 	SampleRate int    `json:"sample_rate"`
 	HeardSeq   *int   `json:"heard_seq"`
 	TurnID     string `json:"turn_id"` // interrupt: the turn heard_seq describes
-	Quiet      bool   `json:"quiet"`   // say, ptt_end: answer in text only (the device has her voice off)
+	Quiet      bool   `json:"quiet"`   // say, ptt_end, checkin: answer in text only (the device has her voice off)
+	Day        string `json:"day"`     // checkin: the day the notice asked about, YYYY-MM-DD
 }
 
 // Limits from PROTOCOL.md.

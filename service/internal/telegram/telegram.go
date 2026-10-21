@@ -193,7 +193,8 @@ type Pusher interface {
 
 // Fallback wraps a pusher: when a push reaches no device (none subscribed, or
 // every send failed), the notification goes to Telegram instead. An approval's
-// push (tag "approval-<id>") arrives with its buttons.
+// push (tag "approval-<id>") arrives with its buttons. One marked NoBackup
+// isn't sent.
 func (s *Service) Fallback(p Pusher) Pusher { return fallback{p, s} }
 
 type fallback struct {
@@ -203,7 +204,7 @@ type fallback struct {
 
 func (f fallback) Send(ctx context.Context, p push.Payload, urgency push.Urgency) (push.Result, error) {
 	res, err := f.push.Send(ctx, p, urgency)
-	if !f.tg.Configured() || (err == nil && res.Sent > 0) {
+	if !f.tg.Configured() || p.NoBackup || (err == nil && res.Sent > 0) {
 		return res, err
 	}
 	var approvalID int64

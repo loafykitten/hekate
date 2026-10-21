@@ -38,6 +38,8 @@ type Conversation interface {
 	Gestures() []string
 	Timezone() string
 	Say(origin, inputID, text string, quiet bool)
+	// CheckIn starts the evening check-in the owner tapped, if there's one to start.
+	CheckIn(origin, inputID, day string, quiet bool)
 	Interrupt(turnID string, heardSeq int)
 	Hush()
 	// Busy reports whether a turn is running.
@@ -237,6 +239,12 @@ func (ss *session) onText(data []byte) {
 		if m.ID == ss.pttID {
 			ss.resetPTT()
 		}
+	case proto.TypeCheckIn:
+		if !validInputID(m.ID) {
+			ss.sendTo(proto.NewError(proto.CodeBadMessage, "Messages need an id.", ""))
+			return
+		}
+		ss.s.checkIn(ss.id, m.ID, m.Day, m.Quiet)
 	case proto.TypeInterrupt:
 		heard := -1
 		if m.HeardSeq != nil {

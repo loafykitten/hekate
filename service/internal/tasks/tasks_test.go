@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -270,6 +271,51 @@ func TestCompleteOneOffReopenDelete(t *testing.T) {
 	// create, complete, complete(no-op still emits), reopen, delete = 5 changes
 	if got := f.events.count(); got != 5 {
 		t.Errorf("invalidate events = %d", got)
+	}
+}
+
+func TestDoneSince(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	early := mustCreate(t, f.svc, NewTask{Title: "Before the window"})
+	if _, err := f.svc.Complete(ctx, mustID(t, early)); err != nil {
+		t.Fatal(err)
+	}
+	f.setNow(time.Date(2026, 10, 19, 16, 0, 0, 0, f.loc))
+	chore := mustCreate(t, f.svc, NewTask{Title: "Dishes", RRule: "FREQ=DAILY"})
+	if _, err := f.svc.Complete(ctx, mustID(t, chore)); err != nil {
+		t.Fatal(err)
+	}
+	f.setNow(time.Date(2026, 10, 19, 18, 0, 0, 0, f.loc))
+	errand := mustCreate(t, f.svc, NewTask{Title: "Post office"})
+	if _, err := f.svc.Complete(ctx, mustID(t, errand)); err != nil {
+		t.Fatal(err)
+	}
+	gone := mustCreate(t, f.svc, NewTask{Title: "Deleted after"})
+	if _, err := f.svc.Complete(ctx, mustID(t, gone)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Delete(ctx, mustID(t, gone)); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := f.svc.DoneSince(ctx, time.Date(2026, 10, 19, 15, 0, 0, 0, f.loc), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	for _, task := range got {
+		lines = append(lines, task.Title+" "+str(task.Due)+" "+str(task.CompletedAt))
+	}
+	want := []string{
+		"Post office <nil> 2026-10-19T18:00:00-05:00",
+		"Dishes 2026-10-19 2026-10-19T16:00:00-05:00", // the occurrence done, not the next one
+	}
+	if !slices.Equal(lines, want) {
+		t.Errorf("done since 15:00 =\n%s\nwant\n%s", strings.Join(lines, "\n"), strings.Join(want, "\n"))
+	}
+	if one, _ := f.svc.DoneSince(ctx, time.Date(2026, 10, 19, 15, 0, 0, 0, f.loc), 1); len(one) != 1 || one[0].Title != "Post office" {
+		t.Errorf("limit 1 = %+v", one)
 	}
 }
 

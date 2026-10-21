@@ -26,7 +26,7 @@ const FIXTURES = {
   "/api/approvals": { approvals: [] },
   "/api/approvals/rules": { rules: [] },
   "/api/conversation/messages": { messages: [] },
-  "/api/routines": { heartbeat: true, waking_start: "08:00", waking_end: "22:00" },
+  "/api/routines": { heartbeat: true, waking_start: "08:00", waking_end: "22:00", checkin: true, checkin_at: "00:00" },
 };
 
 function check(ok, what) {

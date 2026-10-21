@@ -66,6 +66,10 @@ type Options struct {
 	// model is asked, such as the morning briefing on the day's first "good
 	// morning". False leaves the turn alone.
 	Opener func(ctx context.Context, userText string) (Opening, bool)
+	// CheckIn, if set, opens the evening check-in when the owner taps it: day
+	// is the day the notice asked about ("" for today's). False means there's
+	// none to start (already talked over, or the notice is from another day).
+	CheckIn func(ctx context.Context, day string) (Opening, bool)
 }
 
 // Opening is the call a turn starts with. Settle, if set, is told at the end
@@ -94,6 +98,7 @@ type Agent struct {
 	limits   Limits
 	now      func() time.Time
 	opener   func(ctx context.Context, userText string) (Opening, bool)
+	checkIn  func(ctx context.Context, day string) (Opening, bool)
 
 	baseCtx context.Context //nolint:containedctx // service lifetime, set by Start
 	wg      sync.WaitGroup
@@ -108,7 +113,9 @@ type turn struct {
 	inputID  string
 	origin   string
 	userText string
-	quiet    bool // the device that asked has her voice off: no speech for this turn
+	quiet    bool     // the device that asked has her voice off: no speech for this turn
+	opening  *Opening // set: the turn opens with this call instead of asking the opener
+	note     string   // stands in for userText for the model when the owner said nothing
 
 	ctx    context.Context //nolint:containedctx // the turn's lifetime
 	cancel context.CancelCauseFunc
@@ -184,6 +191,7 @@ func New(o Options) (*Agent, error) {
 		llm: o.LLM, store: o.Store, hub: o.Hub, synth: o.Synth, tools: reg, sources: o.Context, log: o.Logger,
 		tamer: o.Tamer, loc: o.Location, chat: o.Chat, deep: o.Deep,
 		gestures: newGestureSource(o.AssetsDir), limits: o.Limits, now: o.Now, opener: o.Opener,
+		checkIn: o.CheckIn,
 	}
 	if a.log == nil {
 		a.log = slog.New(slog.DiscardHandler)
@@ -266,6 +274,31 @@ func (a *Agent) Say(origin, inputID, text string, quiet bool) {
 	}
 	ctx, cancel := context.WithCancelCause(a.baseCtx)
 	a.start(&turn{id: newID("t_"), inputID: inputID, origin: origin, userText: text, quiet: quiet,
+		ctx: ctx, cancel: cancel, done: make(chan struct{})})
+}
+
+// checkInNote is the owner's side of a check-in they started by tapping it.
+const checkInNote = "(The owner tapped your evening check-in, \"How did today go?\")"
+
+// CheckIn starts the evening check-in the owner tapped: a turn with nothing
+// said, opened with the check-in's call, so her reply asks how the day went.
+// day is the day the notice asked about ("" for today's). With nothing to
+// start, it does nothing.
+func (a *Agent) CheckIn(origin, inputID, day string, quiet bool) {
+	if a.checkIn == nil {
+		return
+	}
+	if !a.llm.Configured() {
+		a.hub.Broadcast(proto.NewError(proto.CodeLLMUnavailable,
+			"I can't think right now: no language model is set up.", inputID))
+		return
+	}
+	op, ok := a.checkIn(a.baseCtx, day)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithCancelCause(a.baseCtx)
+	a.start(&turn{id: newID("t_"), inputID: inputID, origin: origin, quiet: quiet, opening: &op, note: checkInNote,
 		ctx: ctx, cancel: cancel, done: make(chan struct{})})
 }
 

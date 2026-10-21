@@ -17,7 +17,7 @@ import (
 const (
 	testClientID = "client-id-123"
 	testSecret   = "plaid-secret-456"
-	testAccess   = "access-sandbox-secret-token"
+	testAccess   = "fake-access-1"
 )
 
 // fakePlaid is a test double for Plaid's API. Each endpoint answers through a

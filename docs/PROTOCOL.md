@@ -427,8 +427,8 @@ The evening check-in asks once a day, at `checkin_at` (midnight by default), how
 `notify` (kind `checkin`, id `checkin-<day>`, title "How did today go?") and a push whose url is
 `/?checkin=<day>`. The day it asks about is the local date until 06:00 the next morning, so a
 check-in after midnight is about the day that just ended. It isn't sent when that day was already
-talked over (the `evening_checkin` tool ran for it) or already asked about, and a notice that
-reached no one isn't retried. Tapping the push opens the app, which sends `checkin` with that day
+talked over (the `evening_checkin` tool ran for it) or already asked about. It never goes to
+Telegram (only a tap in the app starts it), and one that reached no one isn't retried. Tapping the push opens the app, which sends `checkin` with that day
 (and drops the parameter from the address); the in-app notice's button sends it without one. The
 turn opens with an `evening_checkin` call: what was done that day (closed tasks and each completion
 of a repeating one), tasks still open and due that day or earlier, tasks due the next day, that

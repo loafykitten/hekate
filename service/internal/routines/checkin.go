@@ -92,7 +92,8 @@ func (s *Service) AskCheckIn(ctx context.Context) (string, error) {
 		}
 	}
 	notice := proto.NewNotify("checkin-"+day, proto.NotifyKindCheckIn, checkInTitle, "", nil)
-	payload := push.Payload{Title: checkInTitle, Body: "Tap to talk it over.", URL: "/?checkin=" + day, Tag: "checkin"}
+	// Only a tap in the app starts it: not for the backup channel.
+	payload := push.Payload{Title: checkInTitle, Body: "Tap to talk it over.", URL: "/?checkin=" + day, Tag: "checkin", NoBackup: true}
 	if !s.reach(ctx, notice, payload) {
 		return "Couldn't reach the owner (no app open, no notification delivered)", nil
 	}

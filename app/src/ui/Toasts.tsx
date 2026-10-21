@@ -5,7 +5,7 @@ import styles from "./Toasts.module.css";
 
 // Short notices at the top, out of the way: things that fired (reminders) first, then errors
 // and info (mic problems, a dropped connection, a failed save).
-export function Toasts({ onOpenSection }: { onOpenSection: (section: Section) => void }) {
+export function Toasts({ onOpenSection, onCheckIn }: { onOpenSection: (section: Section) => void; onCheckIn: () => void }) {
   const conversation = useConversation();
   const { toasts, notices } = useConversationState();
   return (
@@ -24,7 +24,7 @@ export function Toasts({ onOpenSection }: { onOpenSection: (section: Section) =>
               type="button"
               className={styles.action}
               onClick={() => {
-                conversation.startCheckIn(undefined, true);
+                onCheckIn();
                 conversation.dismissNotice(n.id);
               }}
             >

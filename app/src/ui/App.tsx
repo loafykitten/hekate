@@ -63,6 +63,13 @@ export function App() {
   }, []);
   const closeMenu = useCallback(() => setMenu((m) => ({ ...m, open: false })), []);
   const selectSection = useCallback((section: Section) => setMenu({ open: true, section }), []);
+  // The check-in's notice button: she answers on the stage, so nothing should cover it. Called from
+  // the tap itself, so her voice can play.
+  const checkInNow = useCallback(() => {
+    closeMenu();
+    closeLog();
+    conversation.startCheckIn(undefined, true);
+  }, [conversation, closeMenu, closeLog]);
 
   useEffect(() => {
     conversation.start();
@@ -148,7 +155,7 @@ export function App() {
         <Dock onOpenLog={openLog} logOpen={logOpen || menu.open} />
         <LogSheet open={logOpen} onClose={closeLog} />
         <Menu open={menu.open} section={menu.section} onSection={selectSection} onClose={closeMenu} />
-        <Toasts onOpenSection={selectSection} />
+        <Toasts onOpenSection={selectSection} onCheckIn={checkInNow} />
         {GesturePicker && stage?.character && (
           <Suspense>
             <GesturePicker character={stage.character} />

@@ -42,7 +42,7 @@ func TestTheCheckInAsksOnceADay(t *testing.T) {
 		t.Fatalf("ask = %q, %v", got, err)
 	}
 	p := f.rec.pushes[len(f.rec.pushes)-1]
-	if p.Title != "How did today go?" || p.URL != "/?checkin=2026-10-20" || p.Tag != "checkin" {
+	if p.Title != "How did today go?" || p.URL != "/?checkin=2026-10-20" || p.Tag != "checkin" || !p.NoBackup {
 		t.Errorf("push = %+v", p)
 	}
 	n := f.rec.notices[len(f.rec.notices)-1]

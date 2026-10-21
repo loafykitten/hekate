@@ -72,7 +72,9 @@ for (const [vname, viewport] of [["phone", { width: 390, height: 844 }], ["deskt
   await page.waitForTimeout(1200);
   await page.screenshot({ path: path.join(out, `checkin-${vname}-opened.png`) });
 
-  // While the app is open: the notice and its button.
+  // While the app is open, with the menu up: the notice and its button, which clears the stage.
+  await page.getByRole("button", { name: "Open menu" }).click();
+  await page.getByRole("dialog", { name: "Menu" }).waitFor({ timeout: 5000 });
   socket.send(JSON.stringify({ type: "notify", id: `checkin-${DAY}`, kind: "checkin", title: "How did today go?", body: "" }));
   const talk = page.getByRole("button", { name: "Talk it over" });
   await talk.waitFor({ timeout: 5000 });
@@ -82,6 +84,9 @@ for (const [vname, viewport] of [["phone", { width: 390, height: 844 }], ["deskt
   await page.waitForTimeout(500);
   const again = sent.filter((m) => m.type === "checkin");
   check(again.length === 2 && again[1].day === undefined && !again[1].quiet, `${vname}: the notice's button asked for tonight's, aloud (${JSON.stringify(again[1])})`);
+  check(!(await page.getByRole("dialog", { name: "Menu" }).isVisible()), `${vname}: the menu closed for her answer`);
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: path.join(out, `checkin-${vname}-talk.png`) });
 
   await page.goto(BASE + "?menu=settings");
   await page.getByText("Evening check-in").scrollIntoViewIfNeeded();

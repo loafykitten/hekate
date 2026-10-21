@@ -103,6 +103,10 @@ type Agent struct {
 	baseCtx context.Context //nolint:containedctx // service lifetime, set by Start
 	wg      sync.WaitGroup
 
+	// anchor is the id of the history window's first message (historyWindow).
+	// Turns run one at a time; it is atomic for tests that peek.
+	anchor atomic.Int64
+
 	mu  sync.Mutex
 	cur *turn
 }

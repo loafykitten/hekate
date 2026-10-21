@@ -25,13 +25,22 @@ func (f *fakeQuerySource) PromptContextFor(_ context.Context, _ time.Time, text 
 	return "recalled for: " + text, nil
 }
 
-func systemPrompt(t *testing.T, e *env) string {
+// nowPrompt is the first request's clock and context: the system message
+// right before the current input.
+func nowPrompt(t *testing.T, e *env) string {
 	t.Helper()
 	reqs := e.llm.requests()
 	if len(reqs) == 0 {
 		t.Fatal("no request reached the model")
 	}
-	return reqs[0].Messages[0]["content"].(string)
+	msgs := reqs[0].Messages
+	for i := len(msgs) - 1; i > 0; i-- {
+		if msgs[i]["role"] == "user" && msgs[i-1]["role"] == "system" {
+			return msgs[i-1]["content"].(string)
+		}
+	}
+	t.Fatalf("no clock before the input: %v", msgs)
+	return ""
 }
 
 func TestContextSourcesFillTheNowBlock(t *testing.T) {
@@ -48,7 +57,7 @@ func TestContextSourcesFillTheNowBlock(t *testing.T) {
 	e.agent.Say("c", "i", "what is up", false)
 	e.hub.waitTurnEnd(t, 1)
 
-	p := systemPrompt(t, e)
+	p := nowPrompt(t, e)
 	now := strings.Index(p, "## Now")
 	cal := strings.Index(p, "### Calendar\n\nNext event at 14:05")
 	mem := strings.Index(p, "### What you know about Rika\n\nrecalled for: what is up")
@@ -81,7 +90,7 @@ func TestSlowContextSourceIsLeftOut(t *testing.T) {
 	if took := time.Since(began); took > 4*time.Second {
 		t.Errorf("turn took %v; the slow source should cost at most its timeout", took)
 	}
-	p := systemPrompt(t, e)
+	p := nowPrompt(t, e)
 	if strings.Contains(p, "LATE-ANSWER") || !strings.Contains(p, "### Fast\n\nquick") {
 		t.Errorf("prompt: %s", p)
 	}
@@ -93,7 +102,7 @@ func TestPanickingContextSourceIsContained(t *testing.T) {
 	}})
 	e.agent.Say("c", "i", "hello", false)
 	e.hub.waitTurnEnd(t, 1)
-	if strings.Contains(systemPrompt(t, e), "### Bad") {
+	if strings.Contains(nowPrompt(t, e), "### Bad") {
 		t.Error("panicking source leaked into the prompt")
 	}
 }

@@ -8,6 +8,7 @@ export const OAUTH_PATH = "/money/oauth";
 // The small part of window.Plaid this app uses.
 export interface PlaidMetadata {
   institution?: { institution_id?: string; name?: string } | null;
+  accounts?: { name?: string; mask?: string | null; type?: string; subtype?: string | null }[];
 }
 export interface PlaidError {
   error_code?: string;
@@ -130,4 +131,17 @@ export type OAuthResume = { kind: "none" } | { kind: "resume"; link: StoredLink 
 export function oauthResume(pathname: string, link: StoredLink | undefined): OAuthResume {
   if (pathname.replace(/\/+$/, "") !== OAUTH_PATH) return { kind: "none" };
   return link ? { kind: "resume", link } : { kind: "lost" };
+}
+
+// An account as Link listed it, sent along so the service can tell a bank that's already
+// connected before the link is exchanged.
+export interface LinkedAccount {
+  name: string;
+  mask: string;
+  type: string;
+  subtype: string;
+}
+
+export function linkedAccounts(metadata: PlaidMetadata): LinkedAccount[] {
+  return (metadata.accounts ?? []).map((a) => ({ name: a.name ?? "", mask: a.mask ?? "", type: a.type ?? "", subtype: a.subtype ?? "" }));
 }

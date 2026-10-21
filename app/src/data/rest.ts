@@ -1,3 +1,4 @@
+import type { LinkedAccount } from "./plaid";
 import {
   asApproval,
   asApprovalRule,
@@ -359,8 +360,8 @@ export const moneyApi = {
     if (typeof token !== "string" || token === "") throw new ApiError("Hekate sent something unexpected.", 200);
     return token;
   },
-  addItem: async (publicToken: string, institution: { id: string; name: string }): Promise<MoneyItem> =>
-    one(await request("POST", "/money/items", { body: { public_token: publicToken, institution } }), asMoneyItem),
+  addItem: async (publicToken: string, institution: { id: string; name: string }, accounts: LinkedAccount[]): Promise<MoneyItem> =>
+    one(await request("POST", "/money/items", { body: { public_token: publicToken, institution, accounts } }), asMoneyItem),
   removeItem: async (id: string) => void (await request("DELETE", `/money/items/${encodeURIComponent(id)}`)),
   sync: async () => void (await request("POST", "/money/sync")),
   accounts: async (signal?: AbortSignal): Promise<MoneyAccount[]> => many(await request("GET", "/money/accounts", { signal }), "accounts", asMoneyAccount),

@@ -1,3 +1,4 @@
+import type { LinkedAccount } from "./plaid";
 import { keepPreviousData, MutationCache, QueryCache, QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { applyApproval, freshest } from "./approvals";
@@ -427,8 +428,8 @@ export function useMoneySpending(month: string, enabled = true) {
 }
 
 export function useAddMoneyItem() {
-  return useDomainMutation(["money"], ({ publicToken, institution }: { publicToken: string; institution: { id: string; name: string } }) =>
-    moneyApi.addItem(publicToken, institution),
+  return useDomainMutation(["money"], ({ publicToken, institution, accounts }: { publicToken: string; institution: { id: string; name: string }; accounts: LinkedAccount[] }) =>
+    moneyApi.addItem(publicToken, institution, accounts),
   );
 }
 

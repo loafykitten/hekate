@@ -359,7 +359,7 @@ func TestJob(t *testing.T) {
 		"c1": page(nil, nil, nil, "c1", false),
 	})
 	f.connect()
-	if _, err := f.svc.Connect(t.Context(), "public-2", "ins_2", "Other Bank"); err != nil {
+	if _, err := f.svc.Connect(t.Context(), "public-2", "ins_2", "Other Bank", nil); err != nil {
 		t.Fatal(err)
 	}
 	f.svc.wg.Wait()
@@ -395,7 +395,7 @@ func TestUnconfigured(t *testing.T) {
 	if _, err := f.svc.LinkToken(t.Context(), ""); !errors.Is(err, ErrNotConfigured) {
 		t.Errorf("link token = %v", err)
 	}
-	if _, err := f.svc.Connect(t.Context(), "p", "", ""); !errors.Is(err, ErrNotConfigured) {
+	if _, err := f.svc.Connect(t.Context(), "p", "", "", nil); !errors.Is(err, ErrNotConfigured) {
 		t.Errorf("connect = %v", err)
 	}
 }
@@ -443,7 +443,7 @@ func TestLinkingAConnectedBankAgainIsRefused(t *testing.T) {
 	repeat := checking(99)
 	repeat["account_id"] = "acc-repeat"
 	f.plaid.handle(pathAccounts, func(map[string]any) (int, any) { return 200, map[string]any{"accounts": []any{repeat}} })
-	_, err := f.svc.Connect(t.Context(), "public-sandbox-again", "ins_1", "Example Bank")
+	_, err := f.svc.Connect(t.Context(), "public-sandbox-again", "ins_1", "Example Bank", nil)
 	var he *httpx.Error
 	if !errors.As(err, &he) || he.Status != http.StatusConflict {
 		t.Fatalf("err = %v, want a conflict", err)
@@ -463,7 +463,7 @@ func TestLinkingAConnectedBankAgainIsRefused(t *testing.T) {
 	f.plaid.handle(pathExchange, func(map[string]any) (int, any) {
 		return 200, map[string]any{"access_token": "access-other", "item_id": "plaid-item-3"}
 	})
-	if _, err := f.svc.Connect(t.Context(), "public-sandbox-other", "ins_1", "Example Bank"); err != nil {
+	if _, err := f.svc.Connect(t.Context(), "public-sandbox-other", "ins_1", "Example Bank", nil); err != nil {
 		t.Fatalf("a second login at the same bank was refused: %v", err)
 	}
 	f.svc.wg.Wait()
@@ -495,7 +495,7 @@ func TestAccountsTheBankStopsListingAreRetired(t *testing.T) {
 func TestALinkWhoseAccountsCantBeReadIsUndone(t *testing.T) {
 	f := newFixture(t)
 	f.plaid.handle(pathAccounts, func(map[string]any) (int, any) { return plaidErr(500, "API_ERROR", "INTERNAL_SERVER_ERROR", "x") })
-	if _, err := f.svc.Connect(t.Context(), "public-sandbox-xyz", "ins_1", "Example Bank"); err == nil {
+	if _, err := f.svc.Connect(t.Context(), "public-sandbox-xyz", "ins_1", "Example Bank", nil); err == nil {
 		t.Fatal("a bank whose accounts couldn't be checked was kept")
 	}
 	if removed := f.plaid.callsTo(pathItemRemove); len(removed) != 1 || removed[0]["access_token"] != testAccess {
@@ -524,7 +524,7 @@ func TestTwoLinksOfOneBankAtOnceKeepOne(t *testing.T) {
 	errs := make(chan error, 2)
 	for range 2 {
 		go func() {
-			_, err := f.svc.Connect(t.Context(), "public-sandbox", "ins_1", "Example Bank")
+			_, err := f.svc.Connect(t.Context(), "public-sandbox", "ins_1", "Example Bank", nil)
 			errs <- err
 		}()
 	}
@@ -567,7 +567,7 @@ func TestLinksThatCantBeRemovedAreRetried(t *testing.T) {
 	f := newFixture(t)
 	f.plaid.handle(pathAccounts, func(map[string]any) (int, any) { return plaidErr(500, "API_ERROR", "INTERNAL_SERVER_ERROR", "x") })
 	f.plaid.handle(pathItemRemove, func(map[string]any) (int, any) { return plaidErr(500, "API_ERROR", "INTERNAL_SERVER_ERROR", "x") })
-	if _, err := f.svc.Connect(t.Context(), "public-sandbox-xyz", "ins_1", "Example Bank"); err == nil {
+	if _, err := f.svc.Connect(t.Context(), "public-sandbox-xyz", "ins_1", "Example Bank", nil); err == nil {
 		t.Fatal("a bank whose accounts couldn't be checked was kept")
 	}
 	waiting := func() int {
@@ -598,10 +598,25 @@ func TestABankThatCantBeSavedIsRemovedAtPlaid(t *testing.T) {
 	if _, err := f.store.DB().Exec(`CREATE TRIGGER no_banks BEFORE INSERT ON money_items BEGIN SELECT RAISE(ABORT, 'disk full'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.svc.Connect(t.Context(), "public-sandbox-xyz", "ins_1", "Example Bank"); err == nil {
+	if _, err := f.svc.Connect(t.Context(), "public-sandbox-xyz", "ins_1", "Example Bank", nil); err == nil {
 		t.Fatal("saving the bank failed but Connect succeeded")
 	}
 	if removed := f.plaid.callsTo(pathItemRemove); len(removed) != 1 || removed[0]["access_token"] != testAccess {
 		t.Errorf("the unsaved link wasn't removed at Plaid: %v", removed)
+	}
+}
+
+func TestARepeatLinkIsCaughtBeforeTheTokenIsExchanged(t *testing.T) {
+	f := newFixture(t)
+	f.connect()
+	exchanges := len(f.plaid.callsTo(pathExchange))
+	_, err := f.svc.Connect(t.Context(), "public-sandbox-again", "ins_1", "Example Bank",
+		[]LinkedAccount{{Name: "Spending", Mask: "1234", Type: "depository", Subtype: "checking"}})
+	var he *httpx.Error
+	if !errors.As(err, &he) || he.Status != http.StatusConflict {
+		t.Fatalf("err = %v, want a conflict", err)
+	}
+	if got := len(f.plaid.callsTo(pathExchange)); got != exchanges {
+		t.Errorf("the repeat's token was exchanged (%d exchanges, was %d)", got, exchanges)
 	}
 }

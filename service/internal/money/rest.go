@@ -56,12 +56,13 @@ func (s *Service) handleConnect(w http.ResponseWriter, r *http.Request) {
 			ID   string `json:"id"`
 			Name string `json:"name"`
 		} `json:"institution"`
+		Accounts []LinkedAccount `json:"accounts"`
 	}
 	if err := httpx.Decode(w, r, &b); err != nil {
 		httpx.Fail(w, s.log, r, err)
 		return
 	}
-	it, err := s.Connect(r.Context(), b.PublicToken, b.Institution.ID, b.Institution.Name)
+	it, err := s.Connect(r.Context(), b.PublicToken, b.Institution.ID, b.Institution.Name, b.Accounts)
 	if err != nil {
 		httpx.Fail(w, s.log, r, err)
 		return

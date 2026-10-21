@@ -324,21 +324,49 @@ func (s *Service) LinkToken(ctx context.Context, itemID string) (string, error) 
 	return token, nil
 }
 
+// LinkedAccount is an account as Link's onSuccess metadata lists it.
+type LinkedAccount struct {
+	Name    string `json:"name"`
+	Mask    string `json:"mask"`
+	Type    string `json:"type"`
+	Subtype string `json:"subtype"`
+}
+
+// errRepeat answers a link of a bank that is already connected.
+func errRepeat() *httpx.Error {
+	return httpx.Conflict("That bank is already connected. To sign in to it again, use Reconnect on it.")
+}
+
 // Connect exchanges the public token from Link for an access token and stores
-// the bank. The first sync runs in the background.
-func (s *Service) Connect(ctx context.Context, publicToken, institutionID, institutionName string) (Item, error) {
+// the bank. The first sync runs in the background. linked is Link's own list
+// of the accounts, which catches a repeat of a connected bank before the token
+// is exchanged (an exchanged link counts against Plaid's allowance even once
+// removed); the accounts read after the exchange catch any it misses.
+func (s *Service) Connect(ctx context.Context, publicToken, institutionID, institutionName string, linked []LinkedAccount) (Item, error) {
 	if !s.Configured() {
 		return Item{}, ErrNotConfigured
 	}
 	if strings.TrimSpace(publicToken) == "" {
 		return Item{}, httpx.BadRequest("public_token is required")
 	}
+	institutionID = oneLine(institutionID, 100)
+	// One link at a time, from the repeat check to the bank saved, so two can't both pass.
+	s.connectMu.Lock()
+	defer s.connectMu.Unlock()
+	early := make([]plaidAccount, 0, len(linked))
+	for _, a := range linked {
+		early = append(early, plaidAccount{Name: a.Name, Mask: a.Mask, Type: a.Type, Subtype: a.Subtype})
+	}
+	if dup, err := s.duplicate(ctx, institutionID, "", early); err != nil {
+		return Item{}, err
+	} else if dup {
+		return Item{}, errRepeat()
+	}
 	access, plaidID, err := s.plaid.exchange(ctx, publicToken)
 	if err != nil {
 		s.log.Warn("token exchange failed", "error", err)
 		return Item{}, errPlaid()
 	}
-	institutionID = oneLine(institutionID, 100)
 	accounts, err := s.plaid.accounts(ctx, access)
 	if err != nil {
 		// Without them a repeat link of a connected bank can't be told apart: undo it, to try again.
@@ -346,15 +374,12 @@ func (s *Service) Connect(ctx context.Context, publicToken, institutionID, insti
 		s.revoke(ctx, access)
 		return Item{}, errPlaid()
 	}
-	// Checking for a repeat and saving the bank happen together, so two links at once can't both pass.
-	s.connectMu.Lock()
-	defer s.connectMu.Unlock()
 	if dup, err := s.duplicate(ctx, institutionID, plaidID, accounts); err != nil {
 		s.revoke(ctx, access)
 		return Item{}, err
 	} else if dup {
 		s.revoke(ctx, access)
-		return Item{}, httpx.Conflict("That bank is already connected. To sign in to it again, use Reconnect on it.")
+		return Item{}, errRepeat()
 	}
 	name := oneLine(institutionName, 100)
 	if name == "" {

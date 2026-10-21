@@ -333,7 +333,7 @@ again is marked `login_required` until they reconnect it.
 |---|---|---|
 | `GET /api/money/status` | | `{ configured, items: [MoneyItem] }` |
 | `POST /api/money/link-token` | `{ item_id? }` | `{ link_token }` for Plaid Link: a new bank, or with `item_id` to reconnect that one (update mode); 503 when unconfigured |
-| `POST /api/money/items` | `{ public_token, institution: { id, name } }` (from Link's `onSuccess`) | `MoneyItem`, after exchanging the token; the first sync starts in the background |
+| `POST /api/money/items` | `{ public_token, institution: { id, name }, accounts: [{ name, mask, type, subtype }] }` (from Link's `onSuccess`) | `MoneyItem`, after exchanging the token; the first sync starts in the background. 409 when that bank is already connected: caught from `accounts` before the token is exchanged (an exchanged link counts against Plaid's allowance even once removed), or from the bank's own list after |
 | `DELETE /api/money/items/{id}` | | 204; the bank is removed at Plaid and its accounts and transactions are deleted here |
 | `POST /api/money/sync` | | 202; every item syncs now |
 | `GET /api/money/accounts` | | `{ accounts: [Account] }` by institution, then name |

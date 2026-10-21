@@ -190,7 +190,7 @@ func newFixture(t *testing.T) *fixture {
 // connect links a bank and waits for its first sync.
 func (f *fixture) connect() Item {
 	f.t.Helper()
-	it, err := f.svc.Connect(f.t.Context(), "public-sandbox-xyz", "ins_1", "Example Bank")
+	it, err := f.svc.Connect(f.t.Context(), "public-sandbox-xyz", "ins_1", "Example Bank", nil)
 	if err != nil {
 		f.t.Fatal(err)
 	}

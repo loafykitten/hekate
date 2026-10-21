@@ -11,7 +11,7 @@ import {
 } from "../../data/hooks";
 import { formatMoney, groupAccounts, isCredit, monthLabel, monthOf, shiftMonth } from "../../data/money";
 import type { MoneyAccount, MoneyItem } from "../../data/model";
-import { clearLink, linkErrorText, oauthResume, openLink, readLink, storeLink, type PlaidError, type PlaidMetadata } from "../../data/plaid";
+import { clearLink, linkedAccounts, linkErrorText, oauthResume, openLink, readLink, storeLink, type PlaidError, type PlaidMetadata } from "../../data/plaid";
 import { moneyApi } from "../../data/rest";
 import { relativeTime } from "../../data/time";
 import { useConversation } from "../ConversationContext";
@@ -118,6 +118,7 @@ function useLinker(setNote: (n: Note | undefined) => void): Linker {
             .mutateAsync({
               publicToken,
               institution: { id: metadata.institution?.institution_id ?? "", name: metadata.institution?.name ?? "" },
+              accounts: linkedAccounts(metadata),
             })
             .then(() => setNote({ tone: "info", text: "Connected. Transactions arrive over the next few minutes while the bank shares its history." }));
       done.catch((e: unknown) => setNote({ tone: "danger", text: `Couldn't finish: ${e instanceof Error ? e.message : "something went wrong"}` })).finally(() => setBusy(false));

@@ -70,6 +70,43 @@ export function computeFraming({ aspect, fovDegrees, bodyHeight, face }: Framing
   return { position: [0, centerY + 0.05, Math.max(fitH, fitW)], target: [0, centerY, 0] };
 }
 
+// While cards cover the bottom of a phone screen she's lifted, and if need be shrunk, so the
+// cards stop below her hips. Her head stays low enough for the bubble above it, under the top
+// buttons. scale shrinks her toward the top of the screen; offset (px) then moves her up.
+export interface Lift {
+  scale: number;
+  offset: number;
+}
+
+export const NO_LIFT: Lift = { scale: 1, offset: 0 };
+const LIFT_GAP = 8; // between her hips and the cards
+const LIFT_MIN_SCALE = 0.72;
+const HIPS = 0.45; // of her height, from the ground
+// Room above the top of her head: the top buttons and a few lines of bubble.
+const BUBBLE_ROOM = 184;
+
+// top, hips: where the top of her head and her hips are, as fractions of the screen height from
+// the top, unlifted. cover: px of the screen the cards hide from the bottom. headMin: the highest
+// (smallest y, px) the top of her head may go.
+export function liftAboveCards({ top, hips, height, cover, headMin }: { top: number; hips: number; height: number; cover: number; headMin: number }): Lift {
+  const edge = height - cover - LIFT_GAP;
+  const need = hips * height - edge;
+  if (cover <= 0 || need <= 0) return NO_LIFT;
+  if (top * height - need >= headMin) return { scale: 1, offset: need };
+  const scale = Math.min(1, Math.max(LIFT_MIN_SCALE, (edge - headMin) / ((hips - top) * height)));
+  return { scale, offset: Math.max(0, Math.min(hips * scale * height - edge, top * scale * height - headMin)) };
+}
+
+// The top safe-area inset in px (the status bar of an installed app), read from CSS.
+function safeTop(): number {
+  const probe = document.createElement("div");
+  probe.style.cssText = "position:fixed;top:0;visibility:hidden;height:env(safe-area-inset-top, 0px)";
+  document.body.append(probe);
+  const h = probe.offsetHeight;
+  probe.remove();
+  return h;
+}
+
 // Typical syllables open the jaw about halfway; only the loudest reach full open.
 export function mouthTarget(level: number, forced?: number): number {
   return forced ?? Math.min(1, Math.max(0, (level - 0.2) / 0.8) ** 1.3 * 0.65);
@@ -110,6 +147,12 @@ export class Stage {
   private outline?: OutlineEffect;
   private _character?: Character;
   private bodyHeight = DEFAULT_BODY_HEIGHT;
+  // Where her head's top and hips fall unlifted (fractions of the height), and the lift for the
+  // cards: aimed at, and eased toward.
+  private marks = { top: 0.3, hips: 0.65 };
+  private cover = 0;
+  private lift: Lift = NO_LIFT;
+  private liftAim: Lift = NO_LIFT;
   private raf = 0;
   private disposed = false;
   private loading?: Promise<Character>;
@@ -139,6 +182,12 @@ export class Stage {
     if (bubbleEl) this.bubble = new Bubble(bubbleEl);
     window.addEventListener("resize", this.resize);
     this.resize();
+  }
+
+  // How many px of the screen, from the bottom, cards cover over her (0: none).
+  setCover(px: number) {
+    this.cover = Math.max(0, px);
+    this.aimLift();
   }
 
   // Undefined until load() resolves.
@@ -213,8 +262,41 @@ export class Stage {
     const framing = computeFraming({ aspect: camera.aspect, fovDegrees: camera.fov, bodyHeight: this.bodyHeight, face });
     camera.position.set(...framing.position);
     controls.target.set(...framing.target);
-    camera.updateProjectionMatrix();
+    camera.clearViewOffset();
     controls.update();
+    camera.updateMatrixWorld();
+    const at = (y: number) => (1 - new THREE.Vector3(0, y, 0).project(camera).y) / 2;
+    this.marks = { top: at(this.bodyHeight), hips: at(this.bodyHeight * HIPS) };
+    this.aimLift();
+    this.applyLift();
+  }
+
+  private aimLift() {
+    const height = window.innerHeight;
+    this.liftAim = liftAboveCards({ ...this.marks, height, cover: this.cover, headMin: safeTop() + BUBBLE_ROOM });
+  }
+
+  // Eases toward the aimed lift; true when it moved.
+  private easeLift(dt: number): boolean {
+    const { lift, liftAim } = this;
+    if (Math.abs(lift.scale - liftAim.scale) < 1e-4 && Math.abs(lift.offset - liftAim.offset) < 0.5) {
+      if (lift === liftAim) return false;
+      this.lift = liftAim;
+      return true;
+    }
+    const k = 1 - Math.exp(-8 * dt);
+    this.lift = { scale: lift.scale + (liftAim.scale - lift.scale) * k, offset: lift.offset + (liftAim.offset - lift.offset) * k };
+    return true;
+  }
+
+  private applyLift() {
+    const { camera, lift } = this;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    if (lift.scale === 1 && lift.offset === 0) camera.clearViewOffset();
+    // The frustum maps to a smaller full image (scale), centered across, moved up by offset.
+    else camera.setViewOffset(w * lift.scale, h * lift.scale, -(w - w * lift.scale) / 2, lift.offset, w, h);
+    camera.updateProjectionMatrix();
   }
 
   private resize = () => {
@@ -226,6 +308,7 @@ export class Stage {
     if (this.disposed) return;
     this.timer.update(time);
     const dt = Math.min(this.timer.getDelta(), 0.1);
+    if (this.easeLift(dt)) this.applyLift();
     const character = this._character;
     if (character) {
       const target = mouthTarget(this.speech.level(), this.params.forcedMouth);

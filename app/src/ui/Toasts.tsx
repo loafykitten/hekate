@@ -4,10 +4,13 @@ import type { Section } from "./menu/sections";
 import styles from "./Toasts.module.css";
 
 // Short notices at the top, out of the way: things that fired (reminders) first, then errors
-// and info (mic problems, a dropped connection, a failed save).
-export function Toasts({ onOpenSection, onCheckIn }: { onOpenSection: (section: Section) => void; onCheckIn: () => void }) {
+// and info (mic problems, a dropped connection, a failed save). A notice that came with a card
+// shows only while the cards can't (the menu or log covers them): one or the other, not both.
+export function Toasts({ onOpenSection, onCheckIn, cardsShown }: { onOpenSection: (section: Section) => void; onCheckIn: () => void; cardsShown: boolean }) {
   const conversation = useConversation();
-  const { toasts, notices } = useConversationState();
+  const state = useConversationState();
+  const { toasts } = state;
+  const notices = state.notices.filter((n) => !(n.card && cardsShown));
   return (
     <div className={styles.stack} aria-live="polite">
       {notices.map((n) => (

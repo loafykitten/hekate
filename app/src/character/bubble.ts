@@ -1,16 +1,19 @@
 const MARGIN = 16;
 
 // Speech bubble pinned above the character's head. The caller decides what is revealed; the
-// not-yet-revealed words stay in the layout (invisible), so the bubble doesn't resize or jump
-// as words appear.
+// not-yet-revealed words stay in the layout (invisible), so the bubble's width and line breaks
+// never change as words appear. Its height follows the revealed lines (the rest is clipped), so
+// it grows a line at a time instead of holding empty space.
 export class Bubble {
   private shown = "";
   private pending = "";
+  private body: HTMLElement;
   private visible: HTMLElement;
   private hidden: HTMLElement;
 
   constructor(private el: HTMLElement) {
-    const body = el.querySelector(".bubble-text")!;
+    const body = el.querySelector<HTMLElement>(".bubble-text")!;
+    this.body = body;
     this.visible = document.createElement("span");
     this.hidden = document.createElement("span");
     this.hidden.style.visibility = "hidden";
@@ -28,7 +31,29 @@ export class Bubble {
       this.pending = pending;
       this.hidden.textContent = pending;
     }
+    const wasHidden = this.el.hidden !== false;
     this.el.hidden = false;
+    this.fitHeight(wasHidden);
+  }
+
+  // Clips the text to the lines revealed so far (at least one). A bubble just shown starts at its
+  // size rather than growing into it.
+  private fitHeight(instant: boolean) {
+    const body = this.body;
+    const rects = this.visible.getClientRects();
+    // Nothing revealed yet: the first line of what's coming.
+    const last = rects[rects.length - 1] ?? this.hidden.getClientRects()[0];
+    if (!last) {
+      body.style.height = "";
+      return;
+    }
+    const height = Math.ceil(last.bottom - body.getBoundingClientRect().top);
+    if (instant) body.style.transition = "none";
+    body.style.height = `${height}px`;
+    if (instant) {
+      void body.offsetHeight; // apply the size before the transition comes back
+      body.style.transition = "";
+    }
   }
 
   hide() {

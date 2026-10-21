@@ -259,7 +259,7 @@ conversation, so the nightly reflection already reads it into the diary. Never r
 nags. Settings → Routines (and `routine_settings`): on or off, and the time. Reuses the agent's
 opener and the routines scheduler from the briefing and heartbeat.
 
-**2. Small UX things** left from the M5 tour:
+**2. Small UX things** ✅ left from the M5 tour:
 - On phone, cards cover her lower half: frame her higher while cards are up, or make cards more
   compact there.
 - The speech bubble holds its full height while words appear, which reads as empty space

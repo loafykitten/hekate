@@ -32,6 +32,8 @@ export interface Notice {
   section?: "reminders" | "today" | "changes";
   // The evening check-in: its button starts one.
   checkIn?: boolean;
+  // It came with a card, which says the same: while the cards show, the banner stays out of the way.
+  card?: boolean;
 }
 
 
@@ -568,6 +570,7 @@ export class Conversation {
       body: m.body || "",
       section: noticeSection(m.kind),
       ...(m.kind === "checkin" ? { checkIn: true } : {}),
+      ...(card ? { card: true } : {}),
     };
     clearTimeout(this.noticeTimers.get(notice.id));
     this.notices = [...this.notices.filter((n) => n.id !== notice.id), notice].slice(-2);

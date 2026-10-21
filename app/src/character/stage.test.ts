@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeFraming, DEFAULT_BODY_HEIGHT, mouthTarget, parseStageParams, smoothMouth } from "./stage";
+import { computeFraming, DEFAULT_BODY_HEIGHT, liftAboveCards, mouthTarget, NO_LIFT, parseStageParams, smoothMouth } from "./stage";
 
 describe("computeFraming", () => {
   const base = { fovDegrees: 30, bodyHeight: DEFAULT_BODY_HEIGHT };
@@ -75,5 +75,36 @@ describe("parseStageParams", () => {
     ]);
     expect(p.gesture).toBe("waving");
     expect(p.blink).toBe(false);
+  });
+});
+
+describe("liftAboveCards", () => {
+  // A phone: her head's top a third down, her hips about two thirds down.
+  const base = { top: 0.34, hips: 0.65, height: 844, headMin: 184 };
+  const at = (f: number, l: { scale: number; offset: number }) => f * l.scale * base.height - l.offset;
+
+  it("leaves her be without cards, or when they stop below her hips", () => {
+    expect(liftAboveCards({ ...base, cover: 0 })).toBe(NO_LIFT);
+    expect(liftAboveCards({ ...base, cover: 200 })).toBe(NO_LIFT);
+  });
+
+  it("lifts her just enough when there's room above her head", () => {
+    const lift = liftAboveCards({ ...base, cover: 360 }); // cards' top at 484
+    expect(lift.scale).toBe(1);
+    expect(at(base.hips, lift)).toBeCloseTo(484 - 8);
+    expect(at(base.top, lift)).toBeGreaterThanOrEqual(base.headMin);
+  });
+
+  it("shrinks her too when lifting alone would push her head into the bubble's room", () => {
+    const lift = liftAboveCards({ ...base, cover: 460 }); // cards' top at 384
+    expect(lift.scale).toBeLessThan(1);
+    expect(at(base.hips, lift)).toBeCloseTo(384 - 8);
+    expect(at(base.top, lift)).toBeCloseTo(base.headMin);
+  });
+
+  it("shrinks her no further than the floor, keeping her head clear", () => {
+    const lift = liftAboveCards({ ...base, cover: 640 });
+    expect(lift.scale).toBe(0.72);
+    expect(at(base.top, lift)).toBeGreaterThanOrEqual(base.headMin - 0.01);
   });
 });

@@ -57,3 +57,12 @@ CREATE TABLE money_transactions (
 CREATE INDEX money_transactions_date ON money_transactions(date);
 CREATE INDEX money_transactions_account ON money_transactions(account_id, date);
 CREATE INDEX money_transactions_item ON money_transactions(item_id);
+
+-- Links Hekate gave up on (a repeat, or one whose accounts couldn't be checked)
+-- whose removal at Plaid failed: retried by the hourly sync until Plaid lets go,
+-- so no forgotten connection keeps a slot or a token alive there.
+CREATE TABLE money_revocations (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    access_token TEXT NOT NULL,
+    created_at   TEXT NOT NULL -- UTC RFC 3339
+);

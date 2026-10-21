@@ -562,3 +562,46 @@ func TestHistoryArrivesInStages(t *testing.T) {
 		}
 	}
 }
+
+func TestLinksThatCantBeRemovedAreRetried(t *testing.T) {
+	f := newFixture(t)
+	f.plaid.handle(pathAccounts, func(map[string]any) (int, any) { return plaidErr(500, "API_ERROR", "INTERNAL_SERVER_ERROR", "x") })
+	f.plaid.handle(pathItemRemove, func(map[string]any) (int, any) { return plaidErr(500, "API_ERROR", "INTERNAL_SERVER_ERROR", "x") })
+	if _, err := f.svc.Connect(t.Context(), "public-sandbox-xyz", "ins_1", "Example Bank"); err == nil {
+		t.Fatal("a bank whose accounts couldn't be checked was kept")
+	}
+	waiting := func() int {
+		var n int
+		_ = f.store.DB().QueryRow(`SELECT COUNT(*) FROM money_revocations`).Scan(&n)
+		return n
+	}
+	if waiting() != 1 {
+		t.Fatalf("links waiting for removal = %d", waiting())
+	}
+	if sum, err := f.svc.syncJob(t.Context()); err != nil || !strings.Contains(sum, "1 old link(s) still to remove") {
+		t.Errorf("job while Plaid still refuses: %q, %v", sum, err)
+	}
+	f.plaid.handle(pathItemRemove, func(map[string]any) (int, any) { return 200, map[string]any{} })
+	if _, err := f.svc.syncJob(t.Context()); !errors.Is(err, jobs.ErrSkip) {
+		t.Errorf("job after the removal went through: %v", err)
+	}
+	if waiting() != 0 {
+		t.Errorf("links still waiting = %d", waiting())
+	}
+	if last := f.plaid.callsTo(pathItemRemove); last[len(last)-1]["access_token"] != testAccess {
+		t.Errorf("removed %v", last[len(last)-1])
+	}
+}
+
+func TestABankThatCantBeSavedIsRemovedAtPlaid(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.store.DB().Exec(`CREATE TRIGGER no_banks BEFORE INSERT ON money_items BEGIN SELECT RAISE(ABORT, 'disk full'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Connect(t.Context(), "public-sandbox-xyz", "ins_1", "Example Bank"); err == nil {
+		t.Fatal("saving the bank failed but Connect succeeded")
+	}
+	if removed := f.plaid.callsTo(pathItemRemove); len(removed) != 1 || removed[0]["access_token"] != testAccess {
+		t.Errorf("the unsaved link wasn't removed at Plaid: %v", removed)
+	}
+}

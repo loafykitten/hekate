@@ -21,14 +21,22 @@ func (s *Service) syncJob(ctx context.Context) (string, error) {
 	if !s.Configured() {
 		return "", jobs.ErrSkip
 	}
+	waiting := s.retryRevocations(ctx)
 	res, err := s.SyncAll(ctx)
 	if err != nil {
 		return "", err
 	}
+	summary := res.summary()
 	if res.Banks == 0 {
-		return "", jobs.ErrSkip
+		if waiting == 0 {
+			return "", jobs.ErrSkip
+		}
+		summary = "No banks"
 	}
-	return res.summary(), nil
+	if waiting > 0 {
+		summary += fmt.Sprintf("; %d old link(s) still to remove at Plaid", waiting)
+	}
+	return summary, nil
 }
 
 // SyncResult is what one pass over every bank did.
@@ -363,6 +371,7 @@ func (s *Service) Connect(ctx context.Context, publicToken, institutionID, insti
 		RETURNING id`,
 		plaidID, access, institutionID, name, stamp(s.now())).Scan(&id)
 	if err != nil {
+		s.revoke(ctx, access) // not kept here, so not kept at Plaid either
 		return Item{}, fmt.Errorf("store the bank: %w", err)
 	}
 	if err := s.saveAccounts(ctx, id, accounts); err != nil {
@@ -377,11 +386,51 @@ func (s *Service) Connect(ctx context.Context, publicToken, institutionID, insti
 	return s.itemByID(ctx, id)
 }
 
-// revoke removes a just-linked item at Plaid that won't be kept.
+// revoke removes a just-linked item at Plaid that won't be kept. If Plaid
+// can't be reached, the token is kept for the hourly sync to try again.
 func (s *Service) revoke(ctx context.Context, access string) {
-	if err := s.plaid.removeItem(context.WithoutCancel(ctx), access); err != nil {
-		s.log.Warn("removing a link that isn't kept failed at Plaid", "error", err)
+	ctx = context.WithoutCancel(ctx)
+	err := s.plaid.removeItem(ctx, access)
+	if err == nil {
+		return
 	}
+	s.log.Warn("removing a link that isn't kept failed at Plaid; will retry", "error", err)
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO money_revocations (access_token, created_at) VALUES (?, ?)`, access, stamp(s.now())); err != nil {
+		s.log.Error("cannot keep a link to remove later", "error", err)
+	}
+}
+
+// retryRevocations tries again to remove links whose removal failed. It
+// returns how many are still waiting.
+func (s *Service) retryRevocations(ctx context.Context) int {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, access_token FROM money_revocations ORDER BY id`)
+	if err != nil {
+		s.log.Warn("cannot read links waiting for removal", "error", err)
+		return 0
+	}
+	type pending struct {
+		id     int64
+		access string
+	}
+	var list []pending
+	for rows.Next() {
+		var p pending
+		if err := rows.Scan(&p.id, &p.access); err == nil {
+			list = append(list, p)
+		}
+	}
+	_ = rows.Close()
+	left := 0
+	for _, p := range list {
+		if err := s.plaid.removeItem(ctx, p.access); err != nil {
+			left++
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM money_revocations WHERE id = ?`, p.id); err != nil {
+			s.log.Warn("cannot clear a removed link", "error", err)
+		}
+	}
+	return left
 }
 
 // Remove disconnects a bank at Plaid and deletes its accounts and transactions here.

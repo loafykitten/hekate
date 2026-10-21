@@ -106,10 +106,12 @@ func (r *turnRun) begin() error {
 	}}); err != nil {
 		return fmt.Errorf("record message: %w", err)
 	}
-	hist, err := a.store.RecentMessages(ctx, ConversationID, historyMessages)
+	hist, err := a.store.RecentMessages(ctx, ConversationID, historyMaxMessages)
 	if err != nil {
 		return fmt.Errorf("load history: %w", err)
 	}
+	hist, anchor := historyWindow(hist, a.anchor.Load())
+	a.anchor.Store(anchor)
 	now := a.now()
 	r.msgs = BuildMessages(PromptInput{
 		Tamer: a.tamer, Gestures: a.Gestures(), Now: now, Location: a.loc, History: hist,

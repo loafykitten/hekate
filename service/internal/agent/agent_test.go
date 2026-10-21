@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -67,6 +68,7 @@ func TestTextOnlyTurn(t *testing.T) {
 		t.Errorf("tools = %v", reqs[0].toolNames())
 	}
 	sys, _ := reqs[0].Messages[0]["content"].(string)
+	sys += "\n" + nowPrompt(t, e)
 	for _, want := range []string{"Rika", "{waving}, {thankful}", "Monday, 19 October 2026", "14:05"} {
 		if !strings.Contains(sys, want) {
 			t.Errorf("system prompt lacks %q", want)
@@ -105,21 +107,27 @@ func TestHistoryReachesNextTurn(t *testing.T) {
 	e := newEnv(t, func(n int, _ llmReq) (int, []string) {
 		return 200, say("Reply number " + string(rune('0'+n)) + " is here.")
 	}, envOpts{})
-	e.agent.Say("c", "i1", "first", false)
-	e.hub.waitTurnEnd(t, 1)
-	e.agent.Say("c", "i2", "second", false)
-	e.hub.waitTurnEnd(t, 2)
+	for i, text := range []string{"first", "second", "third"} {
+		e.agent.Say("c", "i"+strconv.Itoa(i), text, false)
+		e.hub.waitTurnEnd(t, i+1)
+	}
 
 	reqs := e.llm.requests()
-	if len(reqs) != 2 {
+	if len(reqs) != 3 {
 		t.Fatalf("requests = %d", len(reqs))
 	}
 	var roles []string
 	for _, m := range reqs[1].Messages {
 		roles = append(roles, m["role"].(string))
 	}
-	if !slices.Equal(roles, []string{"system", "user", "assistant", "user"}) {
+	if !slices.Equal(roles, []string{"system", "user", "assistant", "system", "user"}) {
 		t.Errorf("roles = %v", roles)
+	}
+	// For the prompt cache, each turn's request starts with everything the last
+	// one sent before its clock and context.
+	prev, next := reqs[1].Messages, reqs[2].Messages
+	if len(next) != 7 || !reflect.DeepEqual(next[:3], prev[:3]) {
+		t.Errorf("turn 3 doesn't start with turn 2's prompt:\n%v\n%v", prev, next)
 	}
 }
 
@@ -299,7 +307,7 @@ func TestToolRoundTrip(t *testing.T) {
 	for _, m := range reqs[len(reqs)-1].Messages {
 		roles2 = append(roles2, m["role"].(string))
 	}
-	if !slices.Equal(roles2, []string{"system", "user", "assistant", "tool", "assistant", "user"}) {
+	if !slices.Equal(roles2, []string{"system", "user", "assistant", "tool", "assistant", "system", "user"}) {
 		t.Errorf("replayed roles = %v", roles2)
 	}
 }

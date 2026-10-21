@@ -21,12 +21,12 @@ func TestSystemPrompt(t *testing.T) {
 	}
 	// 23:30 UTC on Sunday is already Monday morning in Berlin (UTC+2 in October).
 	now := time.Date(2026, 10, 18, 23, 30, 0, 0, time.UTC)
-	got := SystemPrompt(PromptInput{Tamer: "Rika", Gestures: []string{"waving", "no"}, Now: now, Location: berlin})
+	in := PromptInput{Tamer: "Rika", Gestures: []string{"waving", "no"}, Now: now, Location: berlin}
+	got := SystemPrompt(in)
 
 	for _, want := range []string{
 		"Rika is your Tamer",
 		"Available: {waving}, {no}.",
-		"## Now\n\nIt is Monday, 19 October 2026, 01:30 (Europe/Berlin).",
 		"think_deeper",
 		"[chuckles]",
 	} {
@@ -37,8 +37,44 @@ func TestSystemPrompt(t *testing.T) {
 	if strings.Contains(got, "{{") || strings.Contains(got, "}}") {
 		t.Error("unfilled placeholder")
 	}
-	if strings.Index(got, "You are Renamon") > strings.Index(got, "## How you work") || strings.Index(got, "## How you work") > strings.Index(got, "## Now") {
-		t.Error("order must be persona, rules, now")
+	if strings.Index(got, "You are Renamon") > strings.Index(got, "## How you work") {
+		t.Error("order must be persona, rules")
+	}
+	// The clock lives in its own message, so the system prompt never changes.
+	if strings.Contains(got, "## Now") {
+		t.Error("the system prompt holds the clock")
+	}
+	if n := NowPrompt(in); n != "## Now\n\nIt is Monday, 19 October 2026, 01:30 (Europe/Berlin)." {
+		t.Errorf("now = %q", n)
+	}
+}
+
+// The prompt is laid out for the provider's prefix cache: the same system
+// prompt every turn, then the history, then what changes (the clock and
+// context) right before the current input.
+func TestBuildMessagesPutsWhatChangesLast(t *testing.T) {
+	h := hist(5)
+	build := func(now time.Time, ctx string) []llm.Message {
+		return BuildMessages(PromptInput{Tamer: "Rika", Now: now, Location: time.UTC, History: h,
+			Context: []ContextBlock{{Name: "Calendar", Text: ctx}}})
+	}
+	a := build(time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC), "nothing today")
+	b := build(time.Date(2026, 10, 19, 9, 1, 0, 0, time.UTC), "lunch at noon")
+	var roles []string
+	for _, m := range a {
+		roles = append(roles, m.Role)
+	}
+	if !slices.Equal(roles, []string{"system", "user", "assistant", "user", "assistant", "system", "user"}) {
+		t.Fatalf("roles = %v", roles)
+	}
+	if !slices.Equal(contents(a[:5]), contents(b[:5])) {
+		t.Error("everything before the clock must be the same from one minute to the next")
+	}
+	if a[5].Content != "## Now\n\nIt is Monday, 19 October 2026, 09:00 (UTC).\n\n### Calendar\n\nnothing today" {
+		t.Errorf("now = %q", a[5].Content)
+	}
+	if a[6].Content != "m4" {
+		t.Errorf("last = %q, want the current input", a[6].Content)
 	}
 }
 
@@ -72,55 +108,79 @@ func contents(ms []llm.Message) []string {
 	return out
 }
 
-func TestHistoryCountTrim(t *testing.T) {
-	msgs := BuildMessages(PromptInput{Now: time.Now(), Location: time.UTC, History: hist(41)})
-	if msgs[0].Role != llm.RoleSystem {
-		t.Fatal("first must be the system prompt")
+func TestHistoryWindowCutsToTheLowLimits(t *testing.T) {
+	got, anchor := historyWindow(hist(41), 0)
+	// The last 20 of 41 start at index 21, an assistant message, so it is dropped to begin at a user.
+	if c := contents(BuildMessages(PromptInput{Now: time.Now(), Location: time.UTC, History: got})[1:]); len(got) != 19 ||
+		got[0].Content != "m22" || got[len(got)-1].Content != "m40" || anchor != got[0].ID || c[len(c)-1] != "m40" {
+		t.Errorf("window = %v, anchor %d", contents(BuildMessages(PromptInput{History: got})), anchor)
 	}
-	got := contents(msgs[1:])
-	// The last 30 of 41 start at index 11, an assistant message, so it is dropped to begin at a user.
-	if len(got) != 29 || got[0] != "m12" || got[len(got)-1] != "m40" {
-		t.Errorf("history = %v", got)
-	}
-	if msgs[1].Role != llm.RoleUser {
-		t.Errorf("history must start with a user message, got %s", msgs[1].Role)
-	}
-}
 
-func TestHistoryBudgetTrim(t *testing.T) {
 	h := hist(10)
 	for i := range h {
 		h[i].Content = strings.Repeat("x", 6000)
 	}
-	msgs := BuildMessages(PromptInput{Now: time.Now(), Location: time.UTC, History: h})
-	total := 0
-	for _, m := range msgs[1:] {
-		total += len(m.Content)
+	got, _ = historyWindow(h, 0)
+	if historyChars(got) > historyLowChars || got[len(got)-1].ID != h[9].ID || got[0].Role != store.RoleUser {
+		t.Errorf("chars %d, messages %d", historyChars(got), len(got))
 	}
-	if total > historyBudgetChars || msgs[len(msgs)-1].Content != h[9].Content {
-		t.Errorf("total %d, messages %d", total, len(msgs)-1)
+	// A single input over the budget is still sent.
+	if got, _ := historyWindow(h[9:], 0); len(got) != 1 {
+		t.Errorf("lone input = %d messages", len(got))
 	}
-	if msgs[1].Role != llm.RoleUser {
-		t.Error("must start at a user message")
+	if got, anchor := historyWindow(nil, 7); got != nil || anchor != 0 {
+		t.Errorf("empty = %v %d", got, anchor)
+	}
+}
+
+// From its anchor the window only grows, so each turn's prompt starts with the
+// last one's; past the high limits it is cut back once and grows again.
+func TestHistoryWindowGrowsFromItsAnchor(t *testing.T) {
+	all := hist(101)
+	var anchor int64
+	var cuts []int
+	for n := 1; n <= len(all); n += 2 { // a turn adds the user's message and her reply
+		h := all[max(n-historyMaxMessages, 0):n]
+		before := anchor
+		var w []store.Message
+		w, anchor = historyWindow(h, anchor)
+		if w[len(w)-1].ID != int64(n) || w[0].Role != store.RoleUser || len(w) > historyMaxMessages {
+			t.Fatalf("turn %d: window %d..%d", n, w[0].ID, w[len(w)-1].ID)
+		}
+		if anchor != before {
+			cuts = append(cuts, n)
+			if before != 0 && len(w) > historyLowMessages {
+				t.Errorf("turn %d: cut to %d messages", n, len(w))
+			}
+		}
+	}
+	// The first turn anchors; then cuts come only when the window passes 40.
+	if len(cuts) < 2 || len(cuts) > 5 || cuts[0] != 1 {
+		t.Errorf("cuts at %v", cuts)
+	}
+	// An anchor that's gone (or too far back to load) starts a new window.
+	if w, a := historyWindow(all[60:80], 12); a != w[0].ID || a == 12 {
+		t.Errorf("stale anchor kept: %d", a)
 	}
 }
 
 func TestHistoryKeepsToolExchangeAndClipsResults(t *testing.T) {
 	calls := encodeToolCalls([]llm.ToolCall{{ID: "c1", Name: "lookup", Arguments: `{"q":"x"}`}})
 	h := []store.Message{
-		{Role: store.RoleTool, Content: "orphan result", ToolCallID: "gone"},
-		{Role: store.RoleUser, Content: "q"},
-		{Role: store.RoleAssistant, Content: "", ToolCalls: calls},
-		{Role: store.RoleTool, Content: strings.Repeat("é", 3000), ToolCallID: "c1"},
-		{Role: store.RoleAssistant, Content: "answer"},
-		{Role: store.RoleUser, Content: "next"},
+		{ID: 1, Role: store.RoleTool, Content: "orphan result", ToolCallID: "gone"},
+		{ID: 2, Role: store.RoleUser, Content: "q"},
+		{ID: 3, Role: store.RoleAssistant, Content: "", ToolCalls: calls},
+		{ID: 4, Role: store.RoleTool, Content: strings.Repeat("é", 3000), ToolCallID: "c1"},
+		{ID: 5, Role: store.RoleAssistant, Content: "answer"},
+		{ID: 6, Role: store.RoleUser, Content: "next"},
 	}
-	msgs := BuildMessages(PromptInput{Now: time.Now(), Location: time.UTC, History: h})[1:]
+	w, _ := historyWindow(h, 0)
+	msgs := BuildMessages(PromptInput{Now: time.Now(), Location: time.UTC, History: w})[1:]
 	var roles []string
 	for _, m := range msgs {
 		roles = append(roles, m.Role)
 	}
-	if !slices.Equal(roles, []string{"user", "assistant", "tool", "assistant", "user"}) {
+	if !slices.Equal(roles, []string{"user", "assistant", "tool", "assistant", "system", "user"}) {
 		t.Fatalf("roles = %v", roles)
 	}
 	if len(msgs[1].ToolCalls) != 1 || msgs[1].ToolCalls[0] != (llm.ToolCall{ID: "c1", Name: "lookup", Arguments: `{"q":"x"}`}) || msgs[2].ToolCallID != "c1" {

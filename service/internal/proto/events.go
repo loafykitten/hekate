@@ -10,6 +10,7 @@ const (
 	DomainMemory    = "memory"
 	DomainWeather   = "weather"
 	DomainMail      = "mail"
+	DomainMoney     = "money"
 	DomainApprovals = "approvals"
 	DomainChanges   = "changes"
 )

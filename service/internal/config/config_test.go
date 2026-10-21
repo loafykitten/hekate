@@ -316,3 +316,38 @@ func TestTelegram(t *testing.T) {
 		}
 	}
 }
+
+func TestPlaid(t *testing.T) {
+	env := func(kv ...string) func(string) string {
+		m := map[string]string{}
+		for i := 0; i+1 < len(kv); i += 2 {
+			m[kv[i]] = kv[i+1]
+		}
+		return func(k string) string { return m[k] }
+	}
+	cfg, err := LoadFrom(env())
+	if err != nil || cfg.PlaidClientID != "" || cfg.PlaidSecret != "" || cfg.PlaidEnv != "production" || cfg.PlaidRedirectURI != "" {
+		t.Errorf("unset = %+v, %v", cfg, err)
+	}
+	cfg, err = LoadFrom(env("PLAID_CLIENT_ID", "id1", "PLAID_SECRET", "s3cret", "PLAID_ENV", "Sandbox",
+		"PLAID_REDIRECT_URI", "https://hekate.example.com/money/oauth"))
+	if err != nil || cfg.PlaidClientID != "id1" || cfg.PlaidSecret.Reveal() != "s3cret" || cfg.PlaidEnv != "sandbox" ||
+		cfg.PlaidRedirectURI != "https://hekate.example.com/money/oauth" {
+		t.Errorf("set = %+v, %v", cfg, err)
+	}
+	for name, e := range map[string]func(string) string{
+		"id only":     env("PLAID_CLIENT_ID", "id1"),
+		"secret only": env("PLAID_SECRET", "s3cret"),
+		"bad env":     env("PLAID_ENV", "development"),
+		"http uri":    env("PLAID_REDIRECT_URI", "http://hekate.example.com/money/oauth"),
+		"no host uri": env("PLAID_REDIRECT_URI", "https:///money/oauth"),
+		"not a uri":   env("PLAID_REDIRECT_URI", "hekate.example.com"),
+	} {
+		if _, err := LoadFrom(e); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if _, err := LoadFrom(env("PLAID_SECRET", "s3cret")); err != nil && strings.Contains(err.Error(), "s3cret") {
+		t.Errorf("error leaks the secret: %v", err)
+	}
+}

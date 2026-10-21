@@ -13,6 +13,10 @@ export function sectionOfCard(card: Card): Section | undefined {
     case "mail":
     case "mail_message":
       return "mail";
+    case "accounts":
+    case "transactions":
+    case "spending":
+      return "money";
     case "memory":
       return "memory";
     case "weather":

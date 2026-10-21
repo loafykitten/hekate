@@ -16,9 +16,11 @@ export const PERSIST_BUSTER = typeof __BUILD_ID__ === "string" ? __BUILD_ID__ : 
 
 // A key's second part is "message" or "item" for single things fetched on demand: a mail message
 // with its body, one approval. Those are never kept. Searches are never kept either: what she
-// looked for isn't worth storing.
+// looked for isn't worth storing. Bank data is never kept: balances and transactions shouldn't
+// sit in the browser's storage.
 export function persistableKey(key: QueryKey): boolean {
   const [domain, kind, q] = key;
+  if (domain === "money") return false;
   if (typeof domain !== "string" || !(DOMAINS as readonly string[]).includes(domain)) return false;
   if ((domain === "mail" && kind === "message") || (domain === "approvals" && kind === "item")) return false;
   if ((domain === "mail" || domain === "memory") && kind === "list" && q !== "") return false;

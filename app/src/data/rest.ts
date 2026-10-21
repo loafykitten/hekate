@@ -1,3 +1,4 @@
+import type { LinkedAccount } from "./plaid";
 import {
   asApproval,
   asApprovalRule,
@@ -9,6 +10,11 @@ import {
   asCoreEntry,
   asEvent,
   asMailBody,
+  asMoneyAccount,
+  asMoneyItem,
+  asMoneyStatus,
+  asMoneyTransaction,
+  asSpending,
   asMailRule,
   asMailStatus,
   asMailSummary,
@@ -33,6 +39,11 @@ import {
   type MailRule,
   type MailStatus,
   type MailSummary,
+  type MoneyAccount,
+  type MoneyItem,
+  type MoneyStatus,
+  type MoneyTransaction,
+  type Spending,
   type Memory,
   type Message,
   type Task,
@@ -328,4 +339,33 @@ export const approvalsApi = {
   rules: async (signal?: AbortSignal): Promise<ApprovalRule[]> =>
     many(await request("GET", "/approvals/rules", { signal }), "rules", asApprovalRule),
   removeRule: async (id: string) => void (await request("DELETE", `/approvals/rules/${encodeURIComponent(id)}`)),
+};
+
+// --- money ---------------------------------------------------------------------------------
+
+export interface TransactionQuery {
+  q?: string;
+  category?: string;
+  account?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+}
+
+export const moneyApi = {
+  status: async (signal?: AbortSignal): Promise<MoneyStatus> => asMoneyStatus(await request("GET", "/money/status", { signal })),
+  // A link token for Plaid Link: a new bank, or with itemId to reconnect that one.
+  linkToken: async (itemId?: string): Promise<string> => {
+    const token = field(await request("POST", "/money/link-token", { body: itemId ? { item_id: itemId } : {} }), "link_token");
+    if (typeof token !== "string" || token === "") throw new ApiError("Hekate sent something unexpected.", 200);
+    return token;
+  },
+  addItem: async (publicToken: string, institution: { id: string; name: string }, accounts: LinkedAccount[]): Promise<MoneyItem> =>
+    one(await request("POST", "/money/items", { body: { public_token: publicToken, institution, accounts } }), asMoneyItem),
+  removeItem: async (id: string) => void (await request("DELETE", `/money/items/${encodeURIComponent(id)}`)),
+  sync: async () => void (await request("POST", "/money/sync")),
+  accounts: async (signal?: AbortSignal): Promise<MoneyAccount[]> => many(await request("GET", "/money/accounts", { signal }), "accounts", asMoneyAccount),
+  transactions: async (params: TransactionQuery, signal?: AbortSignal): Promise<MoneyTransaction[]> =>
+    many(await request("GET", "/money/transactions", { query: { ...params }, signal }), "transactions", asMoneyTransaction),
+  spending: async (month: string, signal?: AbortSignal): Promise<Spending> => one(await request("GET", "/money/spending", { query: { month }, signal }), asSpending),
 };

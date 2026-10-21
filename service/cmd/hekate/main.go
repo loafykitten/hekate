@@ -27,6 +27,7 @@ import (
 	"github.com/loafykitten/hekate/service/internal/logging"
 	"github.com/loafykitten/hekate/service/internal/mail"
 	"github.com/loafykitten/hekate/service/internal/memory"
+	"github.com/loafykitten/hekate/service/internal/money"
 	"github.com/loafykitten/hekate/service/internal/push"
 	"github.com/loafykitten/hekate/service/internal/reflection"
 	"github.com/loafykitten/hekate/service/internal/reminders"
@@ -174,6 +175,17 @@ func run() error {
 	sources = append(sources, agent.Source{Name: "Mail", Source: mailSvc})
 	api = append(api, mailSvc.Routes)
 
+	// Money: read-only bank data through Plaid, synced hourly by a routine.
+	moneySvc, err := money.New(money.Options{
+		Store: db, ClientID: cfg.PlaidClientID, Secret: cfg.PlaidSecret.Reveal(), Env: cfg.PlaidEnv,
+		RedirectURI: cfg.PlaidRedirectURI, Location: cfg.Location, Events: hub, Logger: logger.Logger,
+	})
+	if err != nil {
+		return fmt.Errorf("build money: %w", err)
+	}
+	toolList = slices.Concat(toolList, moneySvc.Tools())
+	api = append(api, moneySvc.Routes)
+
 	// Changes she proposes to Hekate itself; the owner approves them and builds
 	// them with Claude Code.
 	changeSvc, err := changes.New(changes.Options{Store: db, Approvals: approvalSvc, Location: cfg.Location, Events: hub, Push: notifier, Logger: logger.Logger})
@@ -191,7 +203,7 @@ func run() error {
 	}
 	selfSvc, err := inspect.New(inspect.Options{
 		Store: db, Jobs: runner, Ring: logger.Ring, DeployLog: cfg.DeployLog,
-		Checks:  healthChecks(llmClient, synth != nil, stt, calSvc, mailSvc, pushSvc, tg, webSvc),
+		Checks:  healthChecks(llmClient, synth != nil, stt, calSvc, mailSvc, moneySvc, pushSvc, tg, webSvc),
 		Version: buildinfo.Version + " (" + buildinfo.Commit + ")", Location: cfg.Location, Events: hub, Logger: logger.Logger,
 	})
 	if err != nil {
@@ -209,6 +221,7 @@ func run() error {
 		return fmt.Errorf("build reflection: %w", err)
 	}
 	runner.Add(reflectSvc.Job())
+	runner.Add(moneySvc.Job())
 	toolList = slices.Concat(toolList, reflectSvc.Tools())
 	sources = append(sources, agent.Source{Name: "Your diary", Source: reflectSvc})
 	api = append(api, reflectSvc.Routes)

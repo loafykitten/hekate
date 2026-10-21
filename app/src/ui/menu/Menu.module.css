@@ -125,8 +125,11 @@
   display: grid;
   flex: none;
   /* Sized to the labels, so a long one ("Reminders") takes the room a short one ("Mail") leaves. */
-  grid-template-columns: repeat(8, auto);
+  grid-template-columns: repeat(9, auto);
   justify-content: space-between;
+  /* Nine tabs are snug on the narrowest phones: scroll rather than clip. */
+  overflow-x: auto;
+  scrollbar-width: none;
   padding: 4px calc(var(--space-1) + var(--safe-right)) calc(4px + var(--safe-bottom)) calc(var(--space-1) + var(--safe-left));
   border-top: 1px solid var(--hairline);
   background: rgba(18, 15, 28, 0.6);
@@ -140,14 +143,14 @@
   justify-content: center;
   gap: 3px;
   min-height: 56px;
-  padding: 6px 3px;
+  padding: 6px 1px;
   border: 0;
   border-radius: var(--radius-md);
   background: none;
   color: var(--fg-subtle);
-  font-size: 0.65rem;
+  font-size: 0.6rem;
   font-weight: var(--weight-medium);
-  letter-spacing: 0.01em;
+  letter-spacing: 0;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   transition: color var(--duration) var(--ease);
@@ -200,6 +203,7 @@
     order: 0;
     display: flex;
     flex-direction: column;
+    overflow: visible;
     justify-content: flex-start; /* the phone bar spreads its tabs; the side list stacks them */
     gap: 2px;
     width: 188px;

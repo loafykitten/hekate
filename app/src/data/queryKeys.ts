@@ -16,6 +16,10 @@ export const keys = {
   mailMessages: (q: string, category: string, account: string) => ["mail", "list", q, category, account] as const,
   mailMessage: (id: string) => ["mail", "message", id] as const,
   mailRules: ["mail", "rules"] as const,
+  moneyStatus: ["money", "status"] as const,
+  moneyAccounts: ["money", "accounts"] as const,
+  moneyTransactions: (q: string, category: string) => ["money", "transactions", q, category] as const,
+  moneySpending: (month: string) => ["money", "spending", month] as const,
   approvals: (status: "pending" | "recent") => ["approvals", "list", status] as const,
   approval: (id: string) => ["approvals", "item", id] as const,
   approvalRules: ["approvals", "rules"] as const,
@@ -25,7 +29,7 @@ export const keys = {
   routines: ["routines"] as const,
 };
 
-export const DOMAINS = ["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes", "ideas", "journal", "routines"] as const;
+export const DOMAINS = ["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes", "ideas", "journal", "routines", "money"] as const;
 export type Domain = (typeof DOMAINS)[number];
 
 // The query keys an `invalidate` event refreshes. Unknown domains are ignored (a newer service

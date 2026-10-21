@@ -1,12 +1,15 @@
 import { useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import { senderName } from "../../data/mail";
-import type { Card, Memory, Message, Reminder, Task } from "../../data/model";
+import type { Card, Memory, Message, MoneyAccount, Reminder, Task } from "../../data/model";
 import { useDeleteMemory, useLiveApproval, useNow, useReminderDone, useSetTaskDone, useSnoozeReminder } from "../../data/hooks";
 import { dayHeading, dayKeyOfMs, groupEventsByDay, formatDay, formatTime, formatWeekday } from "../../data/time";
 import { degrees, GROUP_LABEL, isDaytime, precipLabel, weatherGroup } from "../../data/weather";
 import type { Section } from "../menu/sections";
-import { BellIcon, CalendarIcon, CloseIcon, ExternalIcon, MailIcon, MemoryIcon, ShieldIcon, TasksIcon, TodayIcon } from "../icons";
+import { BellIcon, CalendarIcon, CloseIcon, ExternalIcon, MailIcon, MemoryIcon, MoneyIcon, ShieldIcon, TasksIcon, TodayIcon } from "../icons";
 import { Button } from "../kit/kit";
+import { formatMoney, isCredit } from "../../data/money";
+import { AccountName, SpendingBars, TransactionRow } from "../menu/moneyParts";
+import money from "../menu/money.module.css";
 import { ApprovalPanel } from "../approvals/ApprovalPanel";
 import { setMailTarget } from "../menu/mailTarget";
 import { EventRow, MemoryRow, MessageRow, ReminderRow, TaskRow } from "../rows/rows";
@@ -27,6 +30,9 @@ const KIND_ICON: Partial<Record<Card["kind"], ReactNode>> = {
   mail: <MailIcon />,
   mail_message: <MailIcon />,
   approval: <ShieldIcon />,
+  accounts: <MoneyIcon />,
+  transactions: <MoneyIcon />,
+  spending: <MoneyIcon />,
 };
 
 const DEFAULT_TITLE: Record<Card["kind"], string> = {
@@ -40,6 +46,9 @@ const DEFAULT_TITLE: Record<Card["kind"], string> = {
   mail: "Mail",
   mail_message: "Mail",
   approval: "Approval",
+  accounts: "Accounts",
+  transactions: "Transactions",
+  spending: "Spending",
 };
 
 interface FrameProps {
@@ -120,6 +129,15 @@ export function CardView({ card, onClose, onOpenSection }: Omit<FrameProps, "chi
       break;
     case "approval":
       content = <ApprovalCard approval={card.data} />;
+      break;
+    case "accounts":
+      content = <AccountsCard items={card.data.items} />;
+      break;
+    case "transactions":
+      content = <TransactionsCard data={card.data} />;
+      break;
+    case "spending":
+      content = <SpendingBars data={card.data} compact />;
       break;
   }
   // Opening a mail card from its title lands on the message it is about.
@@ -412,4 +430,53 @@ function MailMessageCard({ data, onOpenSection }: { data: Extract<Card, { kind: 
 
 function ApprovalCard({ approval }: { approval: Extract<Card, { kind: "approval" }>["data"] }) {
   return <ApprovalPanel approval={useLiveApproval(approval)} />;
+}
+
+// --- money ---------------------------------------------------------------------------------
+
+function AccountsCard({ items }: { items: MoneyAccount[] }) {
+  if (items.length === 0) return <Empty>No accounts.</Empty>;
+  const banks = new Set(items.map((a) => a.institution));
+  return (
+    <ul className={money.accounts}>
+      {items.map((a) => (
+        <li key={a.id} className={money.account} style={{ borderTop: 0 }}>
+          <div className={money.accountName}>
+            <span>
+              <AccountName account={a} />
+            </span>
+            <small>{[banks.size > 1 ? a.institution : "", a.subtype || a.type].filter(Boolean).join(" · ")}</small>
+          </div>
+          <div className={money.balance}>
+            {a.balance.current !== null ? (
+              <>
+                <strong>{formatMoney(a.balance.current, a.currency)}</strong>
+                {isCredit(a) && <small>owed</small>}
+                {!isCredit(a) && a.balance.available !== null && a.balance.available !== a.balance.current && <small>{formatMoney(a.balance.available, a.currency)} available</small>}
+              </>
+            ) : a.balance.available !== null ? (
+              // Some banks only say what's available.
+              <>
+                <strong>{formatMoney(a.balance.available, a.currency)}</strong>
+                <small>available</small>
+              </>
+            ) : (
+              <small>No balance</small>
+            )}
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function TransactionsCard({ data }: { data: Extract<Card, { kind: "transactions" }>["data"] }) {
+  if (data.items.length === 0) return <Empty>No transactions.</Empty>;
+  return (
+    <div className={styles.list}>
+      {data.items.map((t) => (
+        <TransactionRow key={t.id} txn={t} compact highlight={data.highlight.includes(t.id)} />
+      ))}
+    </div>
+  );
 }

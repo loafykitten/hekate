@@ -32,6 +32,17 @@ describe("what is persisted", () => {
     expect(persistableKey(keys.mailMessages("invoice", "", ""))).toBe(false);
     expect(persistableKey(keys.memories("dentist", ""))).toBe(false);
     expect(persistableKey(["healthz"])).toBe(false);
+  });
+
+  it("never keeps bank data", () => {
+    for (const key of [keys.moneyStatus, keys.moneyAccounts, keys.moneyTransactions("", ""), keys.moneySpending("2026-10")]) {
+      expect(persistableKey(key), JSON.stringify(key)).toBe(false);
+    }
+    const qc = new QueryClient();
+    qc.setQueryData(keys.moneyAccounts, [{ id: "acc_1" }]);
+    qc.setQueryData(keys.moneySpending("2026-10"), { spent: 1 });
+    qc.setQueryData(keys.lists, []);
+    expect(dehydrate(qc, { shouldDehydrateQuery: shouldPersistQuery }).queries.map((q) => q.queryKey[0])).toEqual(["tasks"]);
     expect(persistableKey(["history"])).toBe(false);
   });
 

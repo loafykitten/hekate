@@ -597,6 +597,154 @@ export function asWeather(v: unknown): Weather | undefined {
   };
 }
 
+// --- money ---------------------------------------------------------------------------------
+
+export type MoneyItemStatus = "ok" | "login_required" | "error";
+export interface MoneyItem {
+  id: string;
+  institution: string;
+  status: MoneyItemStatus;
+  error: string;
+  last_sync_at: string | null;
+  accounts: number;
+  // How much transaction history has arrived: Plaid gathers it over the first minutes.
+  history: MoneyHistory;
+}
+export type MoneyHistory = "pending" | "partial" | "complete";
+export interface MoneyStatus {
+  configured: boolean;
+  items: MoneyItem[];
+}
+export interface MoneyAccount {
+  id: string;
+  item_id: string;
+  institution: string;
+  name: string;
+  mask: string;
+  type: string;
+  subtype: string;
+  balance: { current: number | null; available: number | null; limit: number | null };
+  currency: string;
+  updated_at: string;
+}
+// amount: money in (+) or out (-). name and merchant are the bank's text.
+export interface MoneyTransaction {
+  id: string;
+  account_id: string;
+  account: string;
+  date: string;
+  name: string;
+  merchant: string | null;
+  amount: number;
+  currency: string;
+  pending: boolean;
+  category: string | null;
+  category_label: string | null;
+  detail: string | null;
+}
+export interface SpendingCategory {
+  category: string;
+  label: string;
+  spent: number;
+  count: number;
+  previous: number;
+}
+export interface Spending {
+  month: string; // YYYY-MM
+  currency: string;
+  spent: number;
+  received: number;
+  categories: SpendingCategory[];
+  previous_spent: number;
+  transfers: number;
+}
+
+const MONEY_ITEM_STATUSES: readonly string[] = ["ok", "login_required", "error"];
+export function asMoneyItem(v: unknown): MoneyItem | undefined {
+  if (!isRec(v)) return undefined;
+  const id = idOf(v.id);
+  if (id === undefined) return undefined;
+  return {
+    id,
+    institution: strOr(v.institution),
+    // A status this build doesn't know is shown as a problem rather than as fine.
+    status: MONEY_ITEM_STATUSES.includes(v.status as string) ? (v.status as MoneyItemStatus) : "error",
+    error: strOr(v.error),
+    last_sync_at: strOrNull(v.last_sync_at),
+    accounts: Math.max(0, numOr(v.accounts, 0)),
+    // Missing (an older service) reads as complete; anything unknown as still coming.
+    history: v.history === undefined || v.history === "complete" ? "complete" : v.history === "partial" ? "partial" : "pending",
+  };
+}
+
+export function asMoneyStatus(v: unknown): MoneyStatus {
+  const rec = isRec(v) ? v : {};
+  return { configured: rec.configured === true, items: list(rec.items, asMoneyItem) };
+}
+
+export function asMoneyAccount(v: unknown): MoneyAccount | undefined {
+  if (!isRec(v)) return undefined;
+  const id = idOf(v.id);
+  if (id === undefined || !isStr(v.name)) return undefined;
+  const b = isRec(v.balance) ? v.balance : {};
+  return {
+    id,
+    item_id: idOf(v.item_id) ?? "",
+    institution: strOr(v.institution),
+    name: v.name,
+    mask: strOr(v.mask),
+    type: strOr(v.type),
+    subtype: strOr(v.subtype),
+    balance: { current: numOrNull(b.current), available: numOrNull(b.available), limit: numOrNull(b.limit) },
+    currency: strOr(v.currency, "USD") || "USD",
+    updated_at: strOr(v.updated_at),
+  };
+}
+
+export function asMoneyTransaction(v: unknown): MoneyTransaction | undefined {
+  if (!isRec(v)) return undefined;
+  const id = idOf(v.id);
+  if (id === undefined || !isNum(v.amount) || !isStr(v.date)) return undefined;
+  return {
+    id,
+    account_id: idOf(v.account_id) ?? "",
+    account: strOr(v.account),
+    date: v.date,
+    name: strOr(v.name),
+    merchant: strOrNull(v.merchant),
+    amount: v.amount,
+    currency: strOr(v.currency, "USD") || "USD",
+    pending: v.pending === true,
+    category: strOrNull(v.category),
+    category_label: strOrNull(v.category_label),
+    detail: strOrNull(v.detail),
+  };
+}
+
+function asSpendingCategory(v: unknown): SpendingCategory | undefined {
+  if (!isRec(v) || !isStr(v.category)) return undefined;
+  return {
+    category: v.category,
+    label: strOr(v.label) || v.category,
+    spent: numOr(v.spent, 0),
+    count: Math.max(0, numOr(v.count, 0)),
+    previous: numOr(v.previous, 0),
+  };
+}
+
+export function asSpending(v: unknown): Spending | undefined {
+  if (!isRec(v) || !isStr(v.month) || !/^\d{4}-\d{2}$/.test(v.month)) return undefined;
+  return {
+    month: v.month,
+    currency: strOr(v.currency, "USD") || "USD",
+    spent: numOr(v.spent, 0),
+    received: numOr(v.received, 0),
+    categories: list(v.categories, asSpendingCategory),
+    previous_spent: numOr(v.previous_spent, 0),
+    transfers: numOr(v.transfers, 0),
+  };
+}
+
 // --- cards ---------------------------------------------------------------------------------
 
 export interface TasksCardData {
@@ -626,6 +774,13 @@ export interface MailMessageCardData {
   message: Message;
   excerpt: string;
 }
+export interface AccountsCardData {
+  items: MoneyAccount[];
+}
+export interface TransactionsCardData {
+  items: MoneyTransaction[];
+  highlight: string[];
+}
 export interface WebResultsCardData {
   query: string;
   items: WebResult[];
@@ -651,7 +806,10 @@ export type Card =
   | (CardBase & { kind: "web_page"; data: WebPageCardData })
   | (CardBase & { kind: "mail"; data: MailCardData })
   | (CardBase & { kind: "mail_message"; data: MailMessageCardData })
-  | (CardBase & { kind: "approval"; data: Approval });
+  | (CardBase & { kind: "approval"; data: Approval })
+  | (CardBase & { kind: "accounts"; data: AccountsCardData })
+  | (CardBase & { kind: "transactions"; data: TransactionsCardData })
+  | (CardBase & { kind: "spending"; data: Spending });
 export type CardKind = Card["kind"];
 
 function highlights(v: unknown): string[] {
@@ -698,6 +856,14 @@ export function parseCard(raw: unknown): Card | undefined {
     case "approval": {
       const approval = asApproval(d);
       return approval && { ...base, kind: "approval", data: approval };
+    }
+    case "accounts":
+      return { ...base, kind: "accounts", data: { items: list(d.items, asMoneyAccount) } };
+    case "transactions":
+      return { ...base, kind: "transactions", data: { items: list(d.items, asMoneyTransaction), highlight: highlights(d.highlight) } };
+    case "spending": {
+      const spending = asSpending(d);
+      return spending && { ...base, kind: "spending", data: spending };
     }
     default:
       return undefined;

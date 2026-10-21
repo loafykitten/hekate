@@ -1,0 +1,276 @@
+/* Money section and cards */
+.aside {
+  display: block;
+  margin-top: var(--space-2);
+}
+
+.bankHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-1) var(--space-2);
+}
+
+.bankName {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.bankName strong {
+  font-size: var(--text-md);
+  font-weight: var(--weight-bold);
+  overflow-wrap: anywhere;
+}
+
+.bankName span {
+  color: var(--fg-subtle);
+  font-size: var(--text-sm);
+}
+
+.bankError,
+.bankNote {
+  margin: 0;
+  padding: 0 var(--space-1) var(--space-2);
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.bankActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: flex-end;
+  padding: var(--space-2) 0 var(--space-3);
+}
+
+.accounts {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.account {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-1);
+  border-top: 1px solid var(--hairline);
+}
+
+.accountName,
+.balance {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.accountName span {
+  overflow-wrap: anywhere;
+}
+
+.balance {
+  align-items: flex-end;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.balance strong {
+  font-weight: var(--weight-medium);
+}
+
+.account small {
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+  text-transform: capitalize;
+}
+
+.balance small {
+  text-transform: none;
+}
+
+/* Transactions */
+.txn {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-1);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.txn:last-child {
+  border-bottom: 0;
+}
+
+.txn[data-compact] {
+  padding: var(--space-2) var(--space-1);
+}
+
+.txn[data-highlight] {
+  background: var(--accent-soft);
+  border-radius: var(--radius-sm);
+}
+
+.txnBody {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.txnTitle {
+  overflow: hidden;
+  font-size: 0.9375rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.txnMeta {
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+}
+
+.pending {
+  margin-left: var(--space-2);
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--fg-muted);
+  font-size: 0.6875rem;
+}
+
+.amount {
+  flex: none;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.amount[data-in] {
+  color: var(--ok);
+}
+
+/* Spending */
+.spending {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.totals {
+  display: flex;
+  gap: var(--space-6);
+}
+
+.totals div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.totals small {
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.totals strong {
+  font-size: var(--text-xl);
+  font-weight: 300;
+  font-variant-numeric: tabular-nums;
+}
+
+.totals strong[data-in] {
+  color: var(--ok);
+}
+
+.compare,
+.quiet,
+.legend {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+}
+
+.quiet {
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+}
+
+.cats {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.catLine {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: 0.875rem;
+}
+
+.catAmount {
+  font-variant-numeric: tabular-nums;
+}
+
+.bar {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 5px;
+}
+
+.barNow,
+.barPrev {
+  display: block;
+  height: 6px;
+  border-radius: var(--radius-pill);
+}
+
+.barNow {
+  background: var(--accent);
+}
+
+.barPrev {
+  height: 4px;
+  background: var(--surface-strong);
+}
+
+.legend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+}
+
+.keyNow,
+.keyPrev {
+  width: 14px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+.keyPrev {
+  margin-left: var(--space-2);
+  background: var(--surface-strong);
+}
+
+.mask {
+  margin-left: var(--space-2);
+  color: var(--fg-subtle);
+  white-space: nowrap;
+}

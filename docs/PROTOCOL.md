@@ -287,6 +287,68 @@ up to 10 messages directly when asked; trashing, unsubscribing, new rules and an
 through an approval. With no accounts configured, `status.configured` is false, the lists are
 empty and her tools say mail isn't set up.
 
+### Money
+
+Read-only bank data through Plaid (Transactions product only; nothing that moves money is ever
+enabled). The Plaid keys come from the homelab's environment (`PLAID_CLIENT_ID`, `PLAID_SECRET`,
+`PLAID_ENV` = `production` (default) or `sandbox`, and `PLAID_REDIRECT_URI` for banks that link
+through their own site). A connected bank is an *item*; its access token stays in the homelab
+database and is never sent to a client or written to a log, nor are transactions.
+
+The service polls: a `money` routine syncs every item hourly with `/transactions/sync` (the service
+isn't reachable from the internet, so no webhooks), then refreshes balances with `/accounts/get`.
+It also syncs right after a bank is connected, and when asked. A bank that wants the owner to log in
+again is marked `login_required` until they reconnect it.
+
+```jsonc
+// MoneyItem: one connected bank
+{ "id": "1", "institution": "Example Bank", "status": "ok",     // ok | login_required | error
+  "error": "",                                                   // what went wrong, for error and login_required
+  "last_sync_at": "2026-10-20T14:00:00-05:00",                   // null before the first sync
+  "accounts": 2,
+  "history": "complete" }                                        // pending: no transactions yet | partial: the recent weeks only | complete
+// Account
+{ "id": "acc_…", "item_id": "1", "institution": "Example Bank",
+  "name": "Spending", "mask": "1234",                            // last digits, may be ""
+  "type": "depository", "subtype": "checking",                   // Plaid's type and subtype
+  "balance": { "current": 1520.31, "available": 1490.31, "limit": null },  // null when the bank doesn't say
+  "currency": "USD", "updated_at": "…" }
+// Transaction: amount is money in (+) or out (-), in the account's currency
+{ "id": "txn_…", "account_id": "acc_…", "account": "Spending",
+  "date": "2026-10-19",                                          // the date it posted (or will)
+  "name": "SQ *BLUE BOTTLE", "merchant": "Blue Bottle Coffee",   // merchant may be null; both are the bank's text: untrusted
+  "amount": -6.75, "currency": "USD", "pending": false,
+  "category": "FOOD_AND_DRINK", "category_label": "Food and drink",  // Plaid's primary category; null when unknown
+  "detail": "FOOD_AND_DRINK_COFFEE" }                            // Plaid's detailed category, or null
+// Spending: one month, by category (money out only; transfers between the owner's own
+// accounts and loan payments are left out of spent and listed apart)
+{ "month": "2026-10", "currency": "USD",
+  "spent": 1234.56, "received": 2400.00,
+  "categories": [{ "category": "FOOD_AND_DRINK", "label": "Food and drink", "spent": 312.40, "count": 23, "previous": 280.10 }],  // most first; previous: the month before
+  "previous_spent": 1100.00,                                     // the whole month before
+  "transfers": 500.00 }
+```
+
+| Method & path | Body | Returns |
+|---|---|---|
+| `GET /api/money/status` | | `{ configured, items: [MoneyItem] }` |
+| `POST /api/money/link-token` | `{ item_id? }` | `{ link_token }` for Plaid Link: a new bank, or with `item_id` to reconnect that one (update mode); 503 when unconfigured |
+| `POST /api/money/items` | `{ public_token, institution: { id, name }, accounts: [{ name, mask, type, subtype }] }` (from Link's `onSuccess`) | `MoneyItem`, after exchanging the token; the first sync starts in the background. 409 when that bank is already connected: caught from `accounts` before the token is exchanged (an exchanged link counts against Plaid's allowance even once removed), or from the bank's own list after |
+| `DELETE /api/money/items/{id}` | | 204; the bank is removed at Plaid and its accounts and transactions are deleted here |
+| `POST /api/money/sync` | | 202; every item syncs now |
+| `GET /api/money/accounts` | | `{ accounts: [Account] }` by institution, then name |
+| `GET /api/money/transactions?account=&q=&category=&from=&to=&limit=` (default 100, ≤ 500) | | `{ transactions: [Transaction] }` newest first, pending first within a day; `q` searches name and merchant; `from`/`to` are dates, inclusive |
+| `GET /api/money/spending?month=YYYY-MM` (default this month) | | `Spending` |
+
+Plaid Link runs in the app (Plaid's script from `cdn.plaid.com`). For a bank that links through its
+own site (OAuth), Link leaves the app and comes back to `PLAID_REDIRECT_URI`, which must be
+`https://<hekate host>/money/oauth` and registered in the Plaid dashboard; the app keeps the link
+token for that hop and resumes Link there. Invalidate domain: `money`.
+
+Renamon reads it with `money_accounts`, `money_transactions` and `money_spending`. Merchant names
+and transaction text reach her fenced as untrusted, like mail. She has no tools that change
+anything at the bank, and she isn't a licensed advisor.
+
 ### Approvals
 
 Actions that need the owner's say-so wait as approvals. Allowing one runs the action on the
@@ -493,6 +555,9 @@ from stored or fetched data, never from model text. Shapes of `data` by `kind`:
 | `mail` | `{ items: [Message], highlight?: [id] }` |
 | `mail_message` | `{ message: Message, excerpt }` (the start of the body she read) |
 | `approval` | `Approval`. The card shows Allow once / Always / Deny while pending, and the outcome after. |
+| `accounts` | `{ items: [Account] }` |
+| `transactions` | `{ items: [Transaction], highlight?: [id] }` |
+| `spending` | `Spending` |
 
 ## More server → client events
 
@@ -500,4 +565,4 @@ from stored or fetched data, never from model text. Shapes of `data` by `kind`:
 |---|---|---|
 | `notify` | `id`, `kind: "reminder" \| "approval" \| "change" \| "nudge" \| "checkin"`, `title`, `body`, `card?` | Something fired, or she needs a decision she asked for outside a conversation (e.g. a rule from the weekly noise report). The app shows it even with no turn running. |
 | `approval` | `approval: Approval` | An approval was created or changed (decided, ran, expired). Clients update any card showing it. |
-| `invalidate` | `domains: ("tasks" \| "reminders" \| "calendar" \| "memory" \| "weather" \| "mail" \| "approvals" \| "changes" \| "ideas" \| "journal" \| "routines")[]` | Data changed; refetch those menu sections (`weather`: the home place changed). |
+| `invalidate` | `domains: ("tasks" \| "reminders" \| "calendar" \| "memory" \| "weather" \| "mail" \| "approvals" \| "changes" \| "ideas" \| "journal" \| "routines" \| "money")[]` | Data changed; refetch those menu sections (`weather`: the home place changed). |

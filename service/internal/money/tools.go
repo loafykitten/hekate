@@ -75,6 +75,13 @@ func (s *Service) freshness(items []Item) string {
 	return b.String()
 }
 
+// keptNote is what the conversation history and the tool audit keep of a money
+// result: what was read, never the figures, so bank data stays in the money
+// tables (and goes with a disconnected bank).
+func keptNote(did, what string) string {
+	return did + " " + what + " (figures not kept here; read them again when needed)."
+}
+
 // card builds a card of the given kind around data.
 func card(kind, title string, data any) *agent.Card {
 	b, err := json.Marshal(data)
@@ -136,7 +143,7 @@ func (s *Service) accountsTool() agent.Tool {
 				sb.WriteByte('\n')
 			}
 			fmt.Fprintf(&sb, "</untrusted_bank boundary=%q>", id)
-			return agent.Result{Content: sb.String(), Card: AccountsCard("Accounts", accounts)}, nil
+			return agent.Result{Content: sb.String(), Card: AccountsCard("Accounts", accounts), Stored: keptNote("Read the balances of", plural(len(accounts), "account", "accounts"))}, nil
 		}),
 	}
 }
@@ -214,6 +221,7 @@ func (s *Service) transactionsTool() agent.Tool {
 			return agent.Result{
 				Content: wrapTransactions(fmt.Sprintf("%s, newest first.", plural(len(txns), "transaction", "transactions")), txns),
 				Card:    TransactionsCard("Transactions", txns, nil),
+				Stored:  keptNote("Listed", plural(len(txns), "transaction", "transactions")),
 			}, nil
 		}),
 	}
@@ -308,7 +316,11 @@ func (s *Service) spendingTool() agent.Tool {
 			if err != nil {
 				return agent.Result{}, err
 			}
-			return agent.Result{Content: describeSpending(sp), Card: SpendingCard("Spending", sp)}, nil
+			title := "Spending this month"
+			if m, err := time.ParseInLocation("2006-01", sp.Month, s.loc); err == nil && sp.Month != s.now().In(s.loc).Format("2006-01") {
+				title = "Spending, " + m.Format("January 2006")
+			}
+			return agent.Result{Content: describeSpending(sp), Card: SpendingCard(title, sp), Stored: keptNote("Added up spending for", sp.Month)}, nil
 		}),
 	}
 }

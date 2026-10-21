@@ -44,12 +44,13 @@ export function barScale(rows: { spent: number; previous: number }[]): (value: n
 }
 
 // "12% more than last month", "about the same", or nothing when there is nothing to compare with.
-export function compareLabel(spent: number, previous: number): string {
+// before: how the month before is named ("last month", or "September 2026" for a past month).
+export function compareLabel(spent: number, previous: number, before = "last month"): string {
   if (previous <= 0) return "";
   const change = (spent - previous) / previous;
-  if (Math.abs(change) < 0.03) return "About the same as last month";
+  if (Math.abs(change) < 0.03) return `About the same as ${before}`;
   const pct = Math.round(Math.abs(change) * 100);
-  return `${pct}% ${change > 0 ? "more" : "less"} than last month`;
+  return `${pct}% ${change > 0 ? "more" : "less"} than ${before}`;
 }
 
 // --- transactions ----------------------------------------------------------------------------

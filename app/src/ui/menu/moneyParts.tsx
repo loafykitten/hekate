@@ -1,4 +1,5 @@
-import { barScale, compareLabel, formatMoney, isMoneyIn, transactionTitle } from "../../data/money";
+import { useNow } from "../../data/hooks";
+import { barScale, compareLabel, formatMoney, isMoneyIn, monthLabel, monthOf, shiftMonth, transactionTitle } from "../../data/money";
 import type { MoneyTransaction, Spending } from "../../data/model";
 import { formatDay } from "../../data/time";
 import type { MoneyAccount } from "../../data/model";
@@ -28,7 +29,11 @@ export function TransactionRow({ txn, showAccount, highlight, compact }: { txn: 
 // one scale. Transfers and loan payments are not spending; they are noted apart.
 export function SpendingBars({ data, compact }: { data: Spending; compact?: boolean }) {
   const scale = barScale(data.categories);
-  const compare = compareLabel(data.spent, data.previous_spent);
+  // Named relative to now for the current month, by name for a past one.
+  const current = data.month === monthOf(useNow(60_000));
+  const now = current ? "this month" : monthLabel(data.month);
+  const before = current ? "last month" : monthLabel(shiftMonth(data.month, -1));
+  const compare = compareLabel(data.spent, data.previous_spent, before);
   const rows = compact ? data.categories.slice(0, 5) : data.categories;
   return (
     <div className={money.spending}>
@@ -44,7 +49,7 @@ export function SpendingBars({ data, compact }: { data: Spending; compact?: bool
       </div>
       {compare && <p className={money.compare}>{compare}</p>}
       {rows.length === 0 ? (
-        <p className={money.quiet}>No spending this month.</p>
+        <p className={money.quiet}>No spending {current ? "this month" : `in ${now}`}.</p>
       ) : (
         <ul className={money.cats} aria-label="Spending by category">
           {rows.map((c) => (
@@ -53,7 +58,7 @@ export function SpendingBars({ data, compact }: { data: Spending; compact?: bool
                 <span>{c.label}</span>
                 <span className={money.catAmount}>{formatMoney(c.spent, data.currency, { whole: true })}</span>
               </div>
-              <div className={money.bar} role="img" aria-label={`${c.label}: ${formatMoney(c.spent, data.currency, { whole: true })} this month, ${formatMoney(c.previous, data.currency, { whole: true })} last month`}>
+              <div className={money.bar} role="img" aria-label={`${c.label}: ${formatMoney(c.spent, data.currency, { whole: true })} ${now}, ${formatMoney(c.previous, data.currency, { whole: true })} ${before}`}>
                 <span className={money.barNow} style={{ width: `${scale(c.spent)}%` }} />
                 <span className={money.barPrev} style={{ width: `${scale(c.previous)}%` }} />
               </div>
@@ -64,7 +69,7 @@ export function SpendingBars({ data, compact }: { data: Spending; compact?: bool
       {compact && data.categories.length > rows.length && <p className={money.quiet}>and {data.categories.length - rows.length} more</p>}
       {!compact && data.categories.length > 0 && (
         <p className={money.legend}>
-          <span className={money.keyNow} /> This month <span className={money.keyPrev} /> Last month
+          <span className={money.keyNow} /> {current ? "This month" : now} <span className={money.keyPrev} /> {current ? "Last month" : before}
         </p>
       )}
       {data.transfers > 0 && (

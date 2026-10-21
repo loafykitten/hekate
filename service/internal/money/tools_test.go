@@ -247,3 +247,24 @@ func TestToolsSayWhenHistoryIsStillComing(t *testing.T) {
 		t.Errorf("partial history: %q, %v", res.Content, err)
 	}
 }
+
+func TestMoneyResultsAreNotKeptInHistory(t *testing.T) {
+	f := newFixture(t)
+	seed(f)
+	for _, name := range []string{"money_accounts", "money_transactions", "money_spending"} {
+		res, err := f.tool(name, `{}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Stored == "" || strings.ContainsAny(res.Stored, "$") || strings.Contains(res.Stored, "1520") || strings.Contains(res.Stored, "Blue Bottle") {
+			t.Errorf("%s keeps %q", name, res.Stored)
+		}
+	}
+	res, _ := f.tool("money_spending", `{"month":"2026-09"}`)
+	if res.Card == nil || res.Card.Title != "Spending, September 2026" {
+		t.Errorf("a past month's card: %+v", res.Card)
+	}
+	if res, _ := f.tool("money_spending", `{}`); res.Card.Title != "Spending this month" {
+		t.Errorf("this month's card: %q", res.Card.Title)
+	}
+}

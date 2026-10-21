@@ -251,9 +251,8 @@ Telegram backup channel, a voice-off toggle and a morning briefing the owner sta
 Agreed with the owner, not started. Built in this order, each through the PR gate.
 
 **1. Evening check-in.** She asks once, near bedtime: one push ("How did today go?") at a set time,
-by default about midnight (the owner is often up later, but the day's done by then), and only on
-days the owner hasn't already talked the day over with her that evening. Tapping it opens the app and starts the check-in: the turn opens
-with a call that gathers the day (tasks done and still open, today's events, anything she
+by default about midnight, and only on days the owner hasn't already talked the day over with her
+that evening. Tapping it opens the app and starts the check-in: the turn opens with a call that gathers the day (tasks done and still open, today's events, anything she
 followed up on, tomorrow's first commitments), and she asks how it went. The answer is ordinary
 conversation, so the nightly reflection already reads it into the diary. Never repeats, never
 nags. Settings → Routines (and `routine_settings`): on or off, and the time. Reuses the agent's

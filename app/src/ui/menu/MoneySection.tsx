@@ -297,6 +297,12 @@ function AccountList({ accounts, loading }: { accounts: MoneyAccount[]; loading:
                     .join(" · ")}
                 </small>
               </>
+            ) : a.balance.available !== null ? (
+              // Some banks only say what's available.
+              <>
+                <strong>{formatMoney(a.balance.available, a.currency)}</strong>
+                <small>available</small>
+              </>
             ) : (
               <small>No balance</small>
             )}

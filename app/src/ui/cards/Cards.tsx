@@ -454,6 +454,12 @@ function AccountsCard({ items }: { items: MoneyAccount[] }) {
                 {isCredit(a) && <small>owed</small>}
                 {!isCredit(a) && a.balance.available !== null && a.balance.available !== a.balance.current && <small>{formatMoney(a.balance.available, a.currency)} available</small>}
               </>
+            ) : a.balance.available !== null ? (
+              // Some banks only say what's available.
+              <>
+                <strong>{formatMoney(a.balance.available, a.currency)}</strong>
+                <small>available</small>
+              </>
             ) : (
               <small>No balance</small>
             )}

@@ -73,7 +73,7 @@ type item struct {
 func (s *Service) Items(ctx context.Context) ([]Item, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT i.id, i.institution_name, i.status, i.error, i.last_sync_at,
-		       (SELECT COUNT(*) FROM money_accounts a WHERE a.item_id = i.id)
+		       (SELECT COUNT(*) FROM money_accounts a WHERE a.item_id = i.id AND a.active = 1)
 		FROM money_items i ORDER BY i.institution_name COLLATE NOCASE, i.id`)
 	if err != nil {
 		return nil, fmt.Errorf("list banks: %w", err)
@@ -138,12 +138,13 @@ func (s *Service) storedItem(ctx context.Context, id int64) (item, error) {
 	return it, nil
 }
 
-// Accounts lists every account by institution, then name.
+// Accounts lists every open account by institution, then name.
 func (s *Service) Accounts(ctx context.Context) ([]Account, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT a.account_id, a.item_id, i.institution_name, a.name, a.mask, a.type, a.subtype,
 		       a.current_cents, a.available_cents, a.limit_cents, a.currency, a.updated_at
 		FROM money_accounts a JOIN money_items i ON i.id = a.item_id
+		WHERE a.active = 1
 		ORDER BY i.institution_name COLLATE NOCASE, a.name COLLATE NOCASE, a.account_id`)
 	if err != nil {
 		return nil, fmt.Errorf("list accounts: %w", err)

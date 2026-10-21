@@ -3,9 +3,11 @@ package money
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 
+	"github.com/loafykitten/hekate/service/internal/httpx"
 	"github.com/loafykitten/hekate/service/internal/jobs"
 )
 
@@ -426,5 +428,64 @@ func TestCents(t *testing.T) {
 		if got := cents(tt.plaid); got != tt.want {
 			t.Errorf("cents(%v) = %d, want %d", tt.plaid, got, tt.want)
 		}
+	}
+}
+
+func TestLinkingAConnectedBankAgainIsRefused(t *testing.T) {
+	f := newFixture(t)
+	first := f.connect()
+	// A second Link of the same bank: Plaid makes a new item, with new ids for the same accounts.
+	f.plaid.handle(pathExchange, func(map[string]any) (int, any) {
+		return 200, map[string]any{"access_token": "access-repeat", "item_id": "plaid-item-2"}
+	})
+	repeat := checking(99)
+	repeat["account_id"] = "acc-repeat"
+	f.plaid.handle(pathAccounts, func(map[string]any) (int, any) { return 200, map[string]any{"accounts": []any{repeat}} })
+	_, err := f.svc.Connect(t.Context(), "public-sandbox-again", "ins_1", "Example Bank")
+	var he *httpx.Error
+	if !errors.As(err, &he) || he.Status != http.StatusConflict {
+		t.Fatalf("err = %v, want a conflict", err)
+	}
+	if removed := f.plaid.callsTo(pathItemRemove); len(removed) != 1 || removed[0]["access_token"] != "access-repeat" {
+		t.Errorf("the repeat link wasn't removed at Plaid: %v", removed)
+	}
+	items, _ := f.svc.Items(t.Context())
+	if len(items) != 1 || items[0].ID != first.ID {
+		t.Errorf("banks = %+v", items)
+	}
+
+	// Another bank at the same institution with different accounts is fine.
+	other := checking(5)
+	other["account_id"], other["mask"] = "acc-other", "7777"
+	f.plaid.handle(pathAccounts, func(map[string]any) (int, any) { return 200, map[string]any{"accounts": []any{other}} })
+	f.plaid.handle(pathExchange, func(map[string]any) (int, any) {
+		return 200, map[string]any{"access_token": "access-other", "item_id": "plaid-item-3"}
+	})
+	if _, err := f.svc.Connect(t.Context(), "public-sandbox-other", "ins_1", "Example Bank"); err != nil {
+		t.Fatalf("a second login at the same bank was refused: %v", err)
+	}
+	f.svc.wg.Wait()
+}
+
+func TestAccountsTheBankStopsListingAreRetired(t *testing.T) {
+	f := newFixture(t)
+	f.plaid.handle(pathAccounts, func(map[string]any) (int, any) {
+		return 200, map[string]any{"accounts": []any{checking(100), creditCard("acc-card", 40, 1000)}}
+	})
+	f.connect()
+	f.plaid.handle(pathAccounts, func(map[string]any) (int, any) { return 200, map[string]any{"accounts": []any{checking(120)}} })
+	if _, err := f.svc.SyncAll(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	accounts, err := f.svc.Accounts(t.Context())
+	if err != nil || len(accounts) != 1 || accounts[0].ID != "acc-1" {
+		t.Fatalf("accounts = %+v, %v", accounts, err)
+	}
+	if items, _ := f.svc.Items(t.Context()); items[0].Accounts != 1 {
+		t.Errorf("open accounts = %d", items[0].Accounts)
+	}
+	var name string
+	if err := f.store.DB().QueryRow(`SELECT name FROM money_accounts WHERE account_id = 'acc-card'`).Scan(&name); err != nil || name != "Example Card" {
+		t.Errorf("the closed account's row is gone (%q, %v): its old transactions lose their name", name, err)
 	}
 }

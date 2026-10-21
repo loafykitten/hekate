@@ -127,7 +127,7 @@ func TestTransactionsToolFilters(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", args, err)
 		}
-		if res.Content == "No matching transactions." {
+		if strings.HasSuffix(res.Content, "No matching transactions.") {
 			return 0
 		}
 		m := boundary.FindStringSubmatch(res.Content)
@@ -210,6 +210,27 @@ func assertNoSecrets(t *testing.T, res agent.Result) {
 	for _, secret := range []string{testAccess, testSecret, testClientID, "access_token"} {
 		if strings.Contains(all, secret) {
 			t.Errorf("result contains %q", secret)
+		}
+	}
+}
+
+func TestToolsSayHowCurrentEachBankIs(t *testing.T) {
+	f := newFixture(t)
+	f.connect()
+	res, err := f.tool("money_accounts", `{}`)
+	if err != nil || !strings.HasPrefix(res.Content, "How current the figures are:\n- Example Bank last synced Tue Oct 20 14:00.") {
+		t.Fatalf("fresh bank: %q, %v", res.Content, err)
+	}
+	f.plaid.handle(pathSync, func(map[string]any) (int, any) {
+		return plaidErr(400, "ITEM_ERROR", codeLoginRequired, "the login details of this item have changed")
+	})
+	if _, err := f.svc.SyncAll(t.Context()); err == nil {
+		t.Fatal("a sync that needs a login succeeded")
+	}
+	for _, name := range []string{"money_accounts", "money_transactions", "money_spending"} {
+		res, err := f.tool(name, `{}`)
+		if err != nil || !strings.Contains(res.Content, "Example Bank needs the owner to sign in again") || !strings.Contains(res.Content, "anything newer is missing") {
+			t.Errorf("%s after a failed sync: %q, %v", name, res.Content, err)
 		}
 	}
 }

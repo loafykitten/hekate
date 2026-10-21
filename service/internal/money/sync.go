@@ -202,12 +202,15 @@ func (s *Service) apply(ctx context.Context, itemID int64, res syncResult) (int,
 	return fresh, nil
 }
 
-// saveAccounts upserts the accounts and their balances. Accounts that are gone
-// from the bank are kept, with their last known balances, so old transactions
-// keep their names.
+// saveAccounts upserts the accounts and their balances. Accounts the bank no
+// longer lists (closed) are retired: their balances aren't shown any more, but
+// the rows stay so old transactions keep their names.
 func (s *Service) saveAccounts(ctx context.Context, itemID int64, accounts []plaidAccount) error {
 	now := stamp(s.now())
+	listed := make([]any, 0, len(accounts)+1)
+	listed = append(listed, itemID)
 	for _, a := range accounts {
+		listed = append(listed, a.ID)
 		_, err := s.db.ExecContext(ctx, `
 			INSERT INTO money_accounts (account_id, item_id, name, official_name, mask, type, subtype,
 				current_cents, available_cents, limit_cents, currency, updated_at)
@@ -216,7 +219,7 @@ func (s *Service) saveAccounts(ctx context.Context, itemID int64, accounts []pla
 				name = excluded.name, official_name = excluded.official_name, mask = excluded.mask,
 				type = excluded.type, subtype = excluded.subtype, current_cents = excluded.current_cents,
 				available_cents = excluded.available_cents, limit_cents = excluded.limit_cents,
-				currency = excluded.currency, updated_at = excluded.updated_at
+				currency = excluded.currency, active = 1, updated_at = excluded.updated_at
 			WHERE item_id = excluded.item_id`,
 			a.ID, itemID, a.Name, a.OfficialName, a.Mask, a.Type, a.Subtype,
 			balanceCents(a.Balances.Current), balanceCents(a.Balances.Available), balanceCents(a.Balances.Limit),
@@ -225,7 +228,43 @@ func (s *Service) saveAccounts(ctx context.Context, itemID int64, accounts []pla
 			return fmt.Errorf("store an account: %w", err)
 		}
 	}
+	if len(accounts) == 0 {
+		return nil // an empty answer retires nothing: more likely a hiccup than every account closed
+	}
+	marks := strings.TrimSuffix(strings.Repeat("?,", len(accounts)), ",")
+	if _, err := s.db.ExecContext(ctx, `UPDATE money_accounts SET active = 0 WHERE item_id = ? AND account_id NOT IN (`+marks+`)`, listed...); err != nil { //nolint:gosec // only placeholders are joined in
+		return fmt.Errorf("retire closed accounts: %w", err)
+	}
 	return nil
+}
+
+// duplicate reports whether a bank just linked is one already connected: the
+// same institution with an open account of the same kind and last digits (or
+// name, when the bank gives no digits). Linking it again would count every
+// transaction twice.
+func (s *Service) duplicate(ctx context.Context, institutionID, plaidID string, accounts []plaidAccount) (bool, error) {
+	if institutionID == "" || len(accounts) == 0 {
+		return false, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT a.mask, a.subtype, a.name FROM money_accounts a JOIN money_items i ON i.id = a.item_id
+		WHERE i.institution_id = ? AND i.plaid_item_id <> ? AND a.active = 1`, institutionID, plaidID)
+	if err != nil {
+		return false, fmt.Errorf("check for the bank: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var mask, subtype, name string
+		if err := rows.Scan(&mask, &subtype, &name); err != nil {
+			return false, fmt.Errorf("check for the bank: %w", err)
+		}
+		for _, a := range accounts {
+			if a.Subtype == subtype && ((mask != "" && a.Mask == mask) || (mask == "" && a.Mask == "" && a.Name == name)) {
+				return true, nil
+			}
+		}
+	}
+	return false, rows.Err() //nolint:wrapcheck // plain iteration error
 }
 
 // markFailed records why a bank could not be synced: a bank that wants the
@@ -290,6 +329,21 @@ func (s *Service) Connect(ctx context.Context, publicToken, institutionID, insti
 		s.log.Warn("token exchange failed", "error", err)
 		return Item{}, errPlaid()
 	}
+	institutionID = oneLine(institutionID, 100)
+	accounts, err := s.plaid.accounts(ctx, access)
+	if err != nil {
+		// Not fatal: the first sync reads them. Without them a repeat link can't be told apart.
+		s.log.Warn("accounts of a new bank unavailable", "error", err)
+		accounts = nil
+	}
+	if dup, err := s.duplicate(ctx, institutionID, plaidID, accounts); err != nil {
+		return Item{}, err
+	} else if dup {
+		if err := s.plaid.removeItem(ctx, access); err != nil {
+			s.log.Warn("removing a repeat link failed at Plaid", "error", err)
+		}
+		return Item{}, httpx.Conflict("That bank is already connected. To sign in to it again, use Reconnect on it.")
+	}
 	name := oneLine(institutionName, 100)
 	if name == "" {
 		name = "Bank"
@@ -303,9 +357,12 @@ func (s *Service) Connect(ctx context.Context, publicToken, institutionID, insti
 			institution_id = excluded.institution_id, institution_name = excluded.institution_name,
 			status = 'ok', error = ''
 		RETURNING id`,
-		plaidID, access, oneLine(institutionID, 100), name, stamp(s.now())).Scan(&id)
+		plaidID, access, institutionID, name, stamp(s.now())).Scan(&id)
 	if err != nil {
 		return Item{}, fmt.Errorf("store the bank: %w", err)
+	}
+	if err := s.saveAccounts(ctx, id, accounts); err != nil {
+		s.log.Warn("cannot store a new bank's accounts", "item", id, "error", err)
 	}
 	s.log.Info("bank connected", "item", id)
 	s.changed()

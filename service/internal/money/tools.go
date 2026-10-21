@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/loafykitten/hekate/service/internal/agent"
 	"github.com/loafykitten/hekate/service/internal/httpx"
@@ -33,8 +34,39 @@ func (s *Service) guarded(run func(ctx context.Context, raw json.RawMessage) (ag
 		if len(items) == 0 {
 			return agent.Result{Content: noBanks}, nil
 		}
-		return run(ctx, raw)
+		res, err := run(ctx, raw)
+		if err != nil {
+			return res, err
+		}
+		res.Content = s.freshness(items) + res.Content
+		return res, nil
 	}
+}
+
+// freshness says how current each bank's figures are, so a bank that stopped
+// syncing isn't read as up to date.
+func (s *Service) freshness(items []Item) string {
+	var b strings.Builder
+	b.WriteString("How current the figures are:\n")
+	for _, it := range items {
+		synced := "hasn't synced yet (Plaid may still be gathering its history)"
+		if it.LastSyncAt != nil {
+			if t, err := time.Parse(time.RFC3339, *it.LastSyncAt); err == nil {
+				synced = "last synced " + t.In(s.loc).Format("Mon Jan 2 15:04")
+			}
+		}
+		name := oneLine(it.Institution, 100)
+		switch it.Status {
+		case StatusLoginRequired:
+			fmt.Fprintf(&b, "- %s needs the owner to sign in again (Reconnect, in the Money section): it %s, and anything newer is missing.\n", name, synced)
+		case StatusError:
+			fmt.Fprintf(&b, "- %s couldn't be synced (%s): it %s, and newer activity may be missing.\n", name, oneLine(it.Error, 160), synced)
+		default:
+			fmt.Fprintf(&b, "- %s %s.\n", name, synced)
+		}
+	}
+	b.WriteString("\n")
+	return b.String()
 }
 
 // card builds a card of the given kind around data.

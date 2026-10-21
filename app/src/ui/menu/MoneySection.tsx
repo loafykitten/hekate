@@ -119,7 +119,7 @@ function useLinker(setNote: (n: Note | undefined) => void): Linker {
               publicToken,
               institution: { id: metadata.institution?.institution_id ?? "", name: metadata.institution?.name ?? "" },
             })
-            .then(() => setNote({ tone: "info", text: "Connected. The first sync is running, so balances will appear in a moment." }));
+            .then(() => setNote({ tone: "info", text: "Connected. Transactions arrive over the next few minutes while the bank shares its history." }));
       done.catch((e: unknown) => setNote({ tone: "danger", text: `Couldn't finish: ${e instanceof Error ? e.message : "something went wrong"}` })).finally(() => setBusy(false));
     },
     onExit: (error: PlaidError | null) => {

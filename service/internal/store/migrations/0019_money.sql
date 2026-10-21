@@ -28,6 +28,9 @@ CREATE TABLE money_accounts (
     available_cents INTEGER,
     limit_cents    INTEGER,
     currency       TEXT NOT NULL DEFAULT 'USD',
+    -- 0 once the bank stops listing it (closed): its balances are no longer shown,
+    -- but its name stays for its old transactions.
+    active         INTEGER NOT NULL DEFAULT 1,
     updated_at     TEXT NOT NULL -- UTC RFC 3339
 );
 CREATE INDEX money_accounts_item ON money_accounts(item_id);

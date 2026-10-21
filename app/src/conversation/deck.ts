@@ -48,14 +48,16 @@ export class CardDeck {
     return this.entries.filter((e) => !e.leaving);
   }
 
-  // A newer card with the same kind and id replaces the older one (a refreshed list).
-  add(card: Card, source: DeckEntry["source"]) {
+  // A newer card with the same kind and id replaces the older one (a refreshed list). Returns
+  // the new entry's key.
+  add(card: Card, source: DeckEntry["source"]): string {
     for (const old of this.entries.filter((e) => e.card.kind === card.kind && e.card.id === card.id)) this.remove(old.key);
     const entry: DeckEntry = { key: `${card.kind}:${card.id}:${++this.seq}`, source, card, leaving: false };
     this.entries = [entry, ...this.entries];
     this.setTimer(entry.key, () => this.dismiss(entry.key), this.ttlMs);
     for (const extra of this.active.slice(MAX_CARDS)) this.leave(extra.key);
     this.onChange();
+    return entry.key;
   }
 
   dismiss(key: string) {

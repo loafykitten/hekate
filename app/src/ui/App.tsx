@@ -48,6 +48,7 @@ export function App() {
   const [queryClient] = useState<QueryClient>(() => createQueryClient((message, key) => conversation.toast("error", message, key)));
   const [persister] = useState(() => holdWhileChanging(createQueryPersister(), () => queryClient.isMutating() > 0));
   const [logOpen, setLogOpen] = useState(false);
+  const [cardCover, setCardCover] = useState(0);
   const [menu, setMenu] = useState<{ open: boolean; section: Section }>(() => {
     const section = sectionFromUrl(location.href);
     return { open: section !== undefined, section: section ?? "today" };
@@ -95,6 +96,8 @@ export function App() {
     url.searchParams.delete("checkin");
     history.replaceState(history.state, "", url);
   }, [conversation]);
+
+  useEffect(() => stage?.setCover(cardCover), [stage, cardCover]);
 
   useEffect(() => {
     conversation.attachStage(stage);
@@ -151,11 +154,11 @@ export function App() {
         <LogButton onClick={openLog} />
         <MenuButton onClick={() => openMenu()} />
         <StatusArea />
-        <CardStack hidden={menu.open || logOpen} onOpenSection={selectSection} />
+        <CardStack hidden={menu.open || logOpen} onOpenSection={selectSection} onCover={setCardCover} />
         <Dock onOpenLog={openLog} logOpen={logOpen || menu.open} />
         <LogSheet open={logOpen} onClose={closeLog} />
         <Menu open={menu.open} section={menu.section} onSection={selectSection} onClose={closeMenu} />
-        <Toasts onOpenSection={selectSection} onCheckIn={checkInNow} />
+        <Toasts onOpenSection={selectSection} onCheckIn={checkInNow} cardsShown={!menu.open && !logOpen} />
         {GesturePicker && stage?.character && (
           <Suspense>
             <GesturePicker character={stage.character} />

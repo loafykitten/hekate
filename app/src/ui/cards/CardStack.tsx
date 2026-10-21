@@ -11,11 +11,17 @@ interface Props {
   // The menu or the log is open; the cards wait behind it.
   hidden: boolean;
   onOpenSection: (section: Section) => void;
+  // How many px of the screen the phone row covers from the bottom (0 when it covers nothing), so
+  // she can be framed above it.
+  onCover: (px: number) => void;
 }
+
+// The row's top padding, above the cards themselves.
+const ROW_PAD = 20;
 
 // The cards she shows. Wide screens: a column to her right. Phones: a row you swipe through,
 // sitting above the dock so her face stays clear.
-export function CardStack({ hidden, onOpenSection }: Props) {
+export function CardStack({ hidden, onOpenSection, onCover }: Props) {
   const conversation = useConversation();
   const { cards } = useConversationState();
   const wide = useWide();
@@ -31,6 +37,27 @@ export function CardStack({ hidden, onOpenSection }: Props) {
       delete root.dataset.cardsPhone;
     };
   }, [wide, visible]);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (wide || !visible || !el) return;
+    const measure = () => onCover(Math.max(0, window.innerHeight - el.getBoundingClientRect().top - ROW_PAD));
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    window.addEventListener("resize", measure);
+    // The iOS keyboard moves the row (see useKeyboardInset) without resizing anything.
+    const vv = window.visualViewport;
+    vv?.addEventListener("resize", measure);
+    vv?.addEventListener("scroll", measure);
+    measure();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+      vv?.removeEventListener("resize", measure);
+      vv?.removeEventListener("scroll", measure);
+      onCover(0);
+    };
+  }, [wide, visible, onCover]);
 
   // A new card slides in at the start of the row; bring the row back to it.
   const newest = cards.find((c) => !c.leaving)?.key;

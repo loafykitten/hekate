@@ -34,6 +34,7 @@
   max-height: 40vh;
   overflow: hidden;
   overflow-wrap: anywhere;
+  transition: height 140ms var(--ease);
 }
 
 .bubble::after {

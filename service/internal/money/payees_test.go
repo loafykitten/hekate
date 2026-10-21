@@ -165,7 +165,7 @@ func TestRecurringToolAsksBeforeAssuming(t *testing.T) {
 		"money_label_payee",
 		"Not confirmed yet, going out: ask the owner what these are",
 		"Not confirmed yet, coming in: ask the owner what these are",
-		"id " + payeeID(payeeKey("EXAMPLE PROPERTIES RENT"), false) + " | EXAMPLE PROPERTIES RENT | monthly | money out | typical 1200.00 USD",
+		"id " + payeeID(payeeKey("EXAMPLE PROPERTIES RENT"), false) + " | EXAMPLE PROPERTIES RENT | monthly | money out | account: Spending | typical 1200.00 USD",
 	} {
 		if !strings.Contains(res.Content, want) {
 			t.Errorf("content lacks %q", want)
@@ -195,9 +195,9 @@ func TestRecurringToolGroupsByLabel(t *testing.T) {
 		"Confirmed by the owner, per month: bills about 250.00 USD (1 item), subscriptions about 15.99 USD (1 item), income about 5200.00 USD (1 item).",
 		"Not confirmed yet: 3 payments going out (about 100.00 USD a month) and 0 regular deposits coming in (about 0.00 USD a month).",
 		"Left out: 1 payee the owner said are not regular payments.",
-		"Bills (confirmed by the owner):\nid " + autoID + " | EXAMPLE AUTO LOAN | monthly | the owner's note: car loan | typical 250.00 USD",
-		"Subscriptions (confirmed by the owner):\nid " + subID + " | Streamly | monthly | the owner's note: streaming | typical 12.99 USD | last 15.99 USD on 2026-10-03 | next expected about 2026-11-03 | CHANGED: from 12.99 USD to 15.99 USD",
-		"Income (confirmed by the owner):\nid " + payID + " | ACME PAYROLL 1234 | every two weeks | typical 2400.00 USD",
+		"Bills (confirmed by the owner):\nid " + autoID + " | EXAMPLE AUTO LOAN | monthly | account: Spending | the owner's note: car loan | typical 250.00 USD",
+		"Subscriptions (confirmed by the owner):\nid " + subID + " | Streamly | monthly | account: Spending | the owner's note: streaming | typical 12.99 USD | last 15.99 USD on 2026-10-03 | next expected about 2026-11-03 | CHANGED: from 12.99 USD to 15.99 USD",
+		"Income (confirmed by the owner):\nid " + payID + " | ACME PAYROLL 1234 | every two weeks | account: Spending | typical 2400.00 USD",
 		"Not confirmed yet, going out: ask the owner what these are\n",
 		"| EXAMPLE WATER CO | quarterly | money out |",
 		"| CORNER COFFEE CLUB | weekly | money out |",
@@ -280,16 +280,16 @@ func TestUpcomingPlansOnlyAroundConfirmedItems(t *testing.T) {
 		"Checking now: 470.00 USD",
 		"Savings and other deposit accounts: 3000.00 USD",
 		"Credit cards owe 300.00 USD in total (1 card)",
-		"Planned around what the owner confirmed (1 bill, 0 subscriptions, 1 income source). Expected in the window: payments out 1200.00 USD, income 4800.00 USD.",
+		"Planned around what the owner confirmed on checking (1 bill, 0 subscriptions, 1 income source). Expected in the window: payments out 1200.00 USD, income 4800.00 USD.",
 		"Lowest point: -730.00 USD on 2026-10-24.",
 		"WARNING: on these estimates checking dips below zero on 2026-10-24",
-		"Next payday: 2026-10-30. Confirmed payments expected before then: 1200.00 USD, against 470.00 USD in checking now: short by 730.00 USD.",
+		"Next payday: 2026-10-30. Confirmed payments from checking expected before then: 1200.00 USD, against 470.00 USD in checking now: short by 730.00 USD.",
 		"Unconfirmed payments out before then would add 15.99 USD.",
-		"Not confirmed yet (left out of the figures above): 1 payment going out, 15.99 USD in the window. If these also come, the lowest point would be -745.99 USD on 2026-10-26.",
+		"Not confirmed yet (left out of the figures above): 1 payment going out of checking, 15.99 USD in the window. If these also come, the lowest point would be -745.99 USD on 2026-10-26.",
 		"2026-10-24 | -1200.00 USD | bill: EXAMPLE PROPERTIES RENT | checking after: -730.00 USD",
 		"2026-10-30 | 2400.00 USD | income: ACME PAYROLL | checking after: 1670.00 USD",
 		"2026-11-13 | 2400.00 USD | income: ACME PAYROLL | checking after: 4070.00 USD",
-		"Not confirmed yet (not in the balances above):\n2026-10-26 | -15.99 USD | unconfirmed: STREAMLY\n",
+		"Not confirmed yet (not in the balances above):\n2026-10-26 | -15.99 USD | unconfirmed: STREAMLY | on Spending\n",
 		"money_label_payee",
 	} {
 		if !strings.Contains(res.Content, want) {
@@ -340,7 +340,7 @@ func TestUpcomingNotRecurringIsLeftOut(t *testing.T) {
 	if strings.Contains(res.Content, "RENT") || strings.Contains(res.Content, "1200.00") {
 		t.Errorf("rent still projected:\n%s", res.Content)
 	}
-	for _, want := range []string{"Lowest point: 454.01 USD on 2026-10-26.", "checking stays above zero", "Confirmed payments expected before then: 15.99 USD"} {
+	for _, want := range []string{"Lowest point: 454.01 USD on 2026-10-26.", "checking stays above zero", "Confirmed payments from checking expected before then: 15.99 USD"} {
 		if !strings.Contains(res.Content, want) {
 			t.Errorf("lacks %q:\n%s", want, res.Content)
 		}
@@ -355,7 +355,7 @@ func TestUpcomingPaydayFromUnconfirmedIncome(t *testing.T) {
 	res, _ := f.tool("money_upcoming", `{}`)
 	t.Logf("\n%s", res.Content)
 	for _, want := range []string{
-		"Next payday (a regular deposit the owner hasn't confirmed as income): 2026-10-30. Confirmed payments expected before then: 1200.00 USD, against 470.00 USD in checking now: short by 730.00 USD.",
+		"Next payday (a regular deposit the owner hasn't confirmed as income): 2026-10-30. Confirmed payments from checking expected before then: 1200.00 USD, against 470.00 USD in checking now: short by 730.00 USD.",
 		"Unconfirmed regular deposits (1 payee) are not counted as income.",
 		"payments out 1200.00 USD, income 0.00 USD.",
 		"Lowest point: -730.00 USD on 2026-10-24.",

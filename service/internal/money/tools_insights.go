@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -87,7 +88,7 @@ func monthlyCents(list []recurring) int64 {
 func (s *Service) recurringTool() agent.Tool {
 	return agent.Tool{
 		Name: "money_recurring",
-		Description: "Find payments in the owner's last 13 months of transactions that LOOK recurring (regular rhythm), money out and " +
+		Description: "Find payments in the owner's last two years of transactions that LOOK recurring (regular rhythm), money out and " +
 			"money in, each with a payee id, its rhythm, typical amount, last charge, when the next one is expected and whether the " +
 			"amount recently changed. Only what the owner has confirmed is called a bill, subscription or income; the rest are listed " +
 			"as 'not confirmed yet', and what they are is the owner's to say (they may not pay rent, for example). Before calling " +
@@ -202,6 +203,9 @@ func recurringLine(it recurring, currency string, today time.Time) string {
 			sb.WriteString(" | money out")
 		}
 	}
+	if it.account != "" {
+		fmt.Fprintf(&sb, " | account: %s", oneLine(it.account, 60))
+	}
 	if it.label.note != "" {
 		fmt.Fprintf(&sb, " | the owner's note: %s", oneLine(it.label.note, maxNoteLen))
 	}
@@ -213,6 +217,8 @@ func recurringLine(it recurring, currency string, today time.Time) string {
 	}
 	if it.changed {
 		fmt.Fprintf(&sb, " | CHANGED: from %s to %s", centsText(it.previous, currency), centsText(it.last, currency))
+	} else if it.chSeen {
+		fmt.Fprintf(&sb, " | changed from %s to %s on %s", centsText(it.chFrom, currency), centsText(it.chTo, currency), it.chDay.Format(time.DateOnly))
 	}
 	return sb.String()
 }
@@ -293,8 +299,46 @@ func lowText(low int64, day, currency string) string {
 	return fmt.Sprintf("%s on %s", centsText(low, currency), day)
 }
 
+// byAccount splits items by where they are charged or paid: a checking account,
+// a credit card, or anything else (savings, loans).
+func byAccount(list []recurring) (chk, card, other []recurring) {
+	for _, it := range list {
+		switch it.class {
+		case acctChecking:
+			chk = append(chk, it)
+		case acctCard:
+			card = append(card, it)
+		default:
+			other = append(other, it)
+		}
+	}
+	return chk, card, other
+}
+
+// onChecking keeps the items charged to or paid into a checking account.
+func onChecking(list []recurring) []recurring {
+	chk, _, _ := byAccount(list)
+	return chk
+}
+
+func kindCounts(list []recurring) (bills, subs, income int) {
+	for _, it := range list {
+		switch it.label.kind {
+		case kindBill:
+			bills++
+		case kindSubscription:
+			subs++
+		case kindIncome:
+			income++
+		}
+	}
+	return bills, subs, income
+}
+
 // describeUpcoming projects the owner-confirmed items over the next days from
-// the cash on hand. Items that only look regular are listed apart.
+// the cash on hand. Only items on a checking account move the checking balance:
+// card charges (which add to what is owed) and items in savings or other
+// accounts are listed apart, and so are items that only look regular.
 func describeUpcoming(rep recurringReport, c cash, days int) string {
 	cur := rep.currency
 	end := rep.today.AddDate(0, 0, days)
@@ -326,9 +370,11 @@ func describeUpcoming(rep recurringReport, c cash, days int) string {
 		return sb.String()
 	}
 
+	chk, card, other := byAccount(confirmed)
+	unOutChk, unInChk := onChecking(g.unOut), onChecking(g.unIn)
+
 	// Project past the window too, to find the next payday.
-	horizon := end.AddDate(0, 0, 62)
-	all := project(confirmed, rep.today, horizon)
+	all := project(chk, rep.today, end.AddDate(0, 0, 62))
 	window := within(all, end)
 	var out, in int64
 	for _, o := range window {
@@ -338,12 +384,15 @@ func describeUpcoming(rep recurringReport, c cash, days int) string {
 			out -= o.cents
 		}
 	}
-	fmt.Fprintf(&sb, "Planned around what the owner confirmed (%s, %s, %s). Expected in the window: payments out %s, income %s.\n",
-		plural(len(g.bills), "bill", "bills"), plural(len(g.subs), "subscription", "subscriptions"), plural(len(g.income), "income source", "income sources"),
+	bills, subs, inc := kindCounts(chk)
+	fmt.Fprintf(&sb, "Planned around what the owner confirmed on checking (%s, %s, %s). Expected in the window: payments out %s, income %s.\n",
+		plural(bills, "bill", "bills"), plural(subs, "subscription", "subscriptions"), plural(inc, "income source", "income sources"),
 		centsText(out, cur), centsText(in, cur))
+	if len(card)+len(other) > 0 {
+		fmt.Fprintf(&sb, "Confirmed items on a credit card (%d) or in savings or another account (%d) are listed apart: they don't move the checking balance.\n", len(card), len(other))
+	}
 
-	unOut := project(g.unOut, rep.today, end)
-	unIn := project(g.unIn, rep.today, end)
+	unOut := project(unOutChk, rep.today, end)
 	var lines []string
 	if c.checkingN > 0 {
 		var low int64
@@ -355,15 +404,15 @@ func describeUpcoming(rep recurringReport, c cash, days int) string {
 		} else {
 			sb.WriteString("On these estimates checking stays above zero through the window.\n")
 		}
-		sb.WriteString(paydayText(rep, g, c, all))
+		sb.WriteString(paydayText(rep, unInChk, unOutChk, c, all))
 		if len(unOut) > 0 {
-			_, uLow, uDay, _ := walk(c.checking, project(append(confirmed, g.unOut...), rep.today, end), cur)
+			_, uLow, uDay, _ := walk(c.checking, project(slices.Concat(chk, unOutChk), rep.today, end), cur)
 			var sum int64
 			for _, o := range unOut {
 				sum -= o.cents
 			}
-			fmt.Fprintf(&sb, "Not confirmed yet (left out of the figures above): %s going out, %s in the window. If these also come, the lowest point would be %s.\n",
-				plural(len(g.unOut), "payment", "payments"), centsText(sum, cur), lowText(uLow, uDay, cur))
+			fmt.Fprintf(&sb, "Not confirmed yet (left out of the figures above): %s going out of checking, %s in the window. If these also come, the lowest point would be %s.\n",
+				plural(len(unOutChk), "payment", "payments"), centsText(sum, cur), lowText(uLow, uDay, cur))
 		}
 	} else {
 		for _, o := range window {
@@ -376,27 +425,34 @@ func describeUpcoming(rep recurringReport, c cash, days int) string {
 	if len(g.unOut)+len(g.unIn) > 0 {
 		sb.WriteString(askNote + "\n")
 	}
-	if len(lines) > 0 || len(unOut)+len(unIn) > 0 {
-		sb.WriteString("Date | amount | what | checking after\n")
-		body := append([]string{"Confirmed by the owner:"}, lines...)
-		if len(lines) == 0 {
-			body = []string{"Confirmed by the owner: nothing falls in this window."}
-		}
-		if len(unOut)+len(unIn) > 0 {
-			body = append(body, "Not confirmed yet (not in the balances above):")
-			for _, o := range append(unOut, unIn...) {
-				body = append(body, upcomingLine(o, 0, false, cur))
-			}
-		}
-		sb.WriteString(fenced(body))
+
+	body := []string{"Confirmed by the owner, on checking:"}
+	if len(lines) == 0 {
+		body[0] += " nothing falls in this window."
 	}
-	return strings.TrimRight(sb.String(), "\n")
+	body = append(body, lines...)
+	apart := func(title string, list []recurring) {
+		occs := project(list, rep.today, end)
+		if len(occs) == 0 {
+			return
+		}
+		body = append(body, title)
+		for _, o := range occs {
+			body = append(body, upcomingLine(o, 0, false, cur))
+		}
+	}
+	apart("Charged to a card (adds to what you owe; not taken from checking, not in the balances above):", card)
+	apart("In savings or another account (not part of the checking balance):", other)
+	apart("Not confirmed yet (not in the balances above):", slices.Concat(g.unOut, g.unIn))
+	sb.WriteString("Date | amount | what | checking after\n")
+	sb.WriteString(fenced(body))
+	return sb.String()
 }
 
 // paydayText compares what is due before the next payday with the checking
-// balance. The payday is the next confirmed income; with none confirmed, a
-// detected one stands in and is said to be unconfirmed.
-func paydayText(rep recurringReport, g grouped, c cash, confirmedAll []occurrence) string {
+// balance. The payday is the next confirmed income paid into checking; with none
+// confirmed, a detected deposit stands in and is said to be unconfirmed.
+func paydayText(rep recurringReport, unIn, unOut []recurring, c cash, confirmedAll []occurrence) string {
 	cur := rep.currency
 	var payday *occurrence
 	unconfirmed := false
@@ -407,12 +463,12 @@ func paydayText(rep recurringReport, g grouped, c cash, confirmedAll []occurrenc
 		}
 	}
 	if payday == nil {
-		if cand := project(g.unIn, rep.today, rep.today.AddDate(0, 0, 124)); len(cand) > 0 {
+		if cand := project(unIn, rep.today, rep.today.AddDate(0, 0, 124)); len(cand) > 0 {
 			payday, unconfirmed = &cand[0], true
 		}
 	}
 	if payday == nil {
-		return "No income has been confirmed or detected, so there is no payday to compare against.\n"
+		return "No income into checking has been confirmed or detected, so there is no payday to compare against.\n"
 	}
 	var due int64
 	for _, o := range confirmedAll {
@@ -436,18 +492,16 @@ func paydayText(rep recurringReport, g grouped, c cash, confirmedAll []occurrenc
 	if left < 0 {
 		verdict = fmt.Sprintf("short by %s", centsText(-left, cur))
 	}
-	text := fmt.Sprintf("%s: %s. Confirmed payments expected before then: %s, against %s in checking now: %s.\n",
+	text := fmt.Sprintf("%s: %s. Confirmed payments from checking expected before then: %s, against %s in checking now: %s.\n",
 		label, when, centsText(due, cur), centsText(c.checking, cur), verdict)
-	if len(g.unOut) > 0 {
-		var more int64
-		for _, o := range project(g.unOut, rep.today, payday.day) {
-			if o.day.Before(payday.day) {
-				more -= o.cents
-			}
+	var more int64
+	for _, o := range project(unOut, rep.today, payday.day) {
+		if o.day.Before(payday.day) {
+			more -= o.cents
 		}
-		if more > 0 {
-			text += fmt.Sprintf("Unconfirmed payments out before then would add %s.\n", centsText(more, cur))
-		}
+	}
+	if more > 0 {
+		text += fmt.Sprintf("Unconfirmed payments out before then would add %s.\n", centsText(more, cur))
 	}
 	return text
 }
@@ -460,6 +514,8 @@ func upcomingLine(o occurrence, balance int64, showBalance bool, currency string
 	}
 	if showBalance {
 		fmt.Fprintf(&sb, " | checking after: %s", centsText(balance, currency))
+	} else if o.account != "" {
+		fmt.Fprintf(&sb, " | on %s", oneLine(o.account, 60))
 	}
 	return sb.String()
 }

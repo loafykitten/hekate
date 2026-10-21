@@ -12,7 +12,7 @@ import (
 
 // History the recurring detector reads, and how many top payees trends lists.
 const (
-	recurringMonths = 13
+	recurringMonths = 25 // enough to see a yearly payment twice
 	maxTopPayees    = 10
 )
 
@@ -20,6 +20,8 @@ const (
 // merchant are the bank's text.
 type txRow struct {
 	id, accountID, account string
+	accountType            string // Plaid's: depository, credit, loan...
+	accountSubtype         string // checking, savings, credit card...
 	date                   string
 	day                    time.Time // date at midnight UTC, for day arithmetic
 	name, merchant         string
@@ -47,6 +49,23 @@ func (r txRow) transaction() Transaction {
 		t.Category, t.CategoryLabel = &c, &l
 	}
 	return t
+}
+
+// Where a payment is charged: the account classes the forecast tells apart.
+const (
+	acctChecking = "checking" // a depository checking account: its balance is the cash on hand
+	acctCard     = "card"     // a credit card: a charge adds to what is owed
+	acctOther    = "other"    // savings, loans, anything else, or an account that is gone
+)
+
+func (r txRow) accountClass() string {
+	switch {
+	case r.accountType == "credit":
+		return acctCard
+	case r.accountType == "depository" && strings.EqualFold(r.accountSubtype, "checking"):
+		return acctChecking
+	}
+	return acctOther
 }
 
 func (r txRow) isTransferOrLoan() bool {
@@ -103,7 +122,7 @@ func (s *Service) loadRows(ctx context.Context, currency string, f rowFilter) ([
 		args = append(args, pat, pat)
 	}
 	query := `
-		SELECT t.transaction_id, t.account_id, COALESCE(a.name, ''), t.date, t.name, t.merchant, t.amount_cents, t.currency, t.pending, t.category
+		SELECT t.transaction_id, t.account_id, COALESCE(a.name, ''), COALESCE(a.type, ''), COALESCE(a.subtype, ''), t.date, t.name, t.merchant, t.amount_cents, t.currency, t.pending, t.category
 		FROM money_transactions t LEFT JOIN money_accounts a ON a.account_id = t.account_id`
 	query += ` WHERE ` + strings.Join(where, ` AND `) + ` ORDER BY t.date, t.transaction_id` //nolint:gosec // the clauses are fixed text; every value is bound
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -114,7 +133,7 @@ func (s *Service) loadRows(ctx context.Context, currency string, f rowFilter) ([
 	var out []txRow
 	for rows.Next() {
 		var r txRow
-		if err := rows.Scan(&r.id, &r.accountID, &r.account, &r.date, &r.name, &r.merchant, &r.cents, &r.currency, &r.pending, &r.category); err != nil {
+		if err := rows.Scan(&r.id, &r.accountID, &r.account, &r.accountType, &r.accountSubtype, &r.date, &r.name, &r.merchant, &r.cents, &r.currency, &r.pending, &r.category); err != nil {
 			return nil, fmt.Errorf("read a transaction: %w", err)
 		}
 		day, err := time.Parse(time.DateOnly, r.date)
@@ -153,13 +172,19 @@ type recurring struct {
 	id       string // payeeID: how the owner's label is kept
 	label    payeeLabel
 	payee    string // the bank's text
+	account  string // the account it is charged to or paid into: the bank's text
+	class    string // acctChecking, acctCard or acctOther
 	income   bool
 	cadence  cadence
 	gap      int   // median days between occurrences
 	typical  int64 // median amount, cents (positive)
 	last     int64 // latest amount, cents (positive)
 	previous int64 // the one before it
-	changed  bool
+	changed  bool  // the latest amount differs meaningfully from the one before
+	chSeen   bool  // some amount among the last three occurrences differed from its predecessor
+	chFrom   int64 // that change: from, to, and the day it first showed
+	chTo     int64
+	chDay    time.Time
 	expected int64 // what the next one should be: the new amount if it changed, else the typical
 	seen     int
 	lastDay  time.Time
@@ -227,19 +252,23 @@ func dropPendingDuplicates(rows []txRow) []txRow {
 // stopped: it is counted in stopped, not returned.
 func detectRecurring(rows []txRow, today time.Time) (items []recurring, stopped int) {
 	type groupKey struct {
-		key    string
-		income bool
+		key     string
+		income  bool
+		account string // the same payee on two accounts is two patterns
 	}
 	groups := map[groupKey][]txRow{}
 	for _, r := range dropPendingDuplicates(rows) {
 		if r.category == catTransferIn || r.category == catTransferOut || r.cents == 0 {
 			continue
 		}
+		if r.category == catLoanPayments && r.cents > 0 {
+			continue // the loan or card side of a payment: the money left another account
+		}
 		k := payeeKey(r.payee())
 		if k == "" {
 			continue
 		}
-		gk := groupKey{k, r.cents > 0}
+		gk := groupKey{k, r.cents > 0, r.accountID}
 		groups[gk] = append(groups[gk], r)
 	}
 	for gk, g := range groups {
@@ -307,10 +336,22 @@ func classify(days []txRow, income bool) (recurring, bool) {
 		last: amounts[len(amounts)-1], previous: amounts[len(amounts)-2], seen: len(days), lastDay: latest.day, latest: latest,
 		payee: latest.payee(),
 	}
-	diff := abs64(it.last - it.previous)
-	it.changed = diff > 100 && diff*100 > 5*it.previous
+	it.account, it.class = latest.account, latest.accountClass()
+	it.changed = meaningful(it.last, it.previous)
+	for i := len(amounts) - 1; i >= 1 && i >= len(amounts)-3; i-- {
+		if meaningful(amounts[i], amounts[i-1]) {
+			// Back to where it was before a one-off is no change in price.
+			if i >= 2 && !meaningful(amounts[i], amounts[i-2]) {
+				break
+			}
+			it.chSeen, it.chFrom, it.chTo, it.chDay = true, amounts[i-1], amounts[i], days[i].day
+			break
+		}
+	}
+	// A price that moved and stayed there (or is steady after a recent move) is the
+	// current one; a one-off that went back isn't.
 	it.expected = it.typical
-	if it.changed {
+	if meaningful(it.last, it.typical) || (it.chSeen && !it.changed) {
 		it.expected = it.last
 	}
 	it.next = it.step(it.lastDay)
@@ -328,6 +369,12 @@ func (it recurring) step(d time.Time) time.Time {
 	first := time.Date(y, m+time.Month(it.cadence.months), 1, 0, 0, 0, 0, d.Location())
 	lastDay := first.AddDate(0, 1, -1).Day()
 	return time.Date(first.Year(), first.Month(), min(it.lastDay.Day(), lastDay), 0, 0, 0, 0, d.Location())
+}
+
+// meaningful reports whether amount differs from ref by more than both $1 and 5%.
+func meaningful(amount, ref int64) bool {
+	diff := abs64(amount - ref)
+	return diff > 100 && diff*100 > 5*ref
 }
 
 func abs64(v int64) int64 {
@@ -377,12 +424,14 @@ func (s *Service) recurringReport(ctx context.Context) (recurringReport, error) 
 
 // occurrence is one expected payment or payday in the look-ahead.
 type occurrence struct {
-	day    time.Time
-	cents  int64 // signed: money in (+) or out (-)
-	payee  string
-	income bool
-	status string // bill, subscription, income or unconfirmed
-	late   bool   // its date has passed without it showing up
+	day     time.Time
+	cents   int64 // signed: money in (+) or out (-)
+	payee   string
+	income  bool
+	account string // the account's name: the bank's text
+	class   string // acctChecking, acctCard or acctOther
+	status  string // bill, subscription, income or unconfirmed
+	late    bool   // its date has passed without it showing up
 }
 
 // project lists each item's expected occurrences from today to horizon, soonest
@@ -395,7 +444,7 @@ func project(items []recurring, today, horizon time.Time) []occurrence {
 			sign = 1
 		}
 		for d := it.next; !d.After(horizon); d = it.step(d) {
-			o := occurrence{day: d, cents: sign * it.expected, payee: it.payee, income: it.income, status: it.status()}
+			o := occurrence{day: d, cents: sign * it.expected, payee: it.payee, income: it.income, status: it.status(), account: it.account, class: it.class}
 			if d.Before(today) {
 				o.day, o.late = today, true
 			}

@@ -148,7 +148,7 @@ func TestGestureNamesFromManifest(t *testing.T) {
 		{"name": "talking", "category": "talk"}, {"name": "no", "category": "gesture"},
 	}})
 	got, err := src.Names()
-	if err != nil || !slices.Equal(got, []string{"waving", "no"}) {
+	if err != nil || !slices.Equal(got, []string{"waving", "talking", "no"}) {
 		t.Fatalf("names = %v, %v", got, err)
 	}
 	// Changing the file is picked up (size differs, so the cache is stale).

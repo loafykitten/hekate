@@ -25,10 +25,10 @@ export interface CharacterRig {
   // Outlines are drawn by OutlineEffect, styled per mesh (null = no outline; fallback covers
   // unlisted meshes).
   outline: { byMesh: Record<string, OutlineStyle | null>; fallback: OutlineStyle | null };
-  // Looping idle, a looping clip to play while speaking, one-shot gestures, quiet one-shots for
-  // idle moments (fidgets), and which clips move the head enough that the procedural head layer
-  // should back off.
-  clips: { idle?: string; talk?: string; gestures: string[]; fidgets: string[]; headDriven: string[] };
+  // Looping idle (also under speech: what she says is acted out with gestures), one-shot
+  // gestures, quiet one-shots for idle moments (fidgets), and which clips move the head enough
+  // that the procedural head layer should back off.
+  clips: { idle?: string; gestures: string[]; fidgets: string[]; headDriven: string[] };
   // chinLift (radians): how far to raise the head while speaking, for idles that look down.
   procedural: { spine?: string; tail: string[]; ears: string[]; chinLift: number };
 }
@@ -252,10 +252,10 @@ export class Character {
     return name ? this.animations.find((c) => c.name === name) : undefined;
   }
 
-  // The loop that should be underneath right now: talk while speaking (if the asset has one).
+  // The loop underneath gestures: her idle, speaking or not. While she speaks the procedural
+  // layers engage (chin, ears) and the gestures she tags carry the body.
   private wantedLoop() {
-    const talk = this.speaking ? this.clip(this.rig.clips.talk) : undefined;
-    return talk ?? this.clip(this.idleName);
+    return this.clip(this.idleName);
   }
 
   // A clip's pose at time t, read from its tracks without touching the skeleton. Bones the
@@ -430,7 +430,7 @@ export class Character {
     this.time += dt;
     const t = this.time;
 
-    // Switch between idle and talk loops as speech starts and stops (gestures finish first).
+    // Back to the loop once nothing else is playing (gestures finish first).
     const wanted = this.wantedLoop();
     if (!this.gesture && wanted && this.loopAction?.getClip() !== wanted) {
       const next = this.mixer.clipAction(wanted);

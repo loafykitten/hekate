@@ -1,4 +1,5 @@
-// Idle -> gesture -> idle -> talk -> idle, reporting which clips are blended in at each stage and
+// Idle -> gesture -> idle -> speaking (still her idle: gestures carry speech) -> idle, reporting
+// which clips are blended in at each stage and
 // any animation tracks that failed to bind.
 // Usage: node scripts/verify/clip-flow.mjs
 import { describeCharacter, launch, openCharacter } from "./common.mjs";

@@ -305,7 +305,8 @@ again is marked `login_required` until they reconnect it.
 { "id": "1", "institution": "Example Bank", "status": "ok",     // ok | login_required | error
   "error": "",                                                   // what went wrong, for error and login_required
   "last_sync_at": "2026-10-20T14:00:00-05:00",                   // null before the first sync
-  "accounts": 2 }
+  "accounts": 2,
+  "history": "complete" }                                        // pending: no transactions yet | partial: the recent weeks only | complete
 // Account
 { "id": "acc_…", "item_id": "1", "institution": "Example Bank",
   "name": "Spending", "mask": "1234",                            // last digits, may be ""

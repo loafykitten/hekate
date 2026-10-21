@@ -607,7 +607,10 @@ export interface MoneyItem {
   error: string;
   last_sync_at: string | null;
   accounts: number;
+  // How much transaction history has arrived: Plaid gathers it over the first minutes.
+  history: MoneyHistory;
 }
+export type MoneyHistory = "pending" | "partial" | "complete";
 export interface MoneyStatus {
   configured: boolean;
   items: MoneyItem[];
@@ -669,6 +672,8 @@ export function asMoneyItem(v: unknown): MoneyItem | undefined {
     error: strOr(v.error),
     last_sync_at: strOrNull(v.last_sync_at),
     accounts: Math.max(0, numOr(v.accounts, 0)),
+    // Missing (an older service) reads as complete; anything unknown as still coming.
+    history: v.history === undefined || v.history === "complete" ? "complete" : v.history === "partial" ? "partial" : "pending",
   };
 }
 

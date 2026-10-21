@@ -19,7 +19,7 @@ const day = (back) => {
 const syncedAt = new Date(now.getTime() - 25 * 60_000).toISOString();
 
 const items = [
-  { id: "1", institution: "Example Bank", status: "ok", error: "", last_sync_at: syncedAt, accounts: 3 },
+  { id: "1", institution: "Example Bank", status: "ok", error: "", last_sync_at: syncedAt, accounts: 3, history: "partial" },
   { id: "2", institution: "Example Credit Union", status: "login_required", error: "ITEM_LOGIN_REQUIRED", last_sync_at: new Date(now.getTime() - 3 * 86_400_000).toISOString(), accounts: 1 },
 ];
 const acct = (id, item_id, institution, name, mask, type, subtype, balance) => ({ id, item_id, institution, name, mask, type, subtype, balance, currency: "USD", updated_at: syncedAt });
@@ -209,6 +209,8 @@ for (const [vname, viewport] of [["phone", { width: 390, height: 844 }], ["deskt
   check(cfg.token === "link-sandbox-oauth" && /\/money\/oauth\?oauth_state_id=abc123$/.test(cfg.uri), `${vname}: OAuth return resumes Link with the stored token (${JSON.stringify(cfg)})`);
   await page.waitForTimeout(800);
   check(new URL(page.url()).pathname === "/" && new URL(page.url()).searchParams.get("menu") === "money", `${vname}: address goes back to the Money section (${page.url()})`);
+  // The stubbed Link finishes on a timer: wait for its POST rather than a fixed time.
+  for (let i = 0; i < 50 && !posted.some((m) => m.path === "/api/money/items"); i++) await page.waitForTimeout(100);
   check(posted.some((m) => m.path === "/api/money/items"), `${vname}: the resumed Link finished the connection`);
   await page.addInitScript(() => localStorage.removeItem("hekate-plaid-link"));
 

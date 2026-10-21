@@ -20,6 +20,7 @@ type Item struct {
 	Error       string  `json:"error"`
 	LastSyncAt  *string `json:"last_sync_at"`
 	Accounts    int     `json:"accounts"`
+	History     string  `json:"history"` // pending | partial | complete
 }
 
 // Balance is an account's balances; a figure is null when the bank doesn't say.
@@ -72,7 +73,7 @@ type item struct {
 // Items lists the connected banks by name.
 func (s *Service) Items(ctx context.Context) ([]Item, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT i.id, i.institution_name, i.status, i.error, i.last_sync_at,
+		SELECT i.id, i.institution_name, i.status, i.error, i.last_sync_at, i.history,
 		       (SELECT COUNT(*) FROM money_accounts a WHERE a.item_id = i.id AND a.active = 1)
 		FROM money_items i ORDER BY i.institution_name COLLATE NOCASE, i.id`)
 	if err != nil {
@@ -84,7 +85,7 @@ func (s *Service) Items(ctx context.Context) ([]Item, error) {
 		var it Item
 		var id int64
 		var last sql.NullString
-		if err := rows.Scan(&id, &it.Institution, &it.Status, &it.Error, &last, &it.Accounts); err != nil {
+		if err := rows.Scan(&id, &it.Institution, &it.Status, &it.Error, &last, &it.History, &it.Accounts); err != nil {
 			return nil, fmt.Errorf("read a bank: %w", err)
 		}
 		it.ID, it.LastSyncAt = strconv.FormatInt(id, 10), s.local(last)

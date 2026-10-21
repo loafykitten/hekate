@@ -234,3 +234,16 @@ func TestToolsSayHowCurrentEachBankIs(t *testing.T) {
 		}
 	}
 }
+
+func TestToolsSayWhenHistoryIsStillComing(t *testing.T) {
+	f := newFixture(t)
+	f.plaid.handle(pathSync, func(map[string]any) (int, any) {
+		return 200, map[string]any{"added": []any{}, "modified": []any{}, "removed": []any{}, "next_cursor": "c1", "has_more": false,
+			"transactions_update_status": "INITIAL_UPDATE_COMPLETE"}
+	})
+	f.connect()
+	res, err := f.tool("money_spending", `{}`)
+	if err != nil || !strings.Contains(res.Content, "only its recent weeks of transactions have arrived so far") {
+		t.Errorf("partial history: %q, %v", res.Content, err)
+	}
+}

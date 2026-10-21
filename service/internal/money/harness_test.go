@@ -46,7 +46,8 @@ func newFakePlaid(t *testing.T) *fakePlaid {
 	})
 	f.handle(pathAccounts, func(map[string]any) (int, any) { return 200, map[string]any{"accounts": []any{checking(1520.31)}} })
 	f.handle(pathSync, func(map[string]any) (int, any) {
-		return 200, map[string]any{"added": []any{}, "modified": []any{}, "removed": []any{}, "next_cursor": "c0", "has_more": false}
+		return 200, map[string]any{"added": []any{}, "modified": []any{}, "removed": []any{}, "next_cursor": "c0", "has_more": false,
+			"transactions_update_status": "HISTORICAL_UPDATE_COMPLETE"}
 	})
 	f.handle(pathItemRemove, func(map[string]any) (int, any) { return 200, map[string]any{} })
 	f.handle(pathLinkCreate, func(map[string]any) (int, any) { return 200, map[string]any{"link_token": "link-sandbox-abc"} })
@@ -235,5 +236,6 @@ func page(added, modified []any, removed []string, next string, more bool) map[s
 	if modified == nil {
 		modified = []any{}
 	}
-	return map[string]any{"added": added, "modified": modified, "removed": rm, "next_cursor": next, "has_more": more}
+	return map[string]any{"added": added, "modified": modified, "removed": rm, "next_cursor": next, "has_more": more,
+		"transactions_update_status": "HISTORICAL_UPDATE_COMPLETE"}
 }

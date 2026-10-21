@@ -193,7 +193,8 @@ func (s *Service) apply(ctx context.Context, itemID int64, res syncResult) (int,
 			return 0, fmt.Errorf("store a transaction: %w", err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE money_items SET cursor = ? WHERE id = ?`, res.Cursor, itemID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE money_items SET cursor = ?, history = COALESCE(?, history) WHERE id = ?`,
+		res.Cursor, historyOf(res.Status), itemID); err != nil {
 		return 0, fmt.Errorf("save the sync cursor: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -332,16 +333,19 @@ func (s *Service) Connect(ctx context.Context, publicToken, institutionID, insti
 	institutionID = oneLine(institutionID, 100)
 	accounts, err := s.plaid.accounts(ctx, access)
 	if err != nil {
-		// Not fatal: the first sync reads them. Without them a repeat link can't be told apart.
+		// Without them a repeat link of a connected bank can't be told apart: undo it, to try again.
 		s.log.Warn("accounts of a new bank unavailable", "error", err)
-		accounts = nil
+		s.revoke(ctx, access)
+		return Item{}, errPlaid()
 	}
+	// Checking for a repeat and saving the bank happen together, so two links at once can't both pass.
+	s.connectMu.Lock()
+	defer s.connectMu.Unlock()
 	if dup, err := s.duplicate(ctx, institutionID, plaidID, accounts); err != nil {
+		s.revoke(ctx, access)
 		return Item{}, err
 	} else if dup {
-		if err := s.plaid.removeItem(ctx, access); err != nil {
-			s.log.Warn("removing a repeat link failed at Plaid", "error", err)
-		}
+		s.revoke(ctx, access)
 		return Item{}, httpx.Conflict("That bank is already connected. To sign in to it again, use Reconnect on it.")
 	}
 	name := oneLine(institutionName, 100)
@@ -371,6 +375,13 @@ func (s *Service) Connect(ctx context.Context, publicToken, institutionID, insti
 		time.AfterFunc(d, s.syncSoon)
 	}
 	return s.itemByID(ctx, id)
+}
+
+// revoke removes a just-linked item at Plaid that won't be kept.
+func (s *Service) revoke(ctx context.Context, access string) {
+	if err := s.plaid.removeItem(context.WithoutCancel(ctx), access); err != nil {
+		s.log.Warn("removing a link that isn't kept failed at Plaid", "error", err)
+	}
 }
 
 // Remove disconnects a bank at Plaid and deletes its accounts and transactions here.

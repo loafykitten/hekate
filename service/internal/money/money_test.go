@@ -3,8 +3,10 @@ package money
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/loafykitten/hekate/service/internal/httpx"
@@ -487,5 +489,76 @@ func TestAccountsTheBankStopsListingAreRetired(t *testing.T) {
 	var name string
 	if err := f.store.DB().QueryRow(`SELECT name FROM money_accounts WHERE account_id = 'acc-card'`).Scan(&name); err != nil || name != "Example Card" {
 		t.Errorf("the closed account's row is gone (%q, %v): its old transactions lose their name", name, err)
+	}
+}
+
+func TestALinkWhoseAccountsCantBeReadIsUndone(t *testing.T) {
+	f := newFixture(t)
+	f.plaid.handle(pathAccounts, func(map[string]any) (int, any) { return plaidErr(500, "API_ERROR", "INTERNAL_SERVER_ERROR", "x") })
+	if _, err := f.svc.Connect(t.Context(), "public-sandbox-xyz", "ins_1", "Example Bank"); err == nil {
+		t.Fatal("a bank whose accounts couldn't be checked was kept")
+	}
+	if removed := f.plaid.callsTo(pathItemRemove); len(removed) != 1 || removed[0]["access_token"] != testAccess {
+		t.Errorf("the link wasn't undone at Plaid: %v", removed)
+	}
+	if items, _ := f.svc.Items(t.Context()); len(items) != 0 {
+		t.Errorf("banks = %+v", items)
+	}
+}
+
+func TestTwoLinksOfOneBankAtOnceKeepOne(t *testing.T) {
+	f := newFixture(t)
+	var mu sync.Mutex
+	n := 0
+	f.plaid.handle(pathExchange, func(map[string]any) (int, any) {
+		mu.Lock()
+		defer mu.Unlock()
+		n++
+		return 200, map[string]any{"access_token": fmt.Sprintf("access-%d", n), "item_id": fmt.Sprintf("plaid-item-%d", n)}
+	})
+	f.plaid.handle(pathAccounts, func(req map[string]any) (int, any) {
+		a := checking(10)
+		a["account_id"] = "acc-" + req["access_token"].(string) // new ids per link, same account
+		return 200, map[string]any{"accounts": []any{a}}
+	})
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() {
+			_, err := f.svc.Connect(t.Context(), "public-sandbox", "ins_1", "Example Bank")
+			errs <- err
+		}()
+	}
+	failed := 0
+	for range 2 {
+		if err := <-errs; err != nil {
+			failed++
+		}
+	}
+	f.svc.wg.Wait()
+	if items, _ := f.svc.Items(t.Context()); failed != 1 || len(items) != 1 {
+		t.Errorf("%d refused, banks = %+v: want one kept", failed, items)
+	}
+}
+
+func TestHistoryArrivesInStages(t *testing.T) {
+	f := newFixture(t)
+	status := "NOT_READY"
+	f.plaid.handle(pathSync, func(map[string]any) (int, any) {
+		return 200, map[string]any{"added": []any{}, "modified": []any{}, "removed": []any{}, "next_cursor": "c1", "has_more": false,
+			"transactions_update_status": status}
+	})
+	f.connect()
+	for _, step := range []struct{ status, want string }{
+		{"NOT_READY", HistoryPending}, {"INITIAL_UPDATE_COMPLETE", HistoryPartial},
+		{"TRANSACTIONS_UPDATE_STATUS_UNKNOWN", HistoryPartial}, // unknown keeps what was known
+		{"HISTORICAL_UPDATE_COMPLETE", HistoryComplete},
+	} {
+		status = step.status
+		if _, err := f.svc.SyncAll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if items, _ := f.svc.Items(t.Context()); items[0].History != step.want {
+			t.Errorf("after %s: history %q, want %q", step.status, items[0].History, step.want)
+		}
 	}
 }

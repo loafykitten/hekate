@@ -56,6 +56,12 @@ func (s *Service) freshness(items []Item) string {
 			}
 		}
 		name := oneLine(it.Institution, 100)
+		switch it.History {
+		case HistoryPending:
+			synced += "; Plaid hasn't sent its transactions yet, so its totals are empty for now"
+		case HistoryPartial:
+			synced += "; only its recent weeks of transactions have arrived so far, so older months and comparisons are incomplete"
+		}
 		switch it.Status {
 		case StatusLoginRequired:
 			fmt.Fprintf(&b, "- %s needs the owner to sign in again (Reconnect, in the Money section): it %s, and anything newer is missing.\n", name, synced)

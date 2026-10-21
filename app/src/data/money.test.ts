@@ -49,7 +49,9 @@ const spending = {
 
 describe("money guards", () => {
   it("reads an item and defaults an unknown status to a problem", () => {
-    expect(asMoneyItem(item)).toEqual({ ...item, status: "ok" });
+    expect(asMoneyItem(item)).toEqual({ ...item, status: "ok", history: "complete" });
+    expect(asMoneyItem({ ...item, history: "partial" })?.history).toBe("partial");
+    expect(asMoneyItem({ ...item, history: "later" })?.history).toBe("pending");
     expect(asMoneyItem({ ...item, status: "weird" })?.status).toBe("error");
     expect(asMoneyItem({ institution: "x" })).toBeUndefined();
     expect(asMoneyItem(null)).toBeUndefined();

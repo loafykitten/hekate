@@ -205,6 +205,24 @@ type syncResult struct {
 	Added, Modified []plaidTxn
 	Removed         []string
 	Cursor          string
+	Status          string // transactions_update_status of the last page
+}
+
+// historyOf reads Plaid's transactions_update_status: how much of a bank's
+// history has arrived. Nil when Plaid doesn't say, so the stored one stays.
+func historyOf(status string) *string {
+	var h string
+	switch status {
+	case "NOT_READY":
+		h = HistoryPending
+	case "INITIAL_UPDATE_COMPLETE":
+		h = HistoryPartial
+	case "HISTORICAL_UPDATE_COMPLETE":
+		h = HistoryComplete
+	default:
+		return nil
+	}
+	return &h
 }
 
 type syncPage struct {
@@ -213,8 +231,9 @@ type syncPage struct {
 	Removed  []struct {
 		ID string `json:"transaction_id"`
 	} `json:"removed"`
-	NextCursor string `json:"next_cursor"`
-	HasMore    bool   `json:"has_more"`
+	NextCursor   string `json:"next_cursor"`
+	HasMore      bool   `json:"has_more"`
+	UpdateStatus string `json:"transactions_update_status"`
 }
 
 // sync reads every page from cursor on. When the data changes under it
@@ -250,7 +269,7 @@ func (c *client) syncPass(ctx context.Context, accessToken, cursor string) (sync
 		for _, r := range page.Removed {
 			res.Removed = append(res.Removed, r.ID)
 		}
-		res.Cursor = page.NextCursor
+		res.Cursor, res.Status = page.NextCursor, page.UpdateStatus
 		if !page.HasMore {
 			return res, nil
 		}

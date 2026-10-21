@@ -12,6 +12,8 @@ CREATE TABLE money_items (
     cursor           TEXT NOT NULL DEFAULT '', -- /transactions/sync cursor; '' before the first sync
     status           TEXT NOT NULL DEFAULT 'ok' CHECK (status IN ('ok', 'login_required', 'error')),
     error            TEXT NOT NULL DEFAULT '', -- what went wrong; empty when status is ok
+    -- How much transaction history has arrived: Plaid gathers it over the first minutes.
+    history          TEXT NOT NULL DEFAULT 'pending' CHECK (history IN ('pending', 'partial', 'complete')),
     last_sync_at     TEXT, -- UTC RFC 3339, last successful sync
     created_at       TEXT NOT NULL
 );

@@ -40,6 +40,13 @@ const (
 	StatusError         = "error"
 )
 
+// How much of a bank's transaction history has arrived (Plaid gathers it over the first minutes).
+const (
+	HistoryPending  = "pending"  // nothing yet
+	HistoryPartial  = "partial"  // the recent weeks only
+	HistoryComplete = "complete" // all Plaid will send
+)
+
 // Limits and timings.
 const (
 	syncEvery      = time.Hour
@@ -96,8 +103,9 @@ type Service struct {
 	log         *slog.Logger
 	now         func() time.Time
 
-	syncMu sync.Mutex     // one sync at a time
-	wg     sync.WaitGroup // background syncs, so tests can wait for them
+	syncMu    sync.Mutex     // one sync at a time
+	connectMu sync.Mutex     // one new bank saved at a time, after its repeat check
+	wg        sync.WaitGroup // background syncs, so tests can wait for them
 	// Extra syncs after a bank is connected: Plaid gathers its history over the
 	// first minutes, so the first sync usually finds little. Tests clear it.
 	afterConnect []time.Duration

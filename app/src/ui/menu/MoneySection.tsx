@@ -209,6 +209,13 @@ function Banks({ items, active, link, setNote }: { items: MoneyItem[]; active: b
                 {item.status === "ok" ? "Connected" : item.status === "login_required" ? "Sign in again" : "Problem"}
               </span>
             </div>
+            {item.status === "ok" && item.history !== "complete" && (
+              <p className={money.bankNote}>
+                {item.history === "pending"
+                  ? "Gathering transactions from the bank. They arrive over the next few minutes."
+                  : "The last few weeks are in. Older history is still on its way, so past months may look light."}
+              </p>
+            )}
             {item.status !== "ok" && (
               <p className={money.bankError}>
                 {item.status === "login_required"

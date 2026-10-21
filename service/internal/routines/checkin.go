@@ -27,9 +27,9 @@ const (
 	// A check-in missed while the service was down is still asked within this.
 	checkInCatchUp = time.Hour
 	checkInTimeout = time.Minute
-	// The day being talked over lasts until this long after midnight, so a
-	// check-in after midnight is about the day that just ended.
-	dayTurn          = 6 * time.Hour
+	// The day being talked over lasts until this hour of the next morning,
+	// so a check-in after midnight is about the day that just ended.
+	dayTurnHour      = 6
 	maxCheckInTasks  = 8
 	maxCheckInEvents = 6
 	// Tomorrow's first commitments: this many events.
@@ -57,10 +57,14 @@ func (s *Service) checkInAt(ctx context.Context) (jobs.Clock, bool) {
 	return c, true
 }
 
-// talkedOverDay is the day a check-in at t looks back on: before 06:00 it's
-// still the day before.
+// talkedOverDay is the day a check-in at t looks back on: before 06:00 local
+// time it's still the day before.
 func (s *Service) talkedOverDay(t time.Time) string {
-	return t.In(s.loc).Add(-dayTurn).Format(time.DateOnly)
+	local := t.In(s.loc)
+	if local.Hour() < dayTurnHour {
+		local = time.Date(local.Year(), local.Month(), local.Day()-1, 12, 0, 0, 0, s.loc)
+	}
+	return local.Format(time.DateOnly)
 }
 
 // AskCheckIn sends the evening check-in: one notice and push asking how the
@@ -209,7 +213,7 @@ func (s *Service) gatherEvening(ctx context.Context, now time.Time) (string, []p
 			}
 			b.WriteString("\n")
 			if len(list) > 0 {
-				done, _ = tasks.Card("Done today", list, nil)
+				done, _ = tasks.RecordCard("Done today", list)
 			}
 		}
 	}

@@ -15,7 +15,7 @@ const TEXT = "You got the post office done, and lunch with Sam sounded nice. How
 const task = (id, title, extra = {}) => ({ id, title, notes: "", list: "Inbox", due: null, rrule: null, priority: 0, completed_at: null, created_at: "", updated_at: "", ...extra });
 const cards = [
   { kind: "tasks", id: "tasks:open", title: "Still open", data: { items: [task("3", "Pay rent", { due: "2026-10-19" })] } },
-  { kind: "tasks", id: "tasks:done", title: "Done today", data: { items: [task("2", "Post office", { completed_at: "2026-10-20T16:00:00-05:00" }), task("1", "Dishes", { rrule: "FREQ=DAILY" })] } },
+  { kind: "tasks", id: "tasks:done", title: "Done today", data: { items: [task("2", "Post office", { completed_at: "2026-10-20T16:00:00-05:00" }), task("1", "Dishes", { rrule: "FREQ=DAILY", completed_at: "2026-10-20T18:00:00-05:00" })], record: true } },
 ];
 const json = (route, body, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
 
@@ -68,6 +68,7 @@ for (const [vname, viewport] of [["phone", { width: 390, height: 844 }], ["deskt
   const asked = sent.filter((m) => m.type === "checkin");
   check(asked.length === 1 && asked[0].day === DAY, `${vname}: the notification's day was sent once (${JSON.stringify(asked)})`);
   check(!new URL(page.url()).searchParams.has("checkin"), `${vname}: the address no longer starts a check-in on reload`);
+  check((await page.getByRole("checkbox", { name: /Post office|Dishes/ }).count()) === 0, `${vname}: what was done shows without controls`);
   await page.waitForTimeout(1200);
   await page.screenshot({ path: path.join(out, `checkin-${vname}-opened.png`) });
 

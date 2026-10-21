@@ -117,11 +117,16 @@ export function App() {
       const section = sectionFromUrl(data.url);
       if (section) openMenu(section);
       const day = checkInFromUrl(data.url);
-      if (day !== undefined) conversation.startCheckIn(day);
+      if (day !== undefined) {
+        // She answers on the stage: nothing should cover it.
+        closeMenu();
+        closeLog();
+        conversation.startCheckIn(day);
+      }
     };
     navigator.serviceWorker.addEventListener("message", onMessage);
     return () => navigator.serviceWorker.removeEventListener("message", onMessage);
-  }, [conversation, openMenu]);
+  }, [conversation, openMenu, closeMenu, closeLog]);
 
   return (
     <PersistQueryClientProvider

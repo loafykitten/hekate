@@ -483,7 +483,7 @@ from stored or fetched data, never from model text. Shapes of `data` by `kind`:
 
 | kind | data |
 |---|---|
-| `tasks` | `{ items: [Task], highlight?: [id] }`. One list, or the tasks just changed. |
+| `tasks` | `{ items: [Task], highlight?: [id], record?: true }`. One list, or the tasks just changed. `record`: what was done (an item may be one completion of a repeating task), shown without controls. |
 | `reminders` | `{ items: [Reminder], highlight?: [id] }` |
 | `events` | `{ from, to, items: [Event], highlight?: [uid] }` |
 | `memory` | `{ items: [Memory] }` (what she saved or recalled) |

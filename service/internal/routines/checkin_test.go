@@ -71,6 +71,27 @@ func TestNoCheckInAfterTheDayWasTalkedOver(t *testing.T) {
 	}
 }
 
+func TestTheCheckInDayTurnsAtSixLocal(t *testing.T) {
+	f := newFixture(t)
+	for _, tt := range []struct {
+		at   time.Time
+		want string
+	}{
+		{time.Date(2026, 10, 20, 23, 59, 0, 0, f.loc), "2026-10-20"},
+		{time.Date(2026, 10, 21, 0, 0, 0, 0, f.loc), "2026-10-20"},
+		{time.Date(2026, 10, 21, 5, 59, 0, 0, f.loc), "2026-10-20"},
+		{time.Date(2026, 10, 21, 6, 0, 0, 0, f.loc), "2026-10-21"},
+		// The clocks go back at 02:00 on Nov 1 and forward at 02:00 on Mar 14.
+		{time.Date(2026, 11, 1, 5, 30, 0, 0, f.loc), "2026-10-31"},
+		{time.Date(2026, 11, 1, 6, 0, 0, 0, f.loc), "2026-11-01"},
+		{time.Date(2027, 3, 14, 6, 30, 0, 0, f.loc), "2027-03-14"},
+	} {
+		if got := f.svc.talkedOverDay(tt.at); got != tt.want {
+			t.Errorf("at %v: day %s, want %s", tt.at, got, tt.want)
+		}
+	}
+}
+
 func TestCheckInSettings(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
@@ -187,8 +208,11 @@ func TestTheCheckInGathersTheDay(t *testing.T) {
 	if strings.Join(titles, ",") != "Still open,Done today" {
 		t.Errorf("cards = %v", titles)
 	}
-	var done struct{ Items []tasks.Task }
-	if err := json.Unmarshal(cards[1].Data, &done); err != nil || len(done.Items) != 2 {
-		t.Errorf("done card items = %+v, %v", done.Items, err)
+	var done struct {
+		Items  []tasks.Task
+		Record bool
+	}
+	if err := json.Unmarshal(cards[1].Data, &done); err != nil || len(done.Items) != 2 || !done.Record {
+		t.Errorf("done card = %+v, %v: want two items, as a record", done, err)
 	}
 }

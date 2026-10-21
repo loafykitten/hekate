@@ -602,6 +602,8 @@ export function asWeather(v: unknown): Weather | undefined {
 export interface TasksCardData {
   items: Task[];
   highlight: string[];
+  // What was done (an item may be one completion of a repeating task): shown without controls.
+  record?: boolean;
 }
 export interface RemindersCardData {
   items: Reminder[];
@@ -665,7 +667,7 @@ export function parseCard(raw: unknown): Card | undefined {
   const d = raw.data;
   switch (raw.kind) {
     case "tasks":
-      return { ...base, kind: "tasks", data: { items: list(d.items, asTask), highlight: highlights(d.highlight) } };
+      return { ...base, kind: "tasks", data: { items: list(d.items, asTask), highlight: highlights(d.highlight), record: d.record === true } };
     case "reminders":
       return { ...base, kind: "reminders", data: { items: list(d.items, asReminder), highlight: highlights(d.highlight) } };
     case "events":

@@ -114,7 +114,12 @@ describe("parseCard", () => {
   it("parses a tasks card with highlights", () => {
     const parsed = parseCard(card("tasks", { items: [task, { bad: true }], highlight: ["12", 13] }));
     expect(parsed).toMatchObject({ kind: "tasks", id: "c1", title: "A card" });
-    expect(parsed?.kind === "tasks" && parsed.data).toEqual({ items: [task], highlight: ["12", "13"] });
+    expect(parsed?.kind === "tasks" && parsed.data).toEqual({ items: [task], highlight: ["12", "13"], record: false });
+  });
+
+  it("reads a tasks card of what was done as a record", () => {
+    const parsed = parseCard(card("tasks", { items: [task], record: true }));
+    expect(parsed?.kind === "tasks" && parsed.data.record).toBe(true);
   });
 
   it("parses a reminders card", () => {

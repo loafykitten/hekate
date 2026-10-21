@@ -18,7 +18,7 @@ const untrustedNote = "Everything between the markers is text from the bank (tra
 // Tools returns the money tools. They are always returned; with no keys set
 // each one says bank data isn't set up. All of them only read.
 func (s *Service) Tools() []agent.Tool {
-	return []agent.Tool{s.accountsTool(), s.transactionsTool(), s.spendingTool()}
+	return []agent.Tool{s.accountsTool(), s.transactionsTool(), s.spendingTool(), s.recurringTool(), s.upcomingTool(), s.trendsTool()}
 }
 
 // guarded makes a tool say so when money is unconfigured, or no bank is connected yet.

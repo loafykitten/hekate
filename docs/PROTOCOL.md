@@ -345,7 +345,15 @@ own site (OAuth), Link leaves the app and comes back to `PLAID_REDIRECT_URI`, wh
 `https://<hekate host>/money/oauth` and registered in the Plaid dashboard; the app keeps the link
 token for that hop and resumes Link there. Invalidate domain: `money`.
 
-Renamon reads it with `money_accounts`, `money_transactions` and `money_spending`. Merchant names
+Renamon reads it with `money_accounts`, `money_transactions` and `money_spending`, and works out
+patterns from the stored transactions with `money_recurring` (payments that look regular, and
+amounts that changed), `money_upcoming` (a 30 to 60 day cash look-ahead to payday) and
+`money_trends` (month-by-month spending, by category or payee); none calls Plaid again, and the
+look-ahead is an estimate from past patterns, not scheduled payments. Detection only says a payment
+looks recurring; what it is belongs to the owner. She asks, and records the answer with
+`money_label_payee` (a local write: bill, subscription, income or not_recurring, with the owner's
+own short note) in `money_payees`, kept by a short payee id derived from the normalized payee, never
+the payee's text. The look-ahead plans only around confirmed items. Merchant names
 and transaction text reach her fenced as untrusted, like mail. She has no tools that change
 anything at the bank, and she isn't a licensed advisor.
 

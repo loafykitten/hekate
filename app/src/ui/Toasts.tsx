@@ -11,7 +11,7 @@ export function Toasts({ onOpenSection, onCheckIn, cardsShown }: { onOpenSection
   const conversation = useConversation();
   const state = useConversationState();
   const { toasts } = state;
-  const notices = state.notices.filter((n) => !(cardsShown && n.cardId && state.cards.some((c) => !c.leaving && c.card.id === n.cardId)));
+  const notices = state.notices.filter((n) => !(cardsShown && n.cardKey && state.cards.some((c) => !c.leaving && c.key === n.cardKey)));
   return (
     <div className={styles.stack} aria-live="polite">
       {notices.map((n) => (

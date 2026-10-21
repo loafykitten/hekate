@@ -32,9 +32,9 @@ export interface Notice {
   section?: "reminders" | "today" | "changes";
   // The evening check-in: its button starts one.
   checkIn?: boolean;
-  // The id of the card it came with, which says the same: while that card shows, the banner stays
-  // out of the way.
-  cardId?: string;
+  // The deck key of the card it came with, which says the same: while that card shows, the banner
+  // stays out of the way. (Not the card's id: cards of one kind can share it and replace each other.)
+  cardKey?: string;
 }
 
 
@@ -564,14 +564,14 @@ export class Conversation {
 
   private onNotify(m: Notify) {
     const card = m.card === undefined ? undefined : parseCard(m.card);
-    if (card) this.deck.add(card, "notify");
+    const cardKey = card ? this.deck.add(card, "notify") : undefined;
     const notice: Notice = {
       id: m.id,
       title: m.title || "Hekate",
       body: m.body || "",
       section: noticeSection(m.kind),
       ...(m.kind === "checkin" ? { checkIn: true } : {}),
-      ...(card ? { cardId: card.id } : {}),
+      ...(cardKey ? { cardKey } : {}),
     };
     clearTimeout(this.noticeTimers.get(notice.id));
     this.notices = [...this.notices.filter((n) => n.id !== notice.id), notice].slice(-2);

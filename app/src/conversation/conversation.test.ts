@@ -502,11 +502,22 @@ describe("Conversation: cards, notices and invalidation", () => {
     const play = vi.fn();
     t.conversation.attachStage({ character: { playGesture: play }, speech: {}, bubble: undefined } as never);
     t.socket.receive({ type: "notify", id: "n1", kind: "reminder", title: "Reminder", body: "Call the dentist", card: remindersCard });
-    expect(t.state().notices).toEqual([{ id: "n1", title: "Reminder", body: "Call the dentist", section: "reminders", cardId: "r1" }]);
+    expect(t.state().notices).toEqual([{ id: "n1", title: "Reminder", body: "Call the dentist", section: "reminders", cardKey: t.state().cards[0].key }]);
     expect(t.state().cards.map((c) => [c.card.kind, c.source])).toEqual([["reminders", "notify"]]);
     expect(play).toHaveBeenCalledWith("acknowledging");
     vi.advanceTimersByTime(13_000);
     expect(t.state().notices).toEqual([]);
+  });
+
+  it("ties each notice to its own card, even when the next one of the same id replaces it", () => {
+    const t = setup();
+    const reminder = (id: string) => ({ type: "notify", id, kind: "reminder", title: "Reminder", body: id, card: { ...remindersCard, id: "reminders" } });
+    t.socket.receive(reminder("first"));
+    t.socket.receive(reminder("second"));
+    const [first, second] = t.state().notices;
+    const shown = t.state().cards.filter((c) => !c.leaving).map((c) => c.key);
+    expect(shown).toEqual([second.cardKey]); // the first card was replaced
+    expect(shown).not.toContain(first.cardKey); // so its banner is the only place it shows
   });
 
   it("shows an approval notify like a reminder, pointing at Today", () => {

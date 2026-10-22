@@ -69,11 +69,14 @@ func Parse(sentence string, v Vocabulary) Tagged {
 	work := mdLink.ReplaceAllString(sentence, "$1")
 	work = curlyTag.ReplaceAllStringFunc(work, func(m string) string {
 		name := strings.ToLower(strings.TrimSpace(m[1 : len(m)-1]))
-		if !contains(v.Gestures, name) {
-			dropped = append(dropped, m)
-			return ""
+		switch {
+		case contains(v.Gestures, name):
+			return add(name, true)
+		case contains(v.Expressions, name):
+			return add(name, false) // a voice tag written in braces is still the tag
 		}
-		return add(name, true)
+		dropped = append(dropped, m)
+		return ""
 	})
 	work = squareTag.ReplaceAllStringFunc(work, func(m string) string {
 		name := strings.ToLower(strings.TrimSpace(m[1 : len(m)-1]))
@@ -126,6 +129,47 @@ func Parse(sentence string, v Vocabulary) Tagged {
 		t.Gestures[i].Offset = min(t.Gestures[i].Offset, len(display))
 	}
 	return t
+}
+
+var spaceRun = regexp.MustCompile(`[ \t]{2,}`)
+var spaceBeforeMark = regexp.MustCompile(` ([.,!?;:])`)
+
+// Sanitize removes the tags that are not in the vocabulary from text the model
+// wrote, leaving everything else (known tags, markdown) as written. It is what
+// is kept in history: the model sees its own earlier replies, and an invented
+// tag left there gets copied turn after turn.
+func Sanitize(text string, v Vocabulary) string {
+	removed := false
+	known := func(name string, curly bool) bool {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if curly {
+			return contains(v.Gestures, name) || contains(v.Expressions, name)
+		}
+		return contains(v.Expressions, name)
+	}
+	out := curlyTag.ReplaceAllStringFunc(text, func(m string) string {
+		if known(m[1:len(m)-1], true) {
+			return m
+		}
+		removed = true
+		return ""
+	})
+	var b strings.Builder
+	last := 0
+	for _, loc := range squareTag.FindAllStringIndex(out, -1) {
+		m := out[loc[0]:loc[1]]
+		if strings.HasPrefix(out[loc[1]:], "(") || known(m[1:len(m)-1], false) {
+			continue // a markdown link's text, or a voice tag
+		}
+		b.WriteString(out[last:loc[0]])
+		last = loc[1]
+		removed = true
+	}
+	b.WriteString(out[last:])
+	if !removed {
+		return text
+	}
+	return strings.TrimSpace(spaceBeforeMark.ReplaceAllString(spaceRun.ReplaceAllString(b.String(), " "), "$1"))
 }
 
 func stripMarkdown(s string) string {

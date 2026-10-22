@@ -83,7 +83,7 @@ func (f *fakeApprovals) Register(kind string, exec approvals.Executor) error {
 func (f *fakeApprovals) Request(ctx context.Context, r approvals.Request) (approvals.Approval, error) {
 	f.mu.Lock()
 	f.reqs = append(f.reqs, r)
-	auto := f.auto[r.Kind]
+	auto := f.auto[r.Kind] || f.ruleCovers(ctx, r)
 	exec := f.execs[r.Kind]
 	f.mu.Unlock()
 	now := f.clock.Now().UTC().Format(time.RFC3339)
@@ -105,6 +105,21 @@ func (f *fakeApprovals) Request(ctx context.Context, r approvals.Request) (appro
 	id, _ := res.LastInsertId()
 	a := approvals.Approval{ID: strconv.FormatInt(id, 10), Kind: r.Kind, Title: r.Title, Detail: r.Detail, Status: status, Result: result, DecidedBy: by, CreatedAt: now, ExpiresAt: now}
 	return a, nil
+}
+
+// ruleCovers is true when an approval_rules row covers the request's scope, as
+// a real standing "always allow" would.
+func (f *fakeApprovals) ruleCovers(ctx context.Context, r approvals.Request) bool {
+	if r.Scope == "" {
+		return false
+	}
+	for _, scope := range append([]string{r.Scope}, r.Within...) {
+		var n int
+		if f.store.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM approval_rules WHERE kind = ? AND scope = ?`, r.Kind, scope).Scan(&n) == nil && n > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // run executes the stored payload of a request, as the owner allowing it would.

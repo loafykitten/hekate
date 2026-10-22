@@ -173,13 +173,14 @@ func TestTrendsTool(t *testing.T) {
 	}
 	t.Logf("\n%s", res.Content)
 	for _, want := range []string{
-		"Month by month, Food and drink, last 3 months (USD)",
-		"Average over the 2 complete months: out 150.00 USD, in 0.00 USD. Highest out: 2026-09 (200.00 USD). Lowest out: 2026-08 (100.00 USD).",
+		"Month by month, Food and drink, the last 3 complete months: 2026-07-01 to 2026-09-30 (USD)",
+		"Average over the 2 complete months (total out 300.00 USD, total in 0.00 USD, divided by 2): out 150.00 USD, in 0.00 USD. Highest out: 2026-09 (200.00 USD). Lowest out: 2026-08 (100.00 USD).",
 		"2026-08: out 100.00 USD | in 0.00 USD\n",
 		"2026-09: out 200.00 USD | in 0.00 USD\n",
 		"2026-10 (so far, partial): out 30.00 USD | in 0.00 USD\n",
-		"The current month is partial",
-		"Corner Cafe | 210.00 USD | 4 transactions",
+		"Only 2 of those 3 months have complete data, so the average is over 2, not 3.",
+		"Current month, separate from the average and the top payees",
+		"Corner Cafe | 180.00 USD | 3 transactions", // July started partway: not in the totals
 		"GREEN MARKET | 120.00 USD | 1 transaction\n",
 	} {
 		if !strings.Contains(res.Content, want) {
@@ -201,7 +202,7 @@ func TestTrendsTool(t *testing.T) {
 	for _, want := range []string{
 		"2026-08: out 150.00 USD | in 2000.00 USD | transfers and loan payments 500.00 USD | top: Food and drink 100.00, Transportation 50.00\n",
 		"2026-09: out 1400.00 USD | in 2000.00 USD | top: Rent and utilities 1200.00, Food and drink 200.00\n",
-		"Average over the 2 complete months: out 775.00 USD, in 2000.00 USD. Highest out: 2026-09 (1400.00 USD). Lowest out: 2026-08 (150.00 USD).",
+		"Average over the 2 complete months (total out 1550.00 USD, total in 4000.00 USD, divided by 2): out 775.00 USD, in 2000.00 USD. Highest out: 2026-09 (1400.00 USD). Lowest out: 2026-08 (150.00 USD).",
 		"EXAMPLE PROPERTIES RENT | 1200.00 USD | 1 transaction\n",
 	} {
 		if !strings.Contains(all.Content, want) {
@@ -214,7 +215,7 @@ func TestTrendsTool(t *testing.T) {
 
 	// A payee filter, and months before the first stored transaction.
 	q, _ := f.tool("money_trends", `{"months":6,"q":"cafe"}`)
-	for _, want := range []string{"payees matching \"cafe\"", "2026-05: no data", "2026-06: no data", "2026-07 (history starts mid-month: partial): out 10.00 USD", "Average over the 2 complete months: out 90.00 USD"} {
+	for _, want := range []string{"payees matching \"cafe\"", "2026-05: no data", "2026-06: no data", "2026-07 (history starts mid-month: partial): out 10.00 USD", "divided by 2): out 90.00 USD"} {
 		if !strings.Contains(q.Content, want) {
 			t.Errorf("q view lacks %q:\n%s", want, q.Content)
 		}
@@ -225,7 +226,7 @@ func TestTrendsTool(t *testing.T) {
 		t.Errorf("none:\n%s", none.Content)
 	}
 	capped, _ := f.tool("money_trends", `{"months":99}`)
-	if !strings.Contains(capped.Content, "last 24 months") {
+	if !strings.Contains(capped.Content, "last 24 complete months") {
 		t.Errorf("months not capped:\n%s", capped.Content)
 	}
 }

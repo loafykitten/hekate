@@ -25,9 +25,12 @@ import (
 const (
 	// The briefing looks this far ahead for events and reminders: the owner's
 	// day, whenever it starts.
-	briefingAhead    = 24 * time.Hour
-	maxBriefingTasks = 8
-	maxBriefingMail  = 5
+	briefingAhead = 24 * time.Hour
+	// Reminders that went off this recently and aren't done are still the
+	// owner's to deal with: she promised they'd come up at good morning.
+	briefingFiredWithin = 36 * time.Hour
+	maxBriefingTasks    = 8
+	maxBriefingMail     = 5
 )
 
 // More of what the briefing reads.
@@ -52,7 +55,7 @@ const greeting = "good morning"
 // cut short, the next good morning tries again. Later greetings that day are
 // just greetings; asking for the briefing still works any time through the tool.
 func (s *Service) Opener(ctx context.Context, userText string) (agent.Opening, bool) {
-	if !strings.Contains(strings.ToLower(oneLine(userText)), greeting) {
+	if !opensWithGreeting(userText) {
 		return agent.Opening{}, false
 	}
 	day := s.now().In(s.loc).Format(time.DateOnly)
@@ -71,6 +74,25 @@ func (s *Service) Opener(ctx context.Context, userText string) (agent.Opening, b
 	}
 	s.briefing = day
 	return agent.Opening{Tool: BriefingTool, Settle: func(given bool) { s.settleBriefing(day, given) }}, true
+}
+
+// greetingWords is how far into a message "good morning" can start and still
+// be the owner greeting her ("hey Renamon, good morning"), rather than a
+// phrase inside a longer question.
+const greetingWords = 3
+
+// opensWithGreeting reports whether the message opens with the greeting.
+func opensWithGreeting(text string) bool {
+	words := strings.Fields(strings.ToLower(oneLine(text)))
+	for i := range words {
+		words[i] = strings.Trim(words[i], ".,!?;:\"'()-")
+	}
+	for i := 0; i+1 < len(words) && i <= greetingWords; i++ {
+		if words[i]+" "+words[i+1] == greeting {
+			return true
+		}
+	}
+	return false
 }
 
 // settleBriefing records the day's briefing as given, or frees the day for
@@ -200,6 +222,7 @@ func (s *Service) gatherDay(ctx context.Context, now time.Time) (string, []proto
 
 	if s.reminders != nil {
 		list, err := s.reminders.List(ctx, reminders.ListUpcoming)
+		past, perr := s.reminders.List(ctx, reminders.ListPast)
 		if err != nil {
 			unavailable("Reminders", err)
 		} else {
@@ -209,6 +232,20 @@ func (s *Service) gatherDay(ctx context.Context, now time.Time) (string, []proto
 					soon = append(soon, r)
 				}
 			}
+			var missed []reminders.Reminder
+			if perr == nil {
+				missed = firedSince(past, now.Add(-briefingFiredWithin))
+			} else {
+				s.log.Warn("briefing: fired reminders couldn't be read", "error", perr)
+			}
+			if len(missed) > 0 {
+				b.WriteString("## Reminders that went off and aren't done yet\n")
+				for _, r := range missed {
+					at, _ := time.Parse(time.RFC3339, firedAt(r))
+					fmt.Fprintf(&b, "- fired %s: %s\n", s.clock(at, local), oneLine(r.Text))
+				}
+				b.WriteString("\n")
+			}
 			if len(soon) > 0 {
 				b.WriteString("## Reminders, the next 24 hours\n")
 				for _, r := range soon {
@@ -216,7 +253,13 @@ func (s *Service) gatherDay(ctx context.Context, now time.Time) (string, []proto
 					fmt.Fprintf(&b, "- %s %s\n", s.clock(at, local), oneLine(r.Text))
 				}
 				b.WriteString("\n")
-				if c, err := reminders.Card("Coming up", soon, nil); err == nil {
+			}
+			if all := append(slices.Clone(missed), soon...); len(all) > 0 {
+				title := "Coming up"
+				if len(missed) > 0 {
+					title = "Reminders"
+				}
+				if c, err := reminders.Card(title, all, nil); err == nil {
 					cards = append(cards, *c)
 				}
 			}
@@ -248,6 +291,30 @@ func (s *Service) gatherDay(ctx context.Context, now time.Time) (string, []proto
 		}
 	}
 	return b.String(), pickCards(cards)
+}
+
+// firedAt is when a reminder last went off.
+func firedAt(r reminders.Reminder) string {
+	if r.LastFiredAt != nil {
+		return *r.LastFiredAt
+	}
+	return r.At
+}
+
+// firedSince keeps the reminders that went off after since and weren't marked
+// done, most recent last.
+func firedSince(list []reminders.Reminder, since time.Time) []reminders.Reminder {
+	var out []reminders.Reminder
+	for _, r := range list {
+		if r.Status != reminders.StatusFired {
+			continue
+		}
+		if at, err := time.Parse(time.RFC3339, firedAt(r)); err == nil && at.After(since) {
+			out = append(out, r)
+		}
+	}
+	slices.SortStableFunc(out, func(a, b reminders.Reminder) int { return strings.Compare(firedAt(a), firedAt(b)) })
+	return out
 }
 
 // briefingCards is how many cards go with the briefing: what the app shows at once.

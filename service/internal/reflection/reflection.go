@@ -31,8 +31,9 @@ const JobName = "reflection"
 // DomainJournal is the invalidate domain of the diary and reflection reports.
 const DomainJournal = "journal"
 
-// When it runs, and how much it reads.
-var runAt = jobs.Clock{Hour: 3, Minute: 30}
+// When it runs, and how much it reads: just after the day rolls over, so a
+// late night's conversation stays in one diary day.
+var runAt = jobs.Clock{Hour: jobs.DayTurnHour, Minute: 30}
 
 const (
 	catchUp        = 8 * time.Hour
@@ -159,6 +160,14 @@ func (s *Service) Reflect(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return s.apply(ctx, in, p, forgets)
+}
+
+// dayLabel is the owner's day a window belongs to: the day containing the
+// window's middle, with days turning over at jobs.DayTurnHour. A window that runs
+// from one rollover to the next is the day that just ended.
+func dayLabel(start, end time.Time, loc *time.Location) string {
+	mid := start.Add(end.Sub(start) / 2).In(loc).Add(-jobs.DayTurnHour * time.Hour)
+	return mid.Format(time.DateOnly)
 }
 
 // windowStart is where the last reflection stopped reading, bounded.

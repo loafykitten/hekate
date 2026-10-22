@@ -59,6 +59,7 @@ type Transaction struct {
 	Category      *string `json:"category"`
 	CategoryLabel *string `json:"category_label"`
 	Detail        *string `json:"detail"`
+	PayeeID       string  `json:"payee_id,omitempty"` // the stable id money_label_payee takes; absent when the payee has no letters
 }
 
 // item is a stored bank including its secrets; it never leaves the package.
@@ -252,6 +253,7 @@ func (s *Service) Transactions(ctx context.Context, q Query) ([]Transaction, err
 		}
 		t.Amount = dollars(amount)
 		t.Merchant, t.Detail = nonEmpty(merchant), nonEmpty(detail)
+		t.PayeeID = payeeIDOf(t.Name, merchant, amount)
 		if category != "" {
 			label := CategoryLabel(category)
 			t.Category, t.CategoryLabel = &category, &label

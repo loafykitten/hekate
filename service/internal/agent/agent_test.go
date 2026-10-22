@@ -103,6 +103,21 @@ func TestTextOnlyTurn(t *testing.T) {
 	}
 }
 
+// A tag she invented is dropped from what is stored too, or the next turn
+// would see it in her own history and copy it.
+func TestInventedTagsAreNotReplayedInHistory(t *testing.T) {
+	e := newEnv(t, func(int, llmReq) (int, []string) {
+		return 200, say("{nudge} {waving} Here you are. {softly} All good.")
+	}, envOpts{})
+	e.agent.Say("c", "i0", "hi", false)
+	e.hub.waitTurnEnd(t, 1)
+	msgs := e.messages()
+	got := msgs[len(msgs)-1].Content
+	if strings.Contains(got, "nudge") || !strings.Contains(got, "{waving}") || !strings.Contains(got, "{softly}") {
+		t.Errorf("stored content = %q", got)
+	}
+}
+
 func TestHistoryReachesNextTurn(t *testing.T) {
 	e := newEnv(t, func(n int, _ llmReq) (int, []string) {
 		return 200, say("Reply number " + string(rune('0'+n)) + " is here.")
@@ -941,9 +956,10 @@ func TestATappedCheckInStartsATurnWithoutWords(t *testing.T) {
 	}
 }
 
-// A finished briefing may still be playing. Stopping it then (an interrupt,
-// even during its last sentence; talking or typing on any device) frees the
-// day; the same after it can have finished playing doesn't.
+// A finished briefing may still be playing. Explicitly stopping it then (an
+// interrupt, even during its last sentence; a hush from any device) frees the
+// day; the same after it can have finished playing doesn't, and neither does
+// the owner's next message, which is usually a reply to it.
 func TestStoppingABriefingStillPlayingFreesTheDay(t *testing.T) {
 	brief := Tool{Name: "brief", Description: "The day", Effect: EffectRead, Schema: json.RawMessage(`{"type":"object","properties":{}}`),
 		Run: func(context.Context, json.RawMessage) (Result, error) { return Result{Content: "Rain."}, nil }}
@@ -1015,7 +1031,7 @@ func TestStoppingABriefingStillPlayingFreesTheDay(t *testing.T) {
 	e.agent.Say("c2", "x", "what's for lunch?", false) // typed on another device
 	ends++
 	e.hub.waitTurnEnd(t, ends)
-	freed("typing on another device", true)
+	freed("a reply while it may still be playing", false)
 
 	briefed(true)
 	e.agent.Hush()

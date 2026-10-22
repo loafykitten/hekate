@@ -158,26 +158,8 @@ func approvalCard(a approvals.Approval) *agent.Card {
 // ask files an approval request and tells the model what happened: either the
 // owner has been asked, or a standing rule let it run at once.
 func (s *Service) ask(ctx context.Context, r approvals.Request) (agent.Result, error) {
-	a, err := s.appr.Request(ctx, r)
-	if err != nil {
-		return agent.Result{}, fmt.Errorf("ask for approval: %w", err)
-	}
-	res := agent.Result{Card: approvalCard(a)}
-	result := ""
-	if a.Result != nil {
-		result = *a.Result
-	}
-	byRule := a.DecidedBy != nil && *a.DecidedBy == approvals.DecidedByRule
-	switch {
-	case a.Status == approvals.StatusDone && byRule:
-		res.Content = "Done (standing rule): " + result
-	case a.Status == approvals.StatusFailed:
-		res.Content = "It was allowed but failed: " + result + ". Tell the user."
-	default:
-		res.Content = fmt.Sprintf("Asked %s to approve (approval #%s); it will run when they allow it. Do not do it another way meanwhile. "+
-			"This only says you asked: on later turns, Approvals in your prompt says whether it is still waiting.", s.owner, a.ID)
-	}
-	return res, nil
+	res, _, err := s.askHead(ctx, r, "")
+	return res, err
 }
 
 // sharedSender finds the scope for approving actions on these messages: one

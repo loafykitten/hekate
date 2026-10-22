@@ -149,6 +149,9 @@ func describeRecurring(rep recurringReport, kind string) (string, []Transaction,
 	if rep.hidden > 0 {
 		fmt.Fprintf(&head, "Left out: %s the owner said are not regular payments.\n", plural(rep.hidden, "payee", "payees"))
 	}
+	if len(rep.ended) > 0 {
+		fmt.Fprintf(&head, "Stopped: %s the owner said have ended; they are listed last and are in no total or forecast.\n", plural(len(rep.ended), "payee", "payees"))
+	}
 	if rep.stopped > 0 {
 		fmt.Fprintf(&head, "Not listed: %s that looked regular once but have not recurred lately (probably cancelled).\n", plural(rep.stopped, "other payee", "other payees"))
 	}
@@ -185,6 +188,13 @@ func describeRecurring(rep recurringReport, kind string) (string, []Transaction,
 	if kind != "bills" {
 		section("Not confirmed yet, coming in: ask the owner what these are", g.unIn)
 	}
+	var ended []recurring
+	for _, it := range rep.ended {
+		if kind == "all" || (kind == "income") == it.income {
+			ended = append(ended, it)
+		}
+	}
+	section("Stopped (the owner said these have ended; not counted anywhere)", ended)
 	if len(lines) == 0 {
 		head.WriteString("Nothing recurring to list: a payee needs at least 3 payments in a regular rhythm (2 for yearly).")
 		return head.String(), nil, nil
@@ -210,6 +220,25 @@ func recurringLine(it recurring, currency string, today time.Time) string {
 		fmt.Fprintf(&sb, " | the owner's note: %s", oneLine(it.label.note, maxNoteLen))
 	}
 	fmt.Fprintf(&sb, " | typical %s | last %s on %s", centsText(it.typical, currency), centsText(it.last, currency), it.lastDay.Format(time.DateOnly))
+	if it.label.maxC > 0 {
+		if it.label.minC == it.label.maxC {
+			fmt.Fprintf(&sb, " | the owner expects %s", centsText(it.label.maxC, currency))
+		} else {
+			fmt.Fprintf(&sb, " | the owner expects %s to %s", centsText(it.label.minC, currency), centsText(it.label.maxC, currency))
+		}
+	}
+	if it.label.stopped {
+		switch {
+		case !it.stopOn.IsZero():
+			fmt.Fprintf(&sb, " | the owner says it ends %s: nothing is forecast from then on", it.label.stoppedOn)
+		case it.label.stoppedOn != "":
+			fmt.Fprintf(&sb, " | STOPPED (the owner says, as of %s)", it.label.stoppedOn)
+			return sb.String()
+		default:
+			sb.WriteString(" | STOPPED (the owner says)")
+			return sb.String()
+		}
+	}
 	if it.next.Before(today) {
 		fmt.Fprintf(&sb, " | was expected %s and hasn't shown up yet", it.next.Format(time.DateOnly))
 	} else {
@@ -491,6 +520,9 @@ func describeUpcoming(rep recurringReport, c cash, days int) string {
 		} else {
 			fmt.Fprintf(&sb, "WARNING: checking is already below zero now (%s), before anything ahead.\n", centsText(c.checking, cur))
 		}
+	}
+	if len(rep.ended) > 0 {
+		fmt.Fprintf(&sb, "Left out of this forecast: %s the owner said have stopped (money_recurring lists them).\n", plural(len(rep.ended), "payee", "payees"))
 	}
 	if len(rep.items) == 0 {
 		sb.WriteString("No recurring payments or income were detected, so there is nothing to project.")

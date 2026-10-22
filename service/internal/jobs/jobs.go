@@ -76,9 +76,10 @@ type Runner struct {
 	now   func() time.Time
 	sleep func(ctx context.Context, d time.Duration, wake <-chan struct{})
 
-	mu   sync.Mutex
-	jobs []Job
-	wake map[string]chan struct{}
+	mu    sync.Mutex
+	jobs  []Job
+	wake  map[string]chan struct{}
+	tried map[string]time.Time // each job's last start, skipped runs included
 }
 
 // New builds a runner. Add jobs, then Run.
@@ -86,7 +87,7 @@ func New(o Options) (*Runner, error) {
 	if o.Store == nil {
 		return nil, errors.New("jobs: Store is required")
 	}
-	r := &Runner{db: o.Store.DB(), log: o.Logger, now: o.Now, sleep: o.Sleep, wake: map[string]chan struct{}{}}
+	r := &Runner{db: o.Store.DB(), log: o.Logger, now: o.Now, sleep: o.Sleep, wake: map[string]chan struct{}{}, tried: map[string]time.Time{}}
 	if r.log == nil {
 		r.log = slog.New(slog.DiscardHandler)
 	}
@@ -157,6 +158,7 @@ func (r *Runner) loop(ctx context.Context, j Job) {
 	if err != nil {
 		r.log.Error("cannot read a job's last run", "job", j.Name, "error", err)
 	}
+	r.setTried(j.Name, last)
 	for ctx.Err() == nil {
 		now := r.now()
 		next, ok := j.Next(ctx, now, last)
@@ -169,8 +171,40 @@ func (r *Runner) loop(ctx context.Context, j Job) {
 			continue // look again: the time may have come, or the schedule changed
 		}
 		last = r.now()
+		r.setTried(j.Name, last)
 		r.runOnce(ctx, j)
 	}
+}
+
+func (r *Runner) setTried(name string, at time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.tried[name] = at
+}
+
+// Due says when a job is next due by its own schedule, from its last start
+// (skipped runs included). ok is false when the job is switched off or unknown.
+// A time well in the past means the job should have run and hasn't.
+func (r *Runner) Due(ctx context.Context, name string) (next time.Time, ok bool) {
+	r.mu.Lock()
+	var job *Job
+	for i := range r.jobs {
+		if r.jobs[i].Name == name {
+			job = &r.jobs[i]
+		}
+	}
+	last, known := r.tried[name]
+	r.mu.Unlock()
+	if job == nil || job.Next == nil {
+		return time.Time{}, false
+	}
+	if !known {
+		var err error
+		if last, err = r.lastStart(ctx, name); err != nil {
+			return time.Time{}, false
+		}
+	}
+	return job.Next(ctx, r.now(), last)
 }
 
 // RunNow runs a job immediately, outside its schedule, and records it like any
@@ -311,6 +345,10 @@ func (r *Runner) Runs(ctx context.Context, job string, limit int) ([]Run, error)
 	}
 	return out, rows.Err()
 }
+
+// DayTurnHour is when the owner's day rolls over: what happens before it
+// still belongs to the day before (the check-in and the reflection agree on it).
+const DayTurnHour = 6
 
 // Clock is a time of day.
 type Clock struct{ Hour, Minute int }

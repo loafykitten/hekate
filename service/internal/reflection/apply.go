@@ -42,7 +42,7 @@ func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (
 	if err != nil {
 		return "", fmt.Errorf("record the reflection: %w", err)
 	}
-	var saved, updated, retired, refused, stale, held, forgottenHeld int
+	var saved, updated, retired, refused, stale, held, forgottenHeld, ungrounded int
 	updateFailed := p.updatesCut // an update in the plan didn't happen
 	// also runs after the change is recorded, with its id.
 	recorder := func(action, reason, mergedFrom string, also ...func(tx *sql.Tx, changeID int64) error) memory.Recorder {
@@ -169,6 +169,13 @@ func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (
 			updateFailed = true // a merge's destination may be the one that's wrong
 			continue
 		}
+		// New wording must rest on a turn; a merge only rearranges what she holds.
+		if _, ok := grounded(in, u.SourceTurn, u.Content != nil && len(sources) == 0); !ok {
+			s.log.Warn("reflection: an update was skipped: it cites no turn from this conversation", "memory_id", id)
+			ungrounded++
+			updateFailed = true
+			continue
+		}
 		if err := update(id, patch, u.Reason, sources); err != nil {
 			return "", err
 		}
@@ -194,6 +201,12 @@ func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (
 		retired++
 	}
 	for _, sv := range p.Save {
+		src, ok := grounded(in, sv.SourceTurn, true)
+		if !ok {
+			s.log.Warn("reflection: a save was skipped: it cites no turn from this conversation", "kind", sv.Kind)
+			ungrounded++
+			continue
+		}
 		// Saving what she already remembers refreshes that memory: make it an update.
 		if id, ok := findContent(latest, sv.Content); ok {
 			cur := latest[id]
@@ -211,7 +224,7 @@ func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (
 			}
 			continue
 		}
-		m, err := s.mem.Insert(ctx, memory.NewMemory{Kind: sv.Kind, Content: sv.Content, Importance: sv.Importance, FollowUpAt: sv.FollowUpAt},
+		m, err := s.mem.Insert(ctx, memory.NewMemory{Kind: sv.Kind, Content: sv.Content, Importance: sv.Importance, FollowUpAt: sv.FollowUpAt, SourceTurn: src},
 			recorder(ActionSave, sv.Reason, ""))
 		if err != nil {
 			if err := failed(ActionSave, 0, err); err != nil {
@@ -231,6 +244,9 @@ func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (
 	if refused > 0 {
 		summary += fmt.Sprintf(" (%d changes refused)", refused)
 	}
+	if ungrounded > 0 {
+		summary += fmt.Sprintf(" (%d changes skipped: no source turn from this conversation)", ungrounded)
+	}
 	if stale > 0 {
 		summary += fmt.Sprintf(" (%d left alone: changed meanwhile)", stale)
 	}
@@ -247,6 +263,27 @@ func (s *Service) apply(ctx context.Context, in *input, p plan, forgets int64) (
 	}
 	s.events.Invalidate(DomainJournal)
 	return summary, nil
+}
+
+// grounded checks the turns a change cites: each must be in the transcript
+// she read. With need, at least one must be cited. It returns them joined, for
+// the memory's source_turn_id.
+func grounded(in *input, cited []string, need bool) (string, bool) {
+	var ids []string
+	for _, c := range cited {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		if !in.turns[c] {
+			return "", false
+		}
+		ids = append(ids, c)
+	}
+	if need && len(ids) == 0 {
+		return "", false
+	}
+	return strings.Join(ids, ","), true
 }
 
 // errForgotten stops a reflection planned before a memory was forgotten.

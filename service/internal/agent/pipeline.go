@@ -74,7 +74,7 @@ func (p *pipeline) submit(round int, sentence string) {
 	if tagged.Display == "" {
 		return // nothing to say (a tag on its own); the next sentence carries on
 	}
-	j := &job{round: round, raw: sentence, tagged: tagged, done: make(chan struct{})}
+	j := &job{round: round, raw: perform.Sanitize(sentence, p.vocab), tagged: tagged, done: make(chan struct{})}
 	if p.synth == nil {
 		close(j.done)
 	} else {

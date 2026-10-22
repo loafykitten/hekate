@@ -9,6 +9,7 @@ import {
   useSnoozeReminder,
 } from "../../data/hooks";
 import type { Reminder } from "../../data/model";
+import { canReopenAtOriginalTime, showsDone, showsSnooze } from "../../data/reminderDue";
 import { minutesUntilTomorrowMorning, timestampFromInputs, toDateInput, toMs, toRfc3339, toTimeInput, localTimeExists, SKIPPED_TIME_HINT } from "../../data/time";
 import { PlusIcon, SnoozeIcon, TrashIcon, CheckIcon } from "../icons";
 import { Button, Chip, ConfirmButton, Segmented, StateMessage, TextField } from "../kit/kit";
@@ -18,12 +19,29 @@ import { RepeatSelect } from "./RepeatSelect";
 import styles from "./sections.module.css";
 import { useMenuActive } from "./MenuContext";
 
-// Snooze and Done for a reminder that is due soon or has fired. Shared with Today.
+// Snooze for a pending reminder; Done only once it is due soon or has fired (never on a
+// freshly made future one, where it reads like "accept"); Reopen on a done one. Shared with Today.
 export function ReminderActions({ reminder }: { reminder: Reminder }) {
   const [choosing, setChoosing] = useState(false);
   const snooze = useSnoozeReminder();
   const done = useReminderDone();
-  if (reminder.status !== "scheduled" && reminder.status !== "fired") return null;
+  const patch = usePatchReminder();
+  const now = useNow();
+  if (reminder.status === "done") {
+    // Back at its original time while that is still ahead; otherwise again in ten minutes.
+    const reopen = () =>
+      canReopenAtOriginalTime(reminder, now)
+        ? patch.mutate({ id: reminder.id, fields: { at: reminder.at } })
+        : snooze.mutate({ id: reminder.id, minutes: 10 });
+    return (
+      <div className={styles.inlineActions}>
+        <Button compact busy={patch.isPending || snooze.isPending} onClick={reopen} aria-label={`Reopen ${reminder.text}`}>
+          Reopen
+        </Button>
+      </div>
+    );
+  }
+  if (!showsSnooze(reminder)) return null;
   const options = [
     { label: "10 min", minutes: () => 10 },
     { label: "1 hour", minutes: () => 60 },
@@ -55,10 +73,12 @@ export function ReminderActions({ reminder }: { reminder: Reminder }) {
             <SnoozeIcon />
             Snooze
           </Button>
-          <Button compact variant="primary" busy={done.isPending} onClick={() => done.mutate(reminder.id)} aria-label={`Mark ${reminder.text} done`}>
-            <CheckIcon />
-            Done
-          </Button>
+          {showsDone(reminder, now) && (
+            <Button compact variant="primary" busy={done.isPending} onClick={() => done.mutate(reminder.id)} aria-label={`Mark ${reminder.text} done`}>
+              <CheckIcon />
+              Done
+            </Button>
+          )}
         </>
       )}
     </div>

@@ -1,7 +1,10 @@
 package httpx
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -80,6 +83,30 @@ func TestFail(t *testing.T) {
 	Fail(w, nil, httptest.NewRequest(http.MethodGet, "/", nil), errors.New("secret detail"))
 	if w.Code != 500 || strings.Contains(w.Body.String(), "secret") {
 		t.Errorf("got %d %s", w.Code, w.Body)
+	}
+}
+
+// A client that went away is not a service failure: info, not error, and no body.
+func TestFailClientCancelled(t *testing.T) {
+	var logs strings.Builder
+	log := slog.New(slog.NewTextHandler(&logs, nil))
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	r := httptest.NewRequest(http.MethodGet, "/x", nil).WithContext(ctx)
+	w := httptest.NewRecorder()
+	Fail(w, log, r, fmt.Errorf("list: %w", context.Canceled))
+	if w.Code != StatusClientClosed || w.Body.Len() != 0 {
+		t.Errorf("got %d %q", w.Code, w.Body)
+	}
+	if strings.Contains(logs.String(), "level=ERROR") || !strings.Contains(logs.String(), "cancelled") {
+		t.Errorf("log: %s", logs.String())
+	}
+	// A cancellation inside the service while the client is still there is a real failure.
+	logs.Reset()
+	w = httptest.NewRecorder()
+	Fail(w, log, httptest.NewRequest(http.MethodGet, "/x", nil), context.Canceled)
+	if w.Code != 500 || !strings.Contains(logs.String(), "level=ERROR") {
+		t.Errorf("got %d, log: %s", w.Code, logs.String())
 	}
 }
 

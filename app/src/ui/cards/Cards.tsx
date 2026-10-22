@@ -1,7 +1,8 @@
 import { useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import { senderName } from "../../data/mail";
 import type { Card, Memory, Message, MoneyAccount, Reminder, Task } from "../../data/model";
-import { useDeleteMemory, useLiveApproval, useNow, useReminderDone, useSetTaskDone, useSnoozeReminder } from "../../data/hooks";
+import { useDeleteMemory, useLiveApproval, useNow, usePatchReminder, useReminderDone, useSetTaskDone, useSnoozeReminder } from "../../data/hooks";
+import { canReopenAtOriginalTime, showsDone, showsSnooze } from "../../data/reminderDue";
 import { dayHeading, dayKeyOfMs, groupEventsByDay, formatDay, formatTime, formatWeekday } from "../../data/time";
 import { degrees, GROUP_LABEL, isDaytime, precipLabel, weatherGroup } from "../../data/weather";
 import type { Section } from "../menu/sections";
@@ -193,11 +194,32 @@ function RemindersCard({ items, highlight }: { items: Reminder[]; highlight: str
   const now = useNow();
   const snooze = useSnoozeReminder();
   const markDone = useReminderDone();
+  const patch = usePatchReminder();
   const [local, setLocal] = useState<Record<string, Reminder>>({});
+  // Reminders marked done here, as they were, so Undo can put them back at their time.
+  const [before, setBefore] = useState<Record<string, Reminder>>({});
   const reminders = items.map((r) => local[r.id] ?? r);
 
   function done(r: Reminder) {
-    markDone.mutate(r.id, { onSuccess: (updated) => setLocal((l) => ({ ...l, [r.id]: updated })) });
+    markDone.mutate(r.id, {
+      onSuccess: (updated) => {
+        setLocal((l) => ({ ...l, [r.id]: updated }));
+        if (updated.status === "done") setBefore((b) => ({ ...b, [r.id]: r }));
+      },
+    });
+  }
+  function undo(r: Reminder) {
+    const original = before[r.id];
+    if (!original) return;
+    patch.mutate(
+      { id: r.id, fields: { at: original.at } },
+      {
+        onSuccess: (updated) => {
+          setLocal((l) => ({ ...l, [r.id]: updated }));
+          setBefore((b) => Object.fromEntries(Object.entries(b).filter(([id]) => id !== r.id)));
+        },
+      },
+    );
   }
   function snoozeBy(r: Reminder, minutes: number) {
     snooze.mutate({ id: r.id, minutes }, { onSuccess: (updated) => setLocal((l) => ({ ...l, [r.id]: updated })) });
@@ -206,20 +228,32 @@ function RemindersCard({ items, highlight }: { items: Reminder[]; highlight: str
   if (reminders.length === 0) return <Empty>No reminders.</Empty>;
   return (
     <div className={styles.list}>
-      {reminders.map((r) => (
-        <ReminderRow key={r.id} reminder={r} now={now} compact highlight={highlight.includes(r.id)}>
-          {(r.status === "scheduled" || r.status === "fired") && (
-            <div className={styles.actions}>
-              <Button compact onClick={() => snoozeBy(r, 10)} disabled={snooze.isPending}>
-                Snooze 10 min
-              </Button>
-              <Button compact variant="primary" onClick={() => done(r)} disabled={markDone.isPending}>
-                Done
-              </Button>
-            </div>
-          )}
-        </ReminderRow>
-      ))}
+      {reminders.map((r) => {
+        const canUndo = r.status === "done" && before[r.id] !== undefined && canReopenAtOriginalTime(before[r.id], now);
+        return (
+          <ReminderRow key={r.id} reminder={r} now={now} compact highlight={highlight.includes(r.id)}>
+            {(showsSnooze(r) || canUndo) && (
+              <div className={styles.actions}>
+                {showsSnooze(r) && (
+                  <Button compact onClick={() => snoozeBy(r, 10)} disabled={snooze.isPending}>
+                    Snooze 10 min
+                  </Button>
+                )}
+                {showsDone(r, now) && (
+                  <Button compact variant="primary" onClick={() => done(r)} disabled={markDone.isPending}>
+                    Done
+                  </Button>
+                )}
+                {canUndo && (
+                  <Button compact onClick={() => undo(r)} disabled={patch.isPending}>
+                    Undo
+                  </Button>
+                )}
+              </div>
+            )}
+          </ReminderRow>
+        );
+      })}
     </div>
   );
 }

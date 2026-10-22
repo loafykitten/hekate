@@ -110,7 +110,9 @@ func (s *Service) updateTool() agent.Tool {
 	return agent.Tool{
 		Name: "reminder_update",
 		Description: "Change a reminder: its text, its time (`at` or `in_minutes`; for a repeating reminder this moves every " +
-			"future occurrence) or its repeat rule (empty string stops repeating). To put off just this once, use reminder_snooze.",
+			"future occurrence) or its repeat rule (empty string stops repeating). Giving a new time (`at` or `in_minutes`) also " +
+			"reopens a reminder that is done, fired or cancelled, so use this instead of creating a duplicate. To put off just this once, " +
+			"use reminder_snooze.",
 		Schema: json.RawMessage(`{"type":"object","required":["id"],"properties":{
 			"id":{"type":"string","description":"The reminder id, as shown in reminder results."},
 			"text":{"type":"string"},

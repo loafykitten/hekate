@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -179,7 +180,8 @@ func (s *Service) transactionsTool() agent.Tool {
 		Description: "Search the owner's bank transactions, newest first. Amounts are positive for money in and negative for money " +
 			"out. Filter by words in the name or merchant, an account (its name or id from money_accounts), a category (e.g. " +
 			"Food and drink, Transportation, Rent and utilities) and dates. Use it for 'what did I spend at X?', 'did that " +
-			"payment go through?' or looking for a subscription. Read-only. " + untrustedNote,
+			"payment go through?' or looking for a subscription. Each line ends with the payee's id: pass it to money_label_payee to note what that payee is, " +
+			"including one that stopped recurring (find it here by name with q). Read-only. " + untrustedNote,
 		Schema: schema(`{
 			"q":{"type":"string","description":"Words to find in the transaction name or merchant."},
 			"account":{"type":"string","description":"Only this account: its name, or its id from money_accounts."},
@@ -221,11 +223,31 @@ func (s *Service) transactionsTool() agent.Tool {
 			return agent.Result{
 				Content: wrapTransactions(fmt.Sprintf("%s, newest first.", plural(len(txns), "transaction", "transactions")), txns),
 				Card:    TransactionsCard("Transactions", txns, nil),
-				Stored:  keptNote("Listed", plural(len(txns), "transaction", "transactions")),
+				Stored:  keptNote("Listed", plural(len(txns), "transaction", "transactions")) + payeeIDsNote(txns),
 			}, nil
 		}),
 	}
 }
+
+// payeeIDsNote is what the history keeps of a result's payees: their ids, which
+// hold no bank text, so money_label_payee can still be called later.
+func payeeIDsNote(txns []Transaction) string {
+	var ids []string
+	for _, t := range txns {
+		if t.PayeeID != "" && !slices.Contains(ids, t.PayeeID) {
+			ids = append(ids, t.PayeeID)
+		}
+	}
+	if len(ids) == 0 {
+		return ""
+	}
+	if len(ids) > maxStoredPayeeIDs {
+		ids = ids[:maxStoredPayeeIDs]
+	}
+	return " Payee ids in the result, newest first: " + strings.Join(ids, ", ") + " (names not kept)."
+}
+
+const maxStoredPayeeIDs = 20
 
 // resolveAccount turns an account id, name or mask into an id. "" means all accounts.
 func (s *Service) resolveAccount(ctx context.Context, want string) (string, error) {
@@ -291,6 +313,9 @@ func transactionLine(t Transaction) string {
 	fmt.Fprintf(&sb, " | Account: %s | Name: %s", oneLine(t.Account, 60), oneLine(t.Name, 120))
 	if t.Merchant != nil {
 		fmt.Fprintf(&sb, " | Merchant: %s", oneLine(*t.Merchant, 80))
+	}
+	if t.PayeeID != "" {
+		fmt.Fprintf(&sb, " | Payee id: %s", t.PayeeID)
 	}
 	return sb.String()
 }

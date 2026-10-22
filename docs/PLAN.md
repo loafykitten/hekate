@@ -147,8 +147,8 @@ reviewed and revoked in the menu.
   importance, source turn ids, optional `follow_up_at`, and FTS5 search. She saves them during
   conversation when something durable comes up.
 - **Diary**: one entry per day, written by reflection.
-- **Daily reflection** (03:30, `glm-5.3-flex`): reads the day's conversations, actions and
-  current memories, then saves memories it missed, merges duplicates, retires stale or
+- **Daily reflection** (06:30, just after the 06:00 day rollover, `glm-5.3-flex`): reads the
+  day's conversations, actions and current memories, then saves memories it missed, merges duplicates, retires stale or
   contradicted ones, schedules follow-ups ("ask how the interview went") and writes the diary
   entry. Every change is recorded in a reflection report visible in the menu, and anything can
   be undone.
@@ -318,8 +318,8 @@ opener and the routines scheduler from the briefing and heartbeat.
 - **Self-inspection** (`service/internal/inspect`): `self_status`, `self_logs`, `self_usage`
   (conversation by model, background work by source), `self_activity` (tool calls, routine runs,
   deploys), and `idea_log`; her ideas are listed under Changes.
-- **Reflection** (`service/internal/reflection`), nightly at 03:30: tidies memories and writes the
-  diary. Changes apply only to memories as she read them, each is recorded in the same transaction
+- **Reflection** (`service/internal/reflection`), daily at 06:30, just after the 06:00 day
+  rollover: tidies memories and writes the diary. Changes apply only to memories as she read them, each is recorded in the same transaction
   and can be undone from the Diary; merges are linked so forgetting either side forgets both.
 - **Heartbeat** (`service/internal/routines`), every 30 minutes in waking hours: one notice about
   what's new (an event to leave for, overdue tasks, mail that needs the owner, due follow-ups),

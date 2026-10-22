@@ -5,6 +5,7 @@ package httpx
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -50,12 +51,25 @@ func JSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// StatusClientClosed is the non-standard 499 for a request the client gave up on.
+const StatusClientClosed = 499
+
 // Fail writes err as { "error": … }. An *Error keeps its status and message;
-// anything else is logged and reported as an opaque 500.
+// a request its client cancelled is logged at info and gets a bare 499; anything
+// else is logged as an error and reported as an opaque 500.
 func Fail(w http.ResponseWriter, log *slog.Logger, r *http.Request, err error) {
 	var he *Error
 	if errors.As(err, &he) {
 		JSON(w, he.Status, map[string]string{"error": he.Msg})
+		return
+	}
+	// The client went away (a closed tab, an aborted fetch): nothing failed
+	// on our side, and nobody is left to read a body.
+	if errors.Is(err, context.Canceled) && r.Context().Err() != nil {
+		if log != nil {
+			log.Info("request cancelled by the client", "method", r.Method, "path", r.URL.Path)
+		}
+		w.WriteHeader(StatusClientClosed)
 		return
 	}
 	if log != nil {

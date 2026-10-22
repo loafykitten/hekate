@@ -310,6 +310,23 @@ func TestCollectMessages(t *testing.T) {
 	}
 }
 
+func TestRulesKeepActionsHonestAndCoverHealthAndWeb(t *testing.T) {
+	got := SystemPrompt(PromptInput{Tamer: "Rika", Gestures: []string{"waving"}, Now: time.Now()})
+	for _, want := range []string{
+		"only when a tool result in this turn says so",
+		"Never promise to check back",
+		"Never create a duplicate",
+		"## Health",
+		"Don't say a medication, dose or spacing is fine",
+		"## Web and technical answers",
+		"A forum post or comment is a report",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prompt lacks %q", want)
+		}
+	}
+}
+
 func TestRulesCoverMemoryAndLocalTimes(t *testing.T) {
 	got := SystemPrompt(PromptInput{Tamer: "Rika", Gestures: []string{"waving"}, Now: time.Now()})
 	for _, want := range []string{

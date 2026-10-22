@@ -22,26 +22,45 @@ type plan struct {
 }
 
 type saveOp struct {
-	Kind       string `json:"kind"`
-	Content    string `json:"content"`
-	Importance int    `json:"importance"`
-	FollowUpAt string `json:"follow_up_at"`
-	Reason     string `json:"reason"`
+	Kind       string      `json:"kind"`
+	Content    string      `json:"content"`
+	Importance int         `json:"importance"`
+	FollowUpAt string      `json:"follow_up_at"`
+	SourceTurn flexStrings `json:"source_turns"`
+	Reason     string      `json:"reason"`
 }
 
 type updateOp struct {
-	ID         flexID   `json:"id"`
-	Content    *string  `json:"content"`
-	Kind       *string  `json:"kind"`
-	Importance *int     `json:"importance"`
-	FollowUpAt *string  `json:"follow_up_at"`
-	MergedFrom []flexID `json:"merged_from"` // a merge: the memories whose words this one now holds
-	Reason     string   `json:"reason"`
+	ID         flexID      `json:"id"`
+	Content    *string     `json:"content"`
+	Kind       *string     `json:"kind"`
+	Importance *int        `json:"importance"`
+	FollowUpAt *string     `json:"follow_up_at"`
+	MergedFrom []flexID    `json:"merged_from"` // a merge: the memories whose words this one now holds
+	SourceTurn flexStrings `json:"source_turns"`
+	Reason     string      `json:"reason"`
 }
 
 type retireOp struct {
 	ID     flexID `json:"id"`
 	Reason string `json:"reason"`
+}
+
+// flexStrings accepts a turn id or a list of them.
+type flexStrings []string
+
+func (f *flexStrings) UnmarshalJSON(b []byte) error {
+	var one string
+	if err := json.Unmarshal(b, &one); err == nil {
+		*f = flexStrings{one}
+		return nil
+	}
+	var many []string
+	if err := json.Unmarshal(b, &many); err != nil {
+		return fmt.Errorf("source turns: %w", err)
+	}
+	*f = many
+	return nil
 }
 
 // flexID accepts a memory id as a number or a string, as models write both.

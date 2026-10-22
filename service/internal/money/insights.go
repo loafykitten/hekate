@@ -44,6 +44,7 @@ func (r txRow) transaction() Transaction {
 	t := Transaction{
 		ID: r.id, AccountID: r.accountID, Account: r.account, Date: r.date, Name: r.name,
 		Merchant: nonEmpty(r.merchant), Amount: dollars(r.cents), Currency: r.currency, Pending: r.pending,
+		PayeeID: payeeIDOf(r.name, r.merchant, r.cents),
 	}
 	if r.category != "" {
 		c, l := r.category, CategoryLabel(r.category)
@@ -205,6 +206,7 @@ type recurring struct {
 	lastDay   time.Time
 	next      time.Time
 	latest    txRow
+	stopOn    time.Time // the owner said it ends on this (future) day: nothing is projected from then on
 }
 
 // status is what the owner called it, or "unconfirmed".
@@ -489,7 +491,8 @@ type recurringReport struct {
 	currency string
 	items    []recurring // not the ones the owner called not_recurring
 	stopped  int
-	hidden   int // payees the owner called not_recurring
+	hidden   int         // payees the owner called not_recurring
+	ended    []recurring // payees the owner said have stopped: not in items, so not forecast
 	today    time.Time
 }
 
@@ -516,6 +519,22 @@ func (s *Service) recurringReport(ctx context.Context) (recurringReport, error) 
 		if it.label.kind == kindNotRecurring {
 			rep.hidden++
 			continue
+		}
+		if it.label.stopped {
+			on, _ := time.Parse(time.DateOnly, it.label.stoppedOn)
+			if on.IsZero() || !on.After(today) {
+				rep.ended = append(rep.ended, it)
+				continue
+			}
+			it.stopOn = on // still counted until then
+		}
+		if it.label.maxC > 0 {
+			// The owner's amount beats the latest payment. For a range, the cautious end:
+			// the most for a payment out, the least for money in.
+			it.expected = it.label.maxC
+			if it.income {
+				it.expected = it.label.minC
+			}
 		}
 		rep.items = append(rep.items, it)
 	}
@@ -544,7 +563,7 @@ func project(items []recurring, today, horizon time.Time) []occurrence {
 		if it.income {
 			sign = 1
 		}
-		for d := it.next; !d.After(horizon); d = it.step(d) {
+		for d := it.next; !d.After(horizon) && (it.stopOn.IsZero() || d.Before(it.stopOn)); d = it.step(d) {
 			o := occurrence{day: d, cents: sign * it.expected, payee: it.payee, income: it.income, status: it.status(), accountID: it.accountID, account: it.account, class: it.class}
 			if d.Before(today) {
 				o.day, o.late = today, true
@@ -663,6 +682,12 @@ type payeeTotal struct {
 	count int
 }
 
+// startsLate says month m is the first with data and only partly there: history
+// begins after its 1st.
+func startsLate(m, firstData string) bool {
+	return len(firstData) >= 10 && m == firstData[:7] && firstData[8:10] != "01"
+}
+
 // buildTrends groups rows by month for the given months and totals the top
 // payees by money out. firstData is the date of the first stored transaction.
 func buildTrends(rows []txRow, months []string, firstData string, today time.Time, withCategories bool) ([]monthTrend, []payeeTotal) {
@@ -671,7 +696,9 @@ func buildTrends(rows []txRow, months []string, firstData string, today time.Tim
 	for _, r := range rows {
 		m := r.date[:7]
 		byMonth[m] = append(byMonth[m], flow{r.category, r.cents})
-		if r.cents < 0 && !r.isTransferOrLoan() {
+		// Top payees cover the complete months only, the same period as the
+		// average: not this month, nor the one history starts partway through.
+		if m != today.Format("2006-01") && !startsLate(m, firstData) && r.cents < 0 && !r.isTransferOrLoan() {
 			k := payeeKey(r.payee())
 			if k == "" {
 				k = "category " + r.category
@@ -694,8 +721,7 @@ func buildTrends(rows []txRow, months []string, firstData string, today time.Tim
 		if len(firstData) < 7 || m < firstData[:7] {
 			mt.noData = true
 		}
-		// The first month with data is only partly there unless it starts on the 1st.
-		mt.startsLate = len(firstData) >= 10 && m == firstData[:7] && firstData[8:10] != "01"
+		mt.startsLate = startsLate(m, firstData)
 		if withCategories {
 			for cat, c := range t.byCategory {
 				mt.categories = append(mt.categories, trendCategory{CategoryLabel(cat), c.spent})

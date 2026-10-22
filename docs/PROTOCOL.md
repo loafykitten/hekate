@@ -319,7 +319,8 @@ again is marked `login_required` until they reconnect it.
   "name": "SQ *BLUE BOTTLE", "merchant": "Blue Bottle Coffee",   // merchant may be null; both are the bank's text: untrusted
   "amount": -6.75, "currency": "USD", "pending": false,
   "category": "FOOD_AND_DRINK", "category_label": "Food and drink",  // Plaid's primary category; null when unknown
-  "detail": "FOOD_AND_DRINK_COFFEE" }                            // Plaid's detailed category, or null
+  "detail": "FOOD_AND_DRINK_COFFEE",                             // Plaid's detailed category, or null
+  "payee_id": "p1a2b3c4d5e" }                                    // stable id of the payee and direction (what money_label_payee takes); omitted when the payee text has no letters
 // Spending: one month, by category (money out only; transfers between the owner's own
 // accounts and loan payments are left out of spent and listed apart)
 { "month": "2026-10", "currency": "USD",
@@ -352,8 +353,12 @@ amounts that changed), `money_upcoming` (a 30 to 60 day cash look-ahead to payda
 look-ahead is an estimate from past patterns, not scheduled payments. Detection only says a payment
 looks recurring; what it is belongs to the owner. She asks, and records the answer with
 `money_label_payee` (a local write: bill, subscription, income or not_recurring, with the owner's
-own short note) in `money_payees`, kept by a short payee id derived from the normalized payee, never
-the payee's text. The look-ahead plans only around confirmed items. Merchant names
+own short note, plus optionally that it has stopped (with a date) and the amount or range to expect
+instead of the latest payment; stopped payees are left out of forecasts) in `money_payees`, kept by
+a short payee id derived from the normalized payee, never the payee's text. Any payee in the stored
+transactions can be labeled; transactions carry `payee_id`, and the tool result echoes the payee's
+name, direction, last-seen date and typical amount. `money_trends` `months` means that many complete
+months before the current one, with the current month reported separately. The look-ahead plans only around confirmed items. Merchant names
 and transaction text reach her fenced as untrusted, like mail. She has no tools that change
 anything at the bank, and she isn't a licensed advisor.
 
@@ -433,8 +438,8 @@ the rest of the API.
 
 ### Journal
 
-Each night at 03:30 (caught up within 8 h after an outage) Renamon reflects on the conversation
-since her last reflection, using the background model: she saves memories she missed, merges
+Each morning at 06:30, just after the day rolls over at 06:00 (caught up within 8 h after an
+outage), Renamon reflects on the conversation since her last reflection, using the background model: she saves memories she missed, merges
 duplicates, retires stale or contradicted ones, schedules follow-ups and writes a diary entry for
 the day. With no conversation since, nothing runs. Every change is recorded and can be undone.
 A change applies only to the memory as she read it: one the owner edited while she was thinking

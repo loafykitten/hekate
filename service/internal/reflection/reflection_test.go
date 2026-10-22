@@ -140,12 +140,12 @@ func TestReflectAppliesAndRecords(t *testing.T) {
 
 	f.model.reply = "Here you go:\n```json\n" + `{
 		"save": [
-			{"kind": "preference", "content": "Has given up coffee", "importance": 3, "reason": "said so tonight"},
-			{"kind": "follow_up", "content": "Ask how Mika's visit went", "follow_up_at": "2026-10-25", "reason": "visit Saturday"}
+			{"source_turns": ["t2"], "kind": "preference", "content": "Has given up coffee", "importance": 3, "reason": "said so tonight"},
+			{"source_turns": "t2", "kind": "follow_up", "content": "Ask how Mika's visit went", "follow_up_at": "2026-10-25", "reason": "visit Saturday"}
 		],
 		"update": [
-			{"id": "` + strconv.FormatInt(old, 10) + `", "content": "Has a job interview on Thursday at 2 pm", "kind": "follow_up", "follow_up_at": "2026-10-23T17:00", "reason": "moved"},
-			{"id": ` + strconv.FormatInt(dupB, 10) + `, "content": "Likes oolong tea, most mornings", "reason": "merged with a duplicate"}
+			{"id": "` + strconv.FormatInt(old, 10) + `", "source_turns": ["t1"], "content": "Has a job interview on Thursday at 2 pm", "kind": "follow_up", "follow_up_at": "2026-10-23T17:00", "reason": "moved"},
+			{"id": ` + strconv.FormatInt(dupB, 10) + `, "source_turns": ["t1"], "content": "Likes oolong tea, most mornings", "source_turns": ["t1"], "reason": "merged with a duplicate"}
 		],
 		"retire": [{"id": ` + strconv.FormatInt(dupA, 10) + `, "reason": "merged into the other"}],
 		"diary": "Rika's interview moved. They sounded tired, but steadier than last week.",
@@ -302,7 +302,7 @@ func TestDiaryToolContextAndREST(t *testing.T) {
 		t.Errorf("empty diary: %s", out)
 	}
 	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "Lunch with Mika was lovely.", "Glad to hear it.")
-	f.model.reply = `{"save": [{"kind": "event", "content": "Had lunch with Mika", "reason": "nice day"}], "diary": "A gentle day. Rika laughed at lunch."}`
+	f.model.reply = `{"save": [{"source_turns": ["t1"], "kind": "event", "content": "Had lunch with Mika", "reason": "nice day"}], "diary": "A gentle day. Rika laughed at lunch."}`
 	if _, err := f.svc.Reflect(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +366,7 @@ func TestEditsMadeMeanwhileWin(t *testing.T) {
 	b := f.remember("fact", "Drives a blue car")
 	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "hi", "hello")
 	model := &editingModel{fakeModel: &fakeModel{reply: `{
-		"update": [{"id": ` + strconv.FormatInt(a, 10) + `, "content": "Lives on Oak Street", "reason": "x"}],
+		"update": [{"id": ` + strconv.FormatInt(a, 10) + `, "source_turns": ["t1"], "content": "Lives on Oak Street", "reason": "x"}],
 		"retire": [{"id": ` + strconv.FormatInt(b, 10) + `, "reason": "x"}],
 		"diary": "d"}`}}
 	model.during = func() {
@@ -401,8 +401,8 @@ func TestUndoRefusesToLoseNewerEdits(t *testing.T) {
 	ctx := t.Context()
 	a := f.remember("fact", "Has a cat")
 	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "hi", "hello")
-	f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(a, 10) + `, "content": "Has a cat named Miso", "reason": "named"}],
-		"save": [{"kind": "fact", "content": "Plays the cello", "reason": "said so"}], "diary": "d"}`
+	f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(a, 10) + `, "source_turns": ["t1"], "content": "Has a cat named Miso", "reason": "named"}],
+		"save": [{"source_turns": ["t1"], "kind": "fact", "content": "Plays the cello", "reason": "said so"}], "diary": "d"}`
 	if _, err := f.svc.Reflect(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -448,7 +448,7 @@ func TestASaveNeverTouchesAMemorySavedMeanwhile(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
 	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "I started cello lessons", "Lovely.")
-	model := &editingModel{fakeModel: &fakeModel{reply: `{"save": [{"kind": "fact", "content": "Plays the cello", "importance": 5,
+	model := &editingModel{fakeModel: &fakeModel{reply: `{"save": [{"source_turns": ["t1"], "kind": "fact", "content": "Plays the cello", "importance": 5,
 		"follow_up_at": "2026-11-01", "reason": "x"}], "diary": "d"}`}}
 	model.during = func() { f.remember("fact", "Plays the cello") } // the owner saved it while she thought
 	f.svc.llm = model
@@ -494,7 +494,7 @@ func TestJunkIsRefusedAndHoldsRetirementsBack(t *testing.T) {
 		`{"id": ` + strconv.FormatInt(keep, 10) + `, "reason": "no fields"}`,
 	} {
 		f.model.reply = `{"update": [` + update + `], "retire": [{"id": ` + strconv.FormatInt(src, 10) + `, "reason": "merged"}],
-			"save": [{"kind": "wish", "content": "bad kind"}], "diary": "d"}`
+			"save": [{"source_turns": ["t` + strconv.Itoa(f.turns) + `"], "kind": "wish", "content": "bad kind"}], "diary": "d"}`
 		summary, err := f.svc.Reflect(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -514,7 +514,7 @@ func TestADatabaseFailureLeavesItUnfinished(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
 	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "I play the cello", "Lovely.")
-	model := &editingModel{fakeModel: &fakeModel{reply: `{"save": [{"kind": "fact", "content": "Plays the cello"}], "diary": "d"}`}}
+	model := &editingModel{fakeModel: &fakeModel{reply: `{"save": [{"source_turns": ["t1"], "kind": "fact", "content": "Plays the cello"}], "diary": "d"}`}}
 	model.during = func() {
 		if _, err := f.store.DB().ExecContext(ctx, `DROP TABLE reflection_changes`); err != nil {
 			t.Fatal(err)
@@ -538,7 +538,7 @@ func TestUndoInReverseOrder(t *testing.T) {
 	a := f.remember("fact", "Has a cat")
 	for i, content := range []string{"Has a cat named Miso", "Has a cat named Miso, who is twelve"} {
 		f.say(f.now.Add(-time.Hour), "hi", "hello")
-		f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(a, 10) + `, "content": "` + content + `", "reason": "x"}], "diary": "d` + strconv.Itoa(i) + `"}`
+		f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(a, 10) + `, "source_turns": ["t` + strconv.Itoa(f.turns) + `"], "content": "` + content + `", "reason": "x"}], "diary": "d` + strconv.Itoa(i) + `"}`
 		if _, err := f.svc.Reflect(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -587,7 +587,7 @@ func TestForgettingWhileSheThinksStopsTheRun(t *testing.T) {
 	secret := f.remember("fact", "A private detail about Mika")
 	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "hi", "hello")
 	model := &editingModel{fakeModel: &fakeModel{reply: `{"update": [{"id": ` + strconv.FormatInt(dest, 10) + `,
-		"content": "Mika is Rika's sister. A private detail about Mika", "reason": "merge"}],
+		"source_turns": ["t1"], "content": "Mika is Rika's sister. A private detail about Mika", "reason": "merge"}],
 		"retire": [{"id": ` + strconv.FormatInt(secret, 10) + `, "reason": "merged"}], "diary": "d"}`}}
 	model.during = func() {
 		if _, err := f.mem.Forget(ctx, secret); err != nil {
@@ -615,7 +615,7 @@ func TestForgettingEitherSideOfAMergeForgetsBoth(t *testing.T) {
 			src := f.remember("fact", "Mika works nights")
 			other := f.remember("fact", "Unrelated")
 			f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "hi", "hello")
-			f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(dest, 10) + `, "content": "Mika is Rika's sister and works nights",
+			f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(dest, 10) + `, "source_turns": ["t1"], "content": "Mika is Rika's sister and works nights",
 				"merged_from": [` + strconv.FormatInt(src, 10) + `], "reason": "merge"}],
 				"retire": [{"id": ` + strconv.FormatInt(src, 10) + `, "reason": "merged"}], "diary": "d"}`
 			if _, err := f.svc.Reflect(ctx); err != nil {
@@ -664,7 +664,7 @@ func TestAMergeIsLinkedEvenWhenItsRetirementIsHeldBack(t *testing.T) {
 	src := f.remember("fact", "Mika works nights")
 	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "hi", "hello")
 	f.model.reply = `{"update": [
-		{"id": ` + strconv.FormatInt(dest, 10) + `, "content": "Mika is Rika's sister and works nights", "merged_from": [` + strconv.FormatInt(src, 10) + `], "reason": "merge"},
+		{"id": ` + strconv.FormatInt(dest, 10) + `, "source_turns": ["t1"], "content": "Mika is Rika's sister and works nights", "merged_from": [` + strconv.FormatInt(src, 10) + `], "reason": "merge"},
 		{"id": 9999, "content": "refused", "reason": "x"}],
 		"retire": [{"id": ` + strconv.FormatInt(src, 10) + `, "reason": "merged"}], "diary": "d"}`
 	if _, err := f.svc.Reflect(ctx); err != nil {
@@ -688,7 +688,7 @@ func TestInvalidMergeSourcesRefuseTheUpdate(t *testing.T) {
 	src := f.remember("fact", "Mika works nights")
 	for _, from := range []string{"9999", strconv.FormatInt(dest, 10)} {
 		f.say(f.now.Add(-time.Minute), "hi", "hello")
-		f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(dest, 10) + `, "content": "merged", "merged_from": [` + from + `], "reason": "merge"}],
+		f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(dest, 10) + `, "source_turns": ["t1"], "content": "merged", "merged_from": [` + from + `], "reason": "merge"}],
 			"retire": [{"id": ` + strconv.FormatInt(src, 10) + `, "reason": "merged"}], "diary": "d"}`
 		if _, err := f.svc.Reflect(ctx); err != nil {
 			t.Fatal(err)
@@ -712,8 +712,8 @@ func TestForgottenWordsAreNotSavedAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "I still owe Mika fifty dollars", "Noted.")
-	f.model.reply = `{"save": [{"kind": "fact", "content": "owes mika fifty dollars.", "reason": "said so"}],
-		"update": [{"id": ` + strconv.FormatInt(keep, 10) + `, "content": "Owes Mika fifty dollars", "reason": "x"}], "diary": "d"}`
+	f.model.reply = `{"save": [{"source_turns": ["t1"], "kind": "fact", "content": "owes mika fifty dollars.", "reason": "said so"}],
+		"update": [{"id": ` + strconv.FormatInt(keep, 10) + `, "source_turns": ["t1"], "content": "Owes Mika fifty dollars", "reason": "x"}], "diary": "d"}`
 	summary, err := f.svc.Reflect(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -740,7 +740,7 @@ func TestUndoingAMergeUnlinksIt(t *testing.T) {
 	dest := f.remember("person", "Mika is Rika's sister")
 	src := f.remember("fact", "Mika works nights")
 	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "hi", "hello")
-	f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(dest, 10) + `, "content": "Mika is Rika's sister and works nights",
+	f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(dest, 10) + `, "source_turns": ["t1"], "content": "Mika is Rika's sister and works nights",
 		"merged_from": [` + strconv.FormatInt(src, 10) + `], "reason": "merge"}],
 		"retire": [{"id": ` + strconv.FormatInt(src, 10) + `, "reason": "merged"}], "diary": "d"}`
 	if _, err := f.svc.Reflect(ctx); err != nil {
@@ -770,7 +770,7 @@ func TestForgettingBlocksEarlierWordingsToo(t *testing.T) {
 	a := f.remember("fact", "Owes Mika fifty dollars")
 	keep := f.remember("fact", "Likes tea")
 	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "hi", "hello")
-	f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(a, 10) + `, "content": "Owes Mika money", "reason": "x"}], "diary": "d"}`
+	f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(a, 10) + `, "source_turns": ["t1"], "content": "Owes Mika money", "reason": "x"}], "diary": "d"}`
 	if _, err := f.svc.Reflect(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -793,7 +793,7 @@ func TestUndoingALaterMergeClearsLaterCopies(t *testing.T) {
 	dest := f.remember("person", "Mika is Rika's sister")
 	src := f.remember("fact", "Mika works nights")
 	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "hi", "hello")
-	f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(dest, 10) + `, "content": "Mika is Rika's sister and works nights",
+	f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(dest, 10) + `, "source_turns": ["t1"], "content": "Mika is Rika's sister and works nights",
 		"merged_from": [` + strconv.FormatInt(src, 10) + `], "reason": "merge"}], "diary": "d"}`
 	if _, err := f.svc.Reflect(ctx); err != nil {
 		t.Fatal(err)
@@ -874,7 +874,7 @@ func TestAChainedMergeIsUndoneFromTheEnd(t *testing.T) {
 	c := f.remember("fact", "C fact")
 	merge := func(dest, src int64, content string) {
 		f.say(f.now.Add(-time.Hour), "hi", "hello")
-		f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(dest, 10) + `, "content": "` + content + `", "merged_from": [` + strconv.FormatInt(src, 10) + `], "reason": "merge"}], "diary": "d"}`
+		f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(dest, 10) + `, "source_turns": ["t` + strconv.Itoa(f.turns) + `"], "content": "` + content + `", "merged_from": [` + strconv.FormatInt(src, 10) + `], "reason": "merge"}], "diary": "d"}`
 		if _, err := f.svc.Reflect(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -903,7 +903,7 @@ func TestAnEarlierMergeWaitsForLaterChanges(t *testing.T) {
 	b := f.remember("fact", "B fact")
 	for range 2 {
 		f.say(f.now.Add(-time.Hour), "hi", "hello")
-		f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(a, 10) + `, "content": "A fact and B fact", "merged_from": [` + strconv.FormatInt(b, 10) + `], "reason": "merge"}], "diary": "d"}`
+		f.model.reply = `{"update": [{"id": ` + strconv.FormatInt(a, 10) + `, "source_turns": ["t` + strconv.Itoa(f.turns) + `"], "content": "A fact and B fact", "merged_from": [` + strconv.FormatInt(b, 10) + `], "reason": "merge"}], "diary": "d"}`
 		if _, err := f.svc.Reflect(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -920,7 +920,7 @@ func TestTheStoredSummaryHoldsNoWordsOfHers(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
 	f.say(time.Date(2026, 10, 19, 12, 0, 0, 0, f.loc), "hi", "hello")
-	f.model.reply = `{"save": [{"kind": "fact", "content": "Owes Mika fifty dollars"}], "diary": "d", "summary": "Saved that Rika owes Mika fifty dollars"}`
+	f.model.reply = `{"save": [{"source_turns": ["t1"], "kind": "fact", "content": "Owes Mika fifty dollars"}], "diary": "d", "summary": "Saved that Rika owes Mika fifty dollars"}`
 	if _, err := f.svc.Reflect(ctx); err != nil {
 		t.Fatal(err)
 	}

@@ -15,7 +15,7 @@ import (
 // askedApproval reports whether res says it put an action up for approval,
 // naming the approval its card shows.
 func askedApproval(res agent.Result) bool {
-	return res.Card != nil && strings.HasPrefix(res.Content, "Asked Rika to approve (approval #"+res.Card.ID+"); it will run when they allow it.")
+	return res.Card != nil && strings.HasPrefix(res.Content, "Asked Rika to approve ") && strings.Contains(res.Content, "(approval #"+res.Card.ID+"); it will run when they allow it.")
 }
 
 func (f *fixture) tool(name string) agent.Tool {
@@ -117,7 +117,7 @@ func TestSummarySearchReadTools(t *testing.T) {
 	if !strings.Contains(res.Content, "Weekly digest") || strings.Contains(res.Content, "answer please") || res.Card == nil {
 		t.Errorf("filtered search:\n%s", res.Content)
 	}
-	if res = f.mustCall("mail_search", `{"query":"zebra"}`); res.Content != "No matching mail." {
+	if res = f.mustCall("mail_search", `{"query":"zebra"}`); res.Content != "No matching mail in the inbox." {
 		t.Errorf("empty search = %q", res.Content)
 	}
 	if _, err := f.call("mail_search", `{"colour":"red"}`); err == nil {
@@ -357,7 +357,7 @@ func TestRuleProposeTool(t *testing.T) {
 	if r.Notify {
 		t.Error("a proposal made in conversation must not also notify")
 	}
-	if r.Kind != "mail_rule_create" || r.Title != "Archive mail from shop.example.net?" || r.Detail != "You never open these." || r.Scope != "" ||
+	if r.Kind != "mail_rule_create" || r.Title != "Archive mail from shop.example.net?" || !strings.HasPrefix(r.Detail, "You never open these.") || r.Scope != "" ||
 		!reflect.DeepEqual(spec, RuleSpec{From: "@shop.example.net", Action: "archive"}) {
 		t.Errorf("request %+v spec %+v", r, spec)
 	}

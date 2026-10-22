@@ -104,6 +104,66 @@ func TestStatus(t *testing.T) {
 	}
 }
 
+func TestStatusIgnoresCancelledRequests(t *testing.T) {
+	f := newFixture(t)
+	f.logger.Error("request failed", "method", "GET", "path", "/api/x", "error", "list: context canceled")
+	f.logger.Error("request failed", "method", "GET", "path", "/api/y", "error", "disk full")
+	out := f.run(t, "self_status")
+	if !strings.Contains(out, "1 errors, 0 warnings") {
+		t.Errorf("status:\n%s", out)
+	}
+}
+
+func TestStatusFlagsOverdueRoutines(t *testing.T) {
+	f := newFixture(t)
+	now := time.Now().UTC()
+	nop := func(context.Context) (string, error) { return "", nil }
+	hourly := func(_ context.Context, now, last time.Time) (time.Time, bool) {
+		if last.IsZero() {
+			return now, true
+		}
+		return last.Add(time.Hour), true
+	}
+	// Outside its hours a routine is next due when they start again, however
+	// long ago it last ran.
+	sleeping := func(_ context.Context, now, _ time.Time) (time.Time, bool) { return now.Add(6 * time.Hour), true }
+	off := func(context.Context, time.Time, time.Time) (time.Time, bool) { return time.Time{}, false }
+	f.jobs.Add(jobs.Job{Name: "sweep", Next: hourly, Run: nop})
+	f.jobs.Add(jobs.Job{Name: "fresh", Next: hourly, Run: nop})
+	f.jobs.Add(jobs.Job{Name: "sleeping", Next: sleeping, Run: nop})
+	f.jobs.Add(jobs.Job{Name: "off", Next: off, Run: nop})
+	f.jobs.Add(jobs.Job{Name: "failing", Next: hourly, Run: nop})
+	add := func(job, status string, ago time.Duration) {
+		t.Helper()
+		at := now.Add(-ago).Format(time.RFC3339)
+		if _, err := f.store.DB().ExecContext(t.Context(),
+			`INSERT INTO job_runs (job, status, started_at, finished_at) VALUES (?, ?, ?, ?)`, job, status, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 5; i >= 0; i-- { // hourly until 5 h ago, then silence
+		add("sweep", jobs.StatusOK, time.Duration(5+i)*time.Hour)
+		add("sleeping", jobs.StatusOK, time.Duration(5+i)*time.Hour)
+		add("off", jobs.StatusOK, time.Duration(5+i)*time.Hour)
+		add("fresh", jobs.StatusOK, time.Duration(i)*time.Hour+time.Minute)
+		add("failing", jobs.StatusFailed, time.Duration(i)*time.Hour+time.Minute)
+	}
+	out := f.run(t, "self_status")
+	for _, want := range []string{"Routine sweep:", "last success 5.0 h ago -- OVERDUE (was due",
+		"Routine failing: failed", "never succeeded"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status lacks %q:\n%s", want, out)
+		}
+	}
+	for _, line := range strings.Split(out, "\n") {
+		for _, name := range []string{"fresh", "sleeping", "off", "failing"} {
+			if strings.Contains(line, "Routine "+name+":") && strings.Contains(line, "OVERDUE") {
+				t.Errorf("%s is flagged: %s", name, line)
+			}
+		}
+	}
+}
+
 func TestLogs(t *testing.T) {
 	f := newFixture(t)
 	f.logger.Info("turn start", "turn_id", "t1")

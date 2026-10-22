@@ -24,8 +24,15 @@ func (f fakeWeather) Forecast(context.Context, string) (weather.Weather, error) 
 
 type fakeReminders struct{ list []reminders.Reminder }
 
-func (f fakeReminders) List(context.Context, string) ([]reminders.Reminder, error) {
-	return f.list, nil
+func (f fakeReminders) List(_ context.Context, which string) ([]reminders.Reminder, error) {
+	var out []reminders.Reminder
+	for _, r := range f.list {
+		past := r.Status != "" && r.Status != reminders.StatusScheduled
+		if past == (which == reminders.ListPast) {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
 
 func briefing(t *testing.T, f *fixture) (string, []string) {
@@ -53,6 +60,9 @@ func TestBriefingGathersTheNextDay(t *testing.T) {
 		{ID: "1", Text: "Take the bins out", At: at(20, 18, 0)},
 		{ID: "2", Text: "Call the vet", At: at(21, 9, 0)},
 		{ID: "3", Text: "Next week's thing", At: at(27, 9, 0)},
+		{ID: "4", Text: "Water the plants", At: at(20, 6, 0), Status: reminders.StatusFired},
+		{ID: "5", Text: "Ancient fired thing", At: at(10, 6, 0), Status: reminders.StatusFired},
+		{ID: "6", Text: "Finished thing", At: at(20, 7, 0), Status: reminders.StatusDone},
 	}}
 	f.cal.events = []calendar.Event{
 		{UID: "d", Title: "Dentist", Start: at(20, 15, 0), End: at(20, 16, 0), Location: "12 Main St"},
@@ -67,9 +77,14 @@ func TestBriefingGathersTheNextDay(t *testing.T) {
 	out, kinds := briefing(t, f)
 	for _, want := range []string{"Give this as your morning briefing", "Today is Tuesday, October 20, 2026. It's 14:00 now.", "Rain",
 		"15:00–16:00 Dentist at 12 Main St", "Wed 10:00–10:30 Early call", "All day Wed Oct 21: Market", "Pay rent (due 2026-10-19)", "18:00 Take the bins out",
-		"Wed 09:00 Call the vet", "Landlord: Lease (Renewal terms)", "<<<MAIL ", "Ask how Mika's visit went"} {
+		"Wed 09:00 Call the vet", "fired 06:00: Water the plants", "Landlord: Lease (Renewal terms)", "<<<MAIL ", "Ask how Mika's visit went"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("result lacks %q:\n%s", want, out)
+		}
+	}
+	for _, not := range []string{"Ancient fired thing", "Finished thing"} {
+		if strings.Contains(out, not) {
+			t.Errorf("%q is in the briefing", not)
 		}
 	}
 	if strings.Contains(out, "Next week's thing") {
@@ -106,7 +121,10 @@ func TestTheDaysFirstGoodMorningOpensWithTheBriefing(t *testing.T) {
 	if open("morning! what's the weather?") != nil || open("good evening") != nil {
 		t.Error("only \"good morning\" starts the briefing")
 	}
-	settle := open("Good  Morning, Renamon.")
+	if open("when I come through later and say, oh, good morning, what would you do?") != nil {
+		t.Error("a hypothetical good morning inside a long question started the briefing")
+	}
+	settle := open("hey Renamon, good morning!")
 	if settle == nil {
 		t.Fatal("the day's first good morning didn't start it")
 	}

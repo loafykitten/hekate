@@ -25,11 +25,8 @@ const CheckInTool = "evening_checkin"
 
 const (
 	// A check-in missed while the service was down is still asked within this.
-	checkInCatchUp = time.Hour
-	checkInTimeout = time.Minute
-	// The day being talked over lasts until this hour of the next morning,
-	// so a check-in after midnight is about the day that just ended.
-	dayTurnHour      = 6
+	checkInCatchUp   = time.Hour
+	checkInTimeout   = time.Minute
 	maxCheckInTasks  = 8
 	maxCheckInEvents = 6
 	// Tomorrow's first commitments: this many events.
@@ -61,7 +58,7 @@ func (s *Service) checkInAt(ctx context.Context) (jobs.Clock, bool) {
 // time it's still the day before.
 func (s *Service) talkedOverDay(t time.Time) string {
 	local := t.In(s.loc)
-	if local.Hour() < dayTurnHour {
+	if local.Hour() < jobs.DayTurnHour {
 		local = time.Date(local.Year(), local.Month(), local.Day()-1, 12, 0, 0, 0, s.loc)
 	}
 	return local.Format(time.DateOnly)

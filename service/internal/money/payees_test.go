@@ -56,11 +56,11 @@ func TestLabelPayeeRoundTrip(t *testing.T) {
 		t.Errorf("msg = %q", msg)
 	}
 	got, err := f.svc.labels(ctx)
-	if err != nil || got[id] != (payeeLabel{kindSubscription, "my streaming"}) {
+	if err != nil || got[id] != (payeeLabel{kind: kindSubscription, note: "my streaming"}) {
 		t.Errorf("labels = %+v, %v", got, err)
 	}
 	f.label("Streamly", false, "bill", "") // a new answer replaces the old
-	if got, _ = f.svc.labels(ctx); got[id] != (payeeLabel{kindBill, ""}) {
+	if got, _ = f.svc.labels(ctx); got[id] != (payeeLabel{kind: kindBill}) {
 		t.Errorf("after relabel = %+v", got)
 	}
 	if msg := f.label("Streamly", false, "unknown", "ignored"); !strings.Contains(msg, "unconfirmed again") {

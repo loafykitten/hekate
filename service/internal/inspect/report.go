@@ -49,17 +49,21 @@ func (s *Service) Status(ctx context.Context) (string, error) {
 			return "", err
 		}
 		for _, name := range s.jobs.Names() {
-			fmt.Fprintf(&b, "- Routine %s: %s\n", name, s.describeRun(latest[name]))
+			fmt.Fprintf(&b, "- Routine %s: %s%s\n", name, s.describeRun(latest[name]), s.freshness(ctx, name, latest[name], now))
 		}
 	}
 	if s.ring != nil {
 		warns := s.ring.Query(logging.Query{MinLevel: slog.LevelWarn, Since: now.Add(-24 * time.Hour)})
 		errs := 0
 		for _, r := range warns {
-			if r.Level >= slog.LevelError {
+			switch {
+			case r.Level >= slog.LevelError && clientCancelled(r):
+				// an older log line: a client hung up, nothing failed here
+			case r.Level >= slog.LevelError:
 				errs++
 			}
 		}
+		warns = slices.DeleteFunc(slices.Clone(warns), func(r logging.Record) bool { return r.Level >= slog.LevelError && clientCancelled(r) })
 		fmt.Fprintf(&b, "- Logs, last 24 h (since the last restart at most): %d errors, %d warnings. self_logs shows them.\n", errs, len(warns)-errs)
 	}
 	if s.deployLog != "" {
@@ -74,6 +78,46 @@ func (s *Service) Status(ctx context.Context) (string, error) {
 		}
 	}
 	return b.String(), nil
+}
+
+// clientCancelled is a request that failed only because its client went away.
+func clientCancelled(r logging.Record) bool {
+	return r.Message == "request failed" && strings.Contains(r.Attrs["error"], "context canceled")
+}
+
+// overdueGrace is how far past its due time a routine may start before it
+// counts as overdue: a run can take up to the runner's ten-minute timeout.
+const overdueGrace = 15 * time.Minute
+
+// freshness says how long ago a routine last succeeded, and flags it when its
+// own schedule says it should have run by now and it hasn't. A routine that is
+// switched off, or sleeping outside its hours, is never flagged.
+func (s *Service) freshness(ctx context.Context, name string, latest *jobs.Run, now time.Time) string {
+	if latest == nil {
+		return ""
+	}
+	runs, err := s.jobs.Runs(ctx, name, 12)
+	if err != nil {
+		return ""
+	}
+	var lastOK string
+	for _, r := range runs { // newest first
+		if r.Status == jobs.StatusOK {
+			lastOK = r.StartedAt
+			if r.FinishedAt != nil {
+				lastOK = *r.FinishedAt
+			}
+			break
+		}
+	}
+	out := "; never succeeded in its recorded runs"
+	if t, err := time.Parse(time.RFC3339, lastOK); err == nil {
+		out = "; last success " + roundDur(now.Sub(t)) + " ago"
+	}
+	if next, ok := s.jobs.Due(ctx, name); ok && now.Sub(next) > overdueGrace {
+		out += " -- OVERDUE (was due " + s.local(next) + ")"
+	}
+	return out
 }
 
 func (s *Service) describeRun(run *jobs.Run) string {

@@ -314,11 +314,8 @@ func (a *Agent) start(t *turn) {
 	prev := a.cur
 	if prev != nil {
 		prev.interrupt(prev.delivered())
-		prev.endMu.Lock()
-		if prev.fin != nil {
-			prev.fin.stopped(false) // its playback stops for this one
-		}
-		prev.endMu.Unlock()
+		// A new turn starting is not a stop: the owner is usually replying to
+		// what was said, so the previous turn's opener stays settled.
 	}
 	a.cur = t
 	a.wg.Add(1)

@@ -179,25 +179,31 @@ type searchArgs struct {
 	From       string `json:"from"`
 	Category   string `json:"category"`
 	Account    string `json:"account"`
+	Folder     string `json:"folder"`
 	UnreadOnly bool   `json:"unread_only"`
 	Days       int    `json:"days"`
 	Limit      int    `json:"limit"`
+	Offset     int    `json:"offset"`
 }
 
 func (s *Service) searchTool() agent.Tool {
 	return agent.Tool{
 		Name: "mail_search",
-		Description: "Search the owner's email by words (sender, subject and summary), sender address or @domain, category, account " +
-			"or age. Searches mail Hekate has seen: the inbox and anything she filed. Returns message ids for mail_read and the " +
-			"other mail tools. Categories: " + strings.Join(categories, ", ") + ". " + untrustedNote,
+		Description: "Search the owner's email by words (sender, subject and summary), sender address or @domain, category, account, " +
+			"folder or age. By default it searches the inbox only; set folder to archive, trash or all to look elsewhere. " +
+			"Words must all match; put an uppercase OR between alternatives (\"eleven labs OR elevenlabs\"). " +
+			"Returns message ids for mail_read and the other mail tools. If more messages match than the limit, the result says " +
+			"so: pass offset to see the next ones. Categories: " + strings.Join(categories, ", ") + ". " + untrustedNote,
 		Schema: schema(`{
-			"query":{"type":"string","description":"Words to find in the sender, subject or summary."},
+			"query":{"type":"string","description":"Words to find in the sender, subject or summary. All must match; use an uppercase OR between alternatives."},
 			"from":{"type":"string","description":"A sender address, a name, or @domain."},
 			"category":{"type":"string","enum":["needs_reply","important","personal","receipt","notification","newsletter","promo"]},
 			"account":{"type":"string","description":"Only this mail account (its label)."},
+			"folder":{"type":"string","enum":["inbox","archive","trash","all"],"description":"Where to look. Default inbox."},
 			"unread_only":{"type":"boolean"},
 			"days":{"type":"integer","description":"Only mail from the last this many days."},
-			"limit":{"type":"integer","description":"Default 20, at most 50."}}`),
+			"limit":{"type":"integer","description":"Default 20, at most 50."},
+			"offset":{"type":"integer","description":"Skip this many matches, to page through more than the limit."}}`),
 		Effect:  agent.EffectRead,
 		Label:   "Searching your mail",
 		Timeout: toolTimeout,
@@ -209,22 +215,72 @@ func (s *Service) searchTool() agent.Tool {
 			if a.Limit <= 0 {
 				a.Limit = defaultSearch
 			}
-			msgs, err := s.Messages(ctx, Query{
-				Text: a.Query, From: a.From, Category: a.Category, Account: a.Account, AllFolders: true,
-				UnreadOnly: a.UnreadOnly, Days: a.Days, Limit: min(a.Limit, maxSearch),
-			})
+			folder := strings.ToLower(strings.TrimSpace(a.Folder))
+			if folder == "" {
+				folder = folderInbox
+			}
+			q := Query{
+				Text: a.Query, From: a.From, Category: a.Category, Account: a.Account, Folder: folder,
+				UnreadOnly: a.UnreadOnly, Days: a.Days, Limit: min(a.Limit, maxSearch), Offset: max(a.Offset, 0),
+			}
+			msgs, err := s.Messages(ctx, q)
 			if err != nil {
 				return agent.Result{}, err
 			}
-			if len(msgs) == 0 {
-				return agent.Result{Content: "No matching mail."}, nil
+			total, err := s.Count(ctx, q)
+			if err != nil {
+				return agent.Result{}, err
 			}
+			scope := "in the " + folder
+			if folder == folderAll {
+				scope = "in all folders"
+			} else if folder != folderInbox {
+				scope += " folder"
+			}
+			if len(msgs) == 0 {
+				text := "No matching mail " + scope + "."
+				if q.Offset > 0 && total > 0 {
+					text = fmt.Sprintf("No more mail past offset %d: %d matched %s.", q.Offset, total, scope)
+				} else if folder != folderAll {
+					if counts, err := s.FolderCounts(ctx, q); err == nil {
+						if note := otherFolders(counts, folder); note != "" {
+							text += " It matches elsewhere: " + note + " (use folder=all or that folder)."
+						}
+					}
+				}
+				return agent.Result{Content: text}, nil
+			}
+			head := fmt.Sprintf("%s %s, newest first.", plural(len(msgs), "message", "messages"), scope)
+			if total > len(msgs)+q.Offset {
+				head = fmt.Sprintf("Showing %d-%d of %d matches %s, newest first; %d more: call again with offset=%d.",
+					q.Offset+1, q.Offset+len(msgs), total, scope, total-q.Offset-len(msgs), q.Offset+len(msgs))
+			} else if q.Offset > 0 {
+				head = fmt.Sprintf("Showing %d-%d of %d matches %s (the last ones), newest first.", q.Offset+1, q.Offset+len(msgs), total, scope)
+			}
+			if folder == folderAll {
+				if counts, err := s.FolderCounts(ctx, q); err == nil {
+					head += " Matches by folder: " + otherFolders(counts, "") + "."
+				}
+			}
+			stored := head + "\n" + compactFence(messageLines(msgs, 22, 38), storedBudget-len(head)-fenceCost())
 			return agent.Result{
-				Content: s.wrapList(fmt.Sprintf("%s, newest first.", plural(len(msgs), "message", "messages")), msgs),
+				Content: s.wrapList(head, msgs),
+				Stored:  stored,
 				Card:    Card("Mail", msgs, nil),
 			}, nil
 		}),
 	}
+}
+
+// otherFolders words per-folder counts, leaving out the folder named skip.
+func otherFolders(counts map[string]int, skip string) string {
+	var parts []string
+	for _, k := range []string{folderInbox, folderArchive, folderTrash, folderOther} {
+		if k != skip && counts[k] > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", counts[k], k))
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 func (s *Service) readTool() agent.Tool {
@@ -275,36 +331,92 @@ func (s *Service) readTool() agent.Tool {
 }
 
 // directOrBulk runs a bulk-capable action at once for up to ten messages and
-// asks for approval beyond that.
-func (s *Service) directOrBulk(ctx context.Context, ids []int64, action, folder, title string, verb, suffix string) (agent.Result, error) {
+// asks for approval beyond that. gerund and suffix word the question ("moving
+// these 12" + " to Receipts").
+func (s *Service) directOrBulk(ctx context.Context, ids []int64, action, folder, title string, verb, gerund, suffix string) (agent.Result, error) {
 	rows, err := s.requireRows(ctx, ids)
 	if err != nil {
 		return agent.Result{}, err
 	}
+	var already []row
+	if action == ActionArchive {
+		rows, already = splitRows(rows, func(r row) bool { return s.isArchiveName(r.Account, r.Folder) })
+		if len(rows) == 0 {
+			return alreadyThere(already, "Archive"), nil
+		}
+		ids = rowIDs(rows)
+		title = "Archive " + plural(len(ids), "message", "messages") + "?"
+	}
+	var parts []part
+	var card *agent.Card
 	if len(ids) > maxDirect {
-		return s.ask(ctx, approvals.Request{
+		res, head, err := s.askHead(ctx, approvals.Request{
 			Kind:    KindBulk,
 			Title:   title,
 			Detail:  describeRows(rows),
 			Payload: payloadOf(bulkPayload{Action: action, IDs: ids, Folder: folder}),
-		})
+		}, fmt.Sprintf("%s these %d%s", gerund, len(ids), suffix))
+		if err != nil {
+			return agent.Result{}, err
+		}
+		card = res.Card
+		parts = append(parts, part{head: head, detail: strings.TrimPrefix(res.Content, head), rows: rows})
+	} else {
+		out, err := s.perform(ctx, action, folder, ids, nil)
+		if err != nil {
+			return agent.Result{}, err
+		}
+		s.changed()
+		text, err := summarize(verb, out, suffix)
+		if err != nil {
+			return agent.Result{Content: err.Error() + "."}, nil
+		}
+		msgs := make([]Message, 0, len(ids))
+		fresh := make([]row, 0, len(ids))
+		for _, id := range ids {
+			if r, err := s.rowByID(ctx, id); err == nil {
+				fresh = append(fresh, r)
+				msgs = append(msgs, r.message())
+			}
+		}
+		card = Card("Mail", msgs, idStrings(ids))
+		parts = append(parts, part{head: text + ".", rows: fresh})
 	}
-	out, err := s.perform(ctx, action, folder, ids, nil)
-	if err != nil {
-		return agent.Result{}, err
+	if len(already) > 0 {
+		parts = append(parts, part{head: fmt.Sprintf("%s already in Archive, left alone:", plural(len(already), "message was", "messages were")), rows: already})
 	}
-	s.changed()
-	text, err := summarize(verb, out, suffix)
-	if err != nil {
-		return agent.Result{Content: err.Error() + "."}, nil
-	}
-	msgs := make([]Message, 0, len(ids))
-	for _, id := range ids {
-		if m, err := s.Message(ctx, id); err == nil {
-			msgs = append(msgs, m)
+	content, stored := report(parts)
+	return agent.Result{Content: content, Stored: stored, Card: card}, nil
+}
+
+// splitRows divides rows into those that fail and those that pass skip.
+func splitRows(rows []row, skip func(row) bool) (keep, skipped []row) {
+	for _, r := range rows {
+		if skip(r) {
+			skipped = append(skipped, r)
+		} else {
+			keep = append(keep, r)
 		}
 	}
-	return agent.Result{Content: text + ".", Card: Card("Mail", msgs, idStrings(ids))}, nil
+	return keep, skipped
+}
+
+func rowIDs(rows []row) []int64 {
+	out := make([]int64, len(rows))
+	for i, r := range rows {
+		out[i] = r.ID
+	}
+	return out
+}
+
+// alreadyThere is the result when every selected message already is where the
+// action would put it.
+func alreadyThere(rows []row, where string) agent.Result {
+	content, stored := report([]part{{
+		head: fmt.Sprintf("Nothing to do: %s already in %s.", plural(len(rows), "message is", "messages are"), where),
+		rows: rows,
+	}})
+	return agent.Result{Content: content, Stored: stored}
 }
 
 func idStrings(ids []int64) []string {
@@ -337,7 +449,7 @@ func (s *Service) archiveTool() agent.Tool {
 			if err != nil {
 				return agent.Result{}, err
 			}
-			return s.directOrBulk(ctx, ids, ActionArchive, "", "Archive "+plural(len(ids), "message", "messages")+"?", "Archived", "")
+			return s.directOrBulk(ctx, ids, ActionArchive, "", "Archive "+plural(len(ids), "message", "messages")+"?", "Archived", "archiving", "")
 		}),
 	}
 }
@@ -369,7 +481,7 @@ func (s *Service) moveTool() agent.Tool {
 				return agent.Result{}, errors.New("folder is required")
 			}
 			title := "Move " + plural(len(ids), "message", "messages") + " to " + oneLine(folder, 60) + "?"
-			return s.directOrBulk(ctx, ids, ActionMove, folder, title, "Moved", " to "+folder)
+			return s.directOrBulk(ctx, ids, ActionMove, folder, title, "Moved", "moving", " to "+folder)
 		}),
 	}
 }
@@ -402,7 +514,7 @@ func (s *Service) markTool() agent.Tool {
 				action, word = actionMarkUnread, "unread"
 			}
 			title := "Mark " + plural(len(ids), "message", "messages") + " " + word + "?"
-			return s.directOrBulk(ctx, ids, action, "", title, "Marked", " "+word)
+			return s.directOrBulk(ctx, ids, action, "", title, "Marked", "marking", " "+word)
 		}),
 	}
 }
@@ -431,17 +543,77 @@ func (s *Service) trashTool() agent.Tool {
 			if err != nil {
 				return agent.Result{}, err
 			}
-			req := approvals.Request{Kind: KindTrash, Detail: describeRows(rows), Payload: payloadOf(idsPayload{IDs: ids})}
-			title := "Move " + plural(len(ids), "message", "messages")
-			if key := sharedSender(rows); key != "" {
-				title += " from " + oneLine(senderLabel(key), 80)
-				req.Scope, req.ScopeLabel = "from:"+key, "mail from "+oneLine(senderLabel(key), 80)
-				req.Within = withinScopes(key)
-			}
-			req.Title = title + " to Trash?"
-			return s.ask(ctx, req)
+			return s.trash(ctx, rows)
 		}),
 	}
+}
+
+// trashRequest is the approval for trashing rows: scoped to their sender when
+// they share one.
+func trashRequest(rows []row) approvals.Request {
+	req := approvals.Request{Kind: KindTrash, Detail: describeRows(rows), Payload: payloadOf(idsPayload{IDs: rowIDs(rows)})}
+	title := "Move " + plural(len(rows), "message", "messages")
+	if key := sharedSender(rows); key != "" {
+		title += " from " + oneLine(senderLabel(key), 80)
+		req.Scope, req.ScopeLabel = "from:"+key, "mail from "+oneLine(senderLabel(key), 80)
+		req.Within = withinScopes(key)
+	}
+	req.Title = title + " to Trash?"
+	return req
+}
+
+// trash asks to trash rows. Mail already in the trash is left out, mail whose
+// sender has a standing "always allow" runs at once, and the rest goes up as
+// one approval.
+func (s *Service) trash(ctx context.Context, rows []row) (agent.Result, error) {
+	rows, already := splitRows(rows, func(r row) bool { return isTrashName(r.Folder) })
+	if len(rows) == 0 {
+		return alreadyThere(already, "Trash"), nil
+	}
+	var covered [][]row
+	byAddr := map[string]int{}
+	var rest []row
+	for _, r := range rows {
+		if !s.ruleCovers(ctx, KindTrash, r.FromAddr) {
+			rest = append(rest, r)
+			continue
+		}
+		i, ok := byAddr[r.FromAddr]
+		if !ok {
+			i = len(covered)
+			byAddr[r.FromAddr] = i
+			covered = append(covered, nil)
+		}
+		covered[i] = append(covered[i], r)
+	}
+	var parts []part
+	var card *agent.Card
+	run := func(group []row) error {
+		res, head, err := s.askHead(ctx, trashRequest(group), fmt.Sprintf("trashing these %d", len(group)))
+		if err != nil {
+			return err
+		}
+		parts = append(parts, part{head: head, detail: strings.TrimPrefix(res.Content, head), rows: group, first: strings.HasPrefix(head, "Asked")})
+		if card == nil || strings.HasPrefix(head, "Asked") {
+			card = res.Card
+		}
+		return nil
+	}
+	for _, g := range covered {
+		if err := run(g); err != nil {
+			return agent.Result{}, err
+		}
+	}
+	if len(rest) > 0 {
+		if err := run(rest); err != nil {
+			return agent.Result{}, err
+		}
+	}
+	if len(already) > 0 {
+		parts = append(parts, part{head: fmt.Sprintf("%s already in Trash, left alone:", plural(len(already), "message was", "messages were")), rows: already})
+	}
+	content, stored := report(parts)
+	return agent.Result{Content: content, Stored: stored, Card: card}, nil
 }
 
 // withinScopes lists the broader sender scopes whose "Always" also covers key
@@ -488,7 +660,7 @@ func (s *Service) unsubscribeTool() agent.Tool {
 					"Don't try another way. Tell the user they can use the unsubscribe link in the email themselves."}, nil
 			}
 			who := oneLine(senderLabel(r.FromAddr), 80)
-			return s.ask(ctx, approvals.Request{
+			res, head, err := s.askHead(ctx, approvals.Request{
 				Kind:       KindUnsubscribe,
 				Title:      "Unsubscribe from " + who + "?",
 				Detail:     "Sends a one-click unsubscribe request to the sender's server. Nothing is emailed.",
@@ -496,7 +668,12 @@ func (s *Service) unsubscribeTool() agent.Tool {
 				ScopeLabel: "mail from " + who,
 				Within:     withinScopes(r.FromAddr),
 				Payload:    payloadOf(idPayload{ID: r.ID}),
-			})
+			}, "unsubscribing from "+who)
+			if err != nil {
+				return agent.Result{}, err
+			}
+			content, stored := report([]part{{head: head, detail: strings.TrimPrefix(res.Content, head), rows: []row{r}}})
+			return agent.Result{Content: content, Stored: stored, Card: res.Card}, nil
 		}),
 	}
 }
@@ -594,12 +771,20 @@ func (s *Service) ruleProposeTool() agent.Tool {
 			if found {
 				title, detail = "Update the rule: "+spec.label()+"?", "Replaces “"+existing.Label+"”. "+detail
 			}
-			return s.ask(ctx, approvals.Request{
+			note := spec.categoryNote()
+			if note != "" {
+				detail += "\n" + note
+			}
+			res, err := s.ask(ctx, approvals.Request{
 				Kind:    KindRuleCreate,
 				Title:   title,
 				Detail:  detail,
 				Payload: payloadOf(spec),
 			})
+			if err == nil && note != "" {
+				res.Content += "\n" + note
+			}
+			return res, err
 		}),
 	}
 }

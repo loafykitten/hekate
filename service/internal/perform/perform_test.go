@@ -137,7 +137,7 @@ func TestParse(t *testing.T) {
 		{"both", "{no} [softly] I would not.", "I would not.", "[softly] I would not.", []Mark{{"no", 0}}, []Mark{{"softly", 0}}, nil},
 		{"unknown curly dropped", "Hi {dance} there.", "Hi there.", "Hi there.", nil, nil, []string{"{dance}"}},
 		{"unknown square dropped", "Hi [shouts] there.", "Hi there.", "Hi there.", nil, nil, []string{"[shouts]"}},
-		{"expression not a gesture", "Hi {laughs} there.", "Hi there.", "Hi there.", nil, nil, []string{"{laughs}"}},
+		{"braced expression is the expression", "Hi {laughs} there.", "Hi there.", "Hi [laughs] there.", nil, []Mark{{"laughs", 3}}, nil},
 		{"gesture not an expression", "Hi [waving] there.", "Hi there.", "Hi there.", nil, nil, []string{"[waving]"}},
 		{"markdown", "**Bold** and _soft_ and `code` # done", "Bold and soft and code done", "Bold and soft and code done", nil, nil, nil},
 		{"snake case keeps a gap", "use my_var here", "use my var here", "use my var here", nil, nil, nil},
@@ -438,5 +438,29 @@ func TestBuildVisemes(t *testing.T) {
 	// Without usable timing the mouth follows loudness: an empty list.
 	if seg := Build(0, Parse("Twenty past three.", vocab), speechFor("20 past 3.", 0, 0, 0.2)); seg.Visemes == nil || len(seg.Visemes) != 0 {
 		t.Errorf("mismatched alignment visemes = %+v", seg.Visemes)
+	}
+}
+
+func TestBracedVoiceExpressionIsTheExpression(t *testing.T) {
+	got := Parse("{softly} Take your time.", vocab)
+	if got.TTSText != "[softly] Take your time." || got.Display != "Take your time." || len(got.Dropped) != 0 {
+		t.Errorf("parsed = %+v", got)
+	}
+	if len(got.Expressions) != 1 || got.Expressions[0].Name != "softly" {
+		t.Errorf("expressions = %+v", got.Expressions)
+	}
+}
+
+func TestSanitizeDropsOnlyUnknownTags(t *testing.T) {
+	for in, want := range map[string]string{
+		"{nudge} Hi there.":                  "Hi there.",
+		"Hi {nudge} there.":                  "Hi there.",
+		"{waving} Hi [warmly] there [odd].":  "{waving} Hi [warmly] there.",
+		"{softly} See [the docs](http://x).": "{softly} See [the docs](http://x).",
+		"Nothing to change.":                 "Nothing to change.",
+	} {
+		if got := Sanitize(in, vocab); got != want {
+			t.Errorf("Sanitize(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

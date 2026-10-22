@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -129,11 +130,24 @@ type Query struct {
 	From       string // an address or @domain
 	Category   string
 	Account    string
-	AllFolders bool // false: the inbox only
+	AllFolders bool // false: the inbox only (unless Folder says otherwise)
+	// Folder narrows by kind of folder: inbox, archive, trash or all. Empty
+	// falls back to AllFolders.
+	Folder     string
 	UnreadOnly bool
 	Days       int
 	Limit      int
+	Offset     int
 }
+
+// Folder kinds a search can be scoped to.
+const (
+	folderInbox   = "inbox"
+	folderArchive = "archive"
+	folderTrash   = "trash"
+	folderAll     = "all"
+	folderOther   = "other"
+)
 
 const (
 	defaultLimit = 50
@@ -145,75 +159,187 @@ func (s *Service) Messages(ctx context.Context, q Query) ([]Message, error) {
 	if !s.Configured() {
 		return []Message{}, nil
 	}
-	if q.Category != "" && q.Category != unclassified && !validCategory(q.Category) {
-		return nil, httpx.BadRequest("category must be one of %s or %s", strings.Join(categories, ", "), unclassified)
+	where, args, empty, err := s.searchWhere(&q)
+	if err != nil {
+		return nil, err
 	}
-	if q.Account != "" && s.byName[q.Account] == nil {
-		return nil, httpx.BadRequest("no mail account named %q", q.Account)
+	if empty {
+		return []Message{}, nil
 	}
 	if q.Limit <= 0 {
 		q.Limit = defaultLimit
 	}
 	q.Limit = min(q.Limit, maxLimit)
+	args = append(args, q.Limit, max(q.Offset, 0))
+	// The conditions are fixed strings chosen in searchWhere; every value is a bound argument.
+	//nolint:gosec // see above
+	query := `SELECT ` + rowCols + ` FROM mail_messages m
+		WHERE ` + where + ` ORDER BY m.date DESC, m.id DESC LIMIT ? OFFSET ?`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("search mail: %w", err)
+	}
+	return collect(rows)
+}
 
-	var where []string
-	var args []any
-	if q.AllFolders {
-		where = append(where, "m.gone = 0")
-	} else {
-		where = append(where, "m.folder = 'INBOX' AND m.gone = 0")
+// FolderCounts counts the messages a query matches in each kind of folder
+// (inbox, archive, trash, other), ignoring its folder scope, limit and offset.
+func (s *Service) FolderCounts(ctx context.Context, q Query) (map[string]int, error) {
+	out := map[string]int{}
+	if !s.Configured() {
+		return out, nil
+	}
+	q.Folder = folderAll
+	where, args, empty, err := s.searchWhere(&q)
+	if err != nil || empty {
+		return out, err
+	}
+	// The conditions are fixed strings chosen in searchWhere; every value is a bound argument.
+	//nolint:gosec // see above
+	rows, err := s.db.QueryContext(ctx, `SELECT m.account, m.folder, COUNT(*) FROM mail_messages m WHERE `+where+` GROUP BY 1, 2`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("count mail: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var account, folder string
+		var n int
+		if err := rows.Scan(&account, &folder, &n); err != nil {
+			return nil, fmt.Errorf("count mail: %w", err)
+		}
+		out[s.folderKind(account, folder)] += n
+	}
+	return out, rows.Err()
+}
+
+// Count is how many messages a query matches, ignoring its limit and offset.
+func (s *Service) Count(ctx context.Context, q Query) (int, error) {
+	if !s.Configured() {
+		return 0, nil
+	}
+	where, args, empty, err := s.searchWhere(&q)
+	if err != nil || empty {
+		return 0, err
+	}
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM mail_messages m WHERE `+where, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count mail: %w", err)
+	}
+	return n, nil
+}
+
+// isTrashName reports whether a folder name's last path segment is a
+// well-known trash name ("Trash", "[Gmail]/Trash", "INBOX.Deleted Items").
+func isTrashName(folder string) bool {
+	name := strings.ToLower(folder)
+	if i := strings.LastIndexAny(name, "/."); i >= 0 {
+		name = name[i+1:]
+	}
+	return slices.Contains(trashNames, name)
+}
+
+// isArchiveName reports whether folder is the account's archive folder.
+func (s *Service) isArchiveName(account, folder string) bool {
+	a := s.byName[account]
+	return a != nil && folder != "" && strings.EqualFold(folder, a.cfg.Archive)
+}
+
+// folderKind sorts a cached folder into inbox, archive, trash or other.
+func (s *Service) folderKind(account, folder string) string {
+	switch {
+	case folder == inbox:
+		return folderInbox
+	case s.isArchiveName(account, folder):
+		return folderArchive
+	case isTrashName(folder):
+		return folderTrash
+	}
+	return folderOther
+}
+
+// searchWhere builds the WHERE clause (without LIMIT) for a query. empty is
+// true when the query cannot match anything.
+func (s *Service) searchWhere(q *Query) (where string, args []any, empty bool, err error) {
+	if q.Category != "" && q.Category != unclassified && !validCategory(q.Category) {
+		return "", nil, false, httpx.BadRequest("category must be one of %s or %s", strings.Join(categories, ", "), unclassified)
+	}
+	if q.Account != "" && s.byName[q.Account] == nil {
+		return "", nil, false, httpx.BadRequest("no mail account named %q", q.Account)
+	}
+	conds := []string{"m.gone = 0"}
+	folder := strings.ToLower(strings.TrimSpace(q.Folder))
+	if folder == "" {
+		folder = folderInbox
+		if q.AllFolders {
+			folder = folderAll
+		}
+	}
+	switch folder {
+	case folderAll:
+	case folderInbox:
+		conds = append(conds, "m.folder = 'INBOX'")
+	case folderArchive:
+		var parts []string
+		for _, a := range s.accounts {
+			parts = append(parts, "(m.account = ? AND LOWER(m.folder) = LOWER(?))")
+			args = append(args, a.cfg.Name, a.cfg.Archive)
+		}
+		if len(parts) == 0 {
+			return "", nil, true, nil
+		}
+		conds = append(conds, "("+strings.Join(parts, " OR ")+")")
+	case folderTrash:
+		var parts []string
+		for _, n := range trashNames {
+			parts = append(parts, "LOWER(m.folder) = ?", "LOWER(m.folder) LIKE ?", "LOWER(m.folder) LIKE ?")
+			args = append(args, n, "%/"+n, "%."+n)
+		}
+		conds = append(conds, "("+strings.Join(parts, " OR ")+")")
+	default:
+		return "", nil, false, httpx.BadRequest("folder must be inbox, archive, trash or all")
 	}
 	if q.Text != "" {
 		fts := ftsQuery(q.Text)
 		if fts == "" {
-			return []Message{}, nil
+			return "", nil, true, nil
 		}
-		where = append(where, "m.id IN (SELECT rowid FROM mail_messages_fts WHERE mail_messages_fts MATCH ?)")
+		conds = append(conds, "m.id IN (SELECT rowid FROM mail_messages_fts WHERE mail_messages_fts MATCH ?)")
 		args = append(args, fts)
 	}
 	if q.From != "" {
 		from := strings.ToLower(strings.TrimSpace(q.From))
 		switch {
 		case strings.HasPrefix(from, "@"):
-			where = append(where, "(m.from_addr LIKE ? ESCAPE '\\' OR m.from_addr LIKE ? ESCAPE '\\')")
+			conds = append(conds, "(m.from_addr LIKE ? ESCAPE '\\' OR m.from_addr LIKE ? ESCAPE '\\')")
 			args = append(args, "%"+likeEscape(from), "%."+likeEscape(from[1:]))
 		case strings.Contains(from, "@"):
-			where = append(where, "m.from_addr = ?")
+			conds = append(conds, "m.from_addr = ?")
 			args = append(args, from)
 		default:
-			where = append(where, "(m.from_addr LIKE ? ESCAPE '\\' OR LOWER(m.from_name) LIKE ? ESCAPE '\\')")
+			conds = append(conds, "(m.from_addr LIKE ? ESCAPE '\\' OR LOWER(m.from_name) LIKE ? ESCAPE '\\')")
 			args = append(args, "%"+likeEscape(from)+"%", "%"+likeEscape(from)+"%")
 		}
 	}
 	switch q.Category {
 	case "":
 	case unclassified:
-		where = append(where, "m.category IS NULL")
+		conds = append(conds, "m.category IS NULL")
 	default:
-		where = append(where, "m.category = ?")
+		conds = append(conds, "m.category = ?")
 		args = append(args, q.Category)
 	}
 	if q.Account != "" {
-		where = append(where, "m.account = ?")
+		conds = append(conds, "m.account = ?")
 		args = append(args, q.Account)
 	}
 	if q.UnreadOnly {
-		where = append(where, "m.unread = 1")
+		conds = append(conds, "m.unread = 1")
 	}
 	if q.Days > 0 {
-		where = append(where, "m.date >= ?")
+		conds = append(conds, "m.date >= ?")
 		args = append(args, stamp(s.now().AddDate(0, 0, -q.Days)))
 	}
-	args = append(args, q.Limit)
-	// The conditions are fixed strings chosen above; every value is a bound argument.
-	//nolint:gosec // see above
-	query := `SELECT ` + rowCols + ` FROM mail_messages m
-		WHERE ` + strings.Join(where, " AND ") + ` ORDER BY m.date DESC, m.id DESC LIMIT ?`
-	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("search mail: %w", err)
-	}
-	return collect(rows)
+	return strings.Join(conds, " AND "), args, false, nil
 }
 
 func collect(rows *sql.Rows) ([]Message, error) {
@@ -236,18 +362,30 @@ func likeEscape(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
-// ftsQuery turns free text into a safe FTS5 query: every word must match, the
-// last as a prefix, so partial words work while typing.
+// ftsQuery turns free text into a safe FTS5 query. Words must all match; an
+// uppercase OR between terms makes them alternatives ("eleven labs OR
+// elevenlabs" finds either). The last word of each alternative is a prefix, so
+// partial words work while typing.
 func ftsQuery(text string) string {
-	words := strings.FieldsFunc(text, func(r rune) bool { return !isWordRune(r) })
-	for i, w := range words {
-		words[i] = `"` + w + `"`
+	var groups, words []string
+	flush := func() {
+		if len(words) > 0 {
+			words[len(words)-1] += "*"
+			groups = append(groups, strings.Join(words, " "))
+		}
+		words = nil
 	}
-	if len(words) == 0 {
-		return ""
+	for _, tok := range strings.Fields(text) {
+		if tok == "OR" {
+			flush()
+			continue
+		}
+		for _, w := range strings.FieldsFunc(tok, func(r rune) bool { return !isWordRune(r) }) {
+			words = append(words, `"`+w+`"`)
+		}
 	}
-	words[len(words)-1] += "*"
-	return strings.Join(words, " ")
+	flush()
+	return strings.Join(groups, " OR ")
 }
 
 func isWordRune(r rune) bool {

@@ -10,6 +10,8 @@ export class Bubble {
   private body: HTMLElement;
   private visible: HTMLElement;
   private hidden: HTMLElement;
+  // The highest (px from the top) the bubble's top edge may go: below the top buttons and pill.
+  top = MARGIN;
 
   constructor(private el: HTMLElement) {
     const body = el.querySelector<HTMLElement>(".bubble-text")!;
@@ -69,7 +71,7 @@ export class Bubble {
     const ay = ((1 - anchor.y) / 2) * h;
     const half = this.el.offsetWidth / 2;
     const x = Math.min(Math.max(ax, MARGIN + half), w - MARGIN - half);
-    const y = Math.min(Math.max(ay, MARGIN + this.el.offsetHeight), h - MARGIN);
+    const y = Math.min(Math.max(ay, this.top + this.el.offsetHeight), h - MARGIN);
     this.el.style.left = `${x}px`;
     this.el.style.top = `${y}px`;
     // Keep the tail pointing at the head even when the bubble is clamped.

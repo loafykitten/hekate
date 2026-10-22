@@ -84,6 +84,8 @@ const LIFT_MIN_SCALE = 0.72;
 const HIPS = 0.45; // of her height, from the ground
 // Room above the top of her head: the top buttons and a few lines of bubble.
 const BUBBLE_ROOM = 184;
+// The top buttons' bottom edge below the safe area, plus a gap: the bubble stays under it.
+const TOP_BAR = 60;
 
 // top, hips: where the top of her head and her hips are, as fractions of the screen height from
 // the top, unlifted. cover: px of the screen the cards hide from the bottom. headMin: the highest
@@ -273,7 +275,9 @@ export class Stage {
 
   private aimLift() {
     const height = window.innerHeight;
-    this.liftAim = liftAboveCards({ ...this.marks, height, cover: this.cover, headMin: safeTop() + BUBBLE_ROOM });
+    const top = safeTop();
+    if (this.bubble) this.bubble.top = top + TOP_BAR;
+    this.liftAim = liftAboveCards({ ...this.marks, height, cover: this.cover, headMin: top + BUBBLE_ROOM });
   }
 
   // Eases toward the aimed lift; true when it moved.

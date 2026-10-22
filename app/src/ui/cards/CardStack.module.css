@@ -3,7 +3,7 @@
   position: fixed;
   left: 0;
   right: 0;
-  bottom: calc(var(--keyboard-inset, 0px) + 136px + var(--safe-bottom));
+  bottom: calc(var(--keyboard-inset, 0px) + 136px + var(--composer-grow, 0px) + var(--safe-bottom));
   z-index: var(--z-cards);
   display: flex;
   gap: var(--space-3);

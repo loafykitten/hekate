@@ -3,7 +3,7 @@
   left: calc(var(--space-4) + var(--safe-left));
   right: calc(var(--space-4) + var(--safe-right));
   /* Clears the dock: handle + talk button + hint + safe area. */
-  bottom: calc(var(--keyboard-inset, 0px) + 160px + var(--safe-bottom));
+  bottom: calc(var(--keyboard-inset, 0px) + 160px + var(--composer-grow, 0px) + var(--safe-bottom));
   z-index: var(--z-overlay);
   display: flex;
   flex-direction: column;

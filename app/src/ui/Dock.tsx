@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { MAX_TEXT_LENGTH } from "../conversation/protocol";
 import { useConversation, useConversationState } from "./ConversationContext";
 import styles from "./Dock.module.css";
@@ -9,6 +9,8 @@ import { TalkButton } from "./TalkButton";
 
 type Mode = "voice" | "text";
 const MODE_KEY = "hekate.dockMode";
+// Lines the message field grows to before it scrolls.
+const MAX_LINES = 6;
 
 function loadMode(): Mode {
   try {
@@ -44,10 +46,37 @@ export function Dock({ onOpenLog, logOpen }: Props) {
   const state = useConversationState();
   const [mode, setMode] = useState<Mode>(loadMode);
   const [draft, setDraft] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const swipe = useRef<{ y: number; id: number }>(undefined);
   useKeyboardInset();
+
+  // The message field grows with what's typed, so a long message stays readable. How much it grew
+  // is published as --composer-grow, so what sits above the dock moves up with it.
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    const el = inputRef.current;
+    if (!el) {
+      root.style.removeProperty("--composer-grow");
+      return;
+    }
+    const fit = () => {
+      el.style.height = "";
+      const style = getComputedStyle(el);
+      const border = parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+      const want = el.scrollHeight + border;
+      const max = parseFloat(style.lineHeight) * MAX_LINES + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) + border;
+      const height = Math.min(want, max);
+      el.style.height = `${height}px`;
+      el.style.overflowY = want > max ? "auto" : "hidden";
+      root.style.setProperty("--composer-grow", `${Math.max(0, height - parseFloat(style.minHeight))}px`);
+    };
+    fit();
+    // A rotated or resized screen rewraps the draft.
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, [draft, mode]);
+  useEffect(() => () => void document.documentElement.style.removeProperty("--composer-grow"), []);
 
   function switchMode(next: Mode) {
     setMode(next);
@@ -164,10 +193,10 @@ export function Dock({ onOpenLog, logOpen }: Props) {
             <MicIcon />
           </button>
           {voiceButton}
-          <input
+          <textarea
             ref={inputRef}
             className={styles.input}
-            type="text"
+            rows={1}
             value={draft}
             maxLength={MAX_TEXT_LENGTH}
             placeholder={connected ? "Say something…" : "Offline"}
@@ -180,6 +209,10 @@ export function Dock({ onOpenLog, logOpen }: Props) {
               if (e.key === "Escape") {
                 e.preventDefault();
                 switchMode("voice");
+              } else if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                // Enter sends; Shift+Enter starts a new line.
+                e.preventDefault();
+                send();
               }
             }}
           />

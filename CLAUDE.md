@@ -21,7 +21,8 @@ deploys), `docs/HANDOFF.md` (character slice and asset pipeline), `docs/PERSONA.
 
 - **The repo is public.** No secrets, real hostnames/domains/IPs, or personal data. Real config
   lives on the homelab; examples use placeholders.
-- `main` is protected: branch, PR, `scripts/ai-review.sh`, squash-merge. Merges auto-deploy.
+- Work on a local branch, review with `scripts/ai-review.sh` (two rounds at most), squash onto
+  `main` and push. A push to `main` deploys once CI passes. No PR needed.
 - The app is manifest-driven: read rig facts (bones, morphs, clips, outlines) from
   `assets/renamon-nukorio/manifest.json` instead of hard-coding them. three.js sanitizes node
   names (`head.x` → `headx`); use the manifest's `threejs_runtime_names`.

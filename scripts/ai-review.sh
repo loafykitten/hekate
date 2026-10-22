@@ -1,96 +1,119 @@
 #!/usr/bin/env bash
-# Independent Codex review of the current branch's PR. Posts findings as a PR comment and sets
-# the `ai-review` commit status on the PR head, which branch protection requires.
-# See docs/DEVELOPMENT.md.
+# Independent Codex review of local commits before they land on main. See docs/DEVELOPMENT.md.
+#
+#   scripts/ai-review.sh [--astra] [base]   full review of base...HEAD (base: origin/main)
+#   scripts/ai-review.sh [--astra] --fixes  checks the commits since the last review: are its
+#                                           findings fixed, and is the fix diff sound
+#
+# Reports are kept in .git/ai-review/ (per worktree). Exit 0: nothing blocking; 1: blocker or
+# major findings; 2: usage error or the review could not run.
 set -euo pipefail
 
 model="gpt-6.1-sol"
-override=""
+fixes=""
+base=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --astra) model="gpt-6-astra"; shift ;;
-    --override) override="${2:?--override needs a reason}"; shift 2 ;;
-    *) echo "usage: $0 [--astra] [--override reason]" >&2; exit 2 ;;
+    --fixes) fixes=1; shift ;;
+    -*) echo "usage: $0 [--astra] [--fixes] [base]" >&2; exit 2 ;;
+    *) base="$1"; shift ;;
   esac
 done
+if [[ -n "$fixes" && -n "$base" ]]; then
+  echo "--fixes takes its range from the last review; drop the base" >&2
+  exit 2
+fi
 
-root="$(git rev-parse --show-toplevel)"
-cd "$root"
-
-# GitHub can take a few seconds to see a fresh push; wait for the PR head to match HEAD.
-for _ in 1 2 3 4 5 6 7 8 9 10; do
-  pr_json="$(gh pr view --json number,headRefOid,baseRefName,url)"
-  [[ "$(jq -r .headRefOid <<<"$pr_json")" == "$(git rev-parse HEAD)" ]] && break
-  sleep 3
-done
-pr="$(jq -r .number <<<"$pr_json")"
-head="$(jq -r .headRefOid <<<"$pr_json")"
-base="$(jq -r .baseRefName <<<"$pr_json")"
-repo="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
-
+cd "$(git rev-parse --show-toplevel)"
 if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
-  echo "Working tree is dirty; commit and push before reviewing." >&2
-  exit 1
-fi
-if [[ "$(git rev-parse HEAD)" != "$head" ]]; then
-  echo "Local HEAD differs from the PR head ($head); push first." >&2
-  exit 1
+  echo "Working tree is dirty; commit before reviewing." >&2
+  exit 2
 fi
 
-set_status() { # state description
-  gh api -X POST "repos/$repo/statuses/$head" \
-    -f state="$1" -f context="ai-review" -f description="$2" >/dev/null
-}
-
-if [[ -n "$override" ]]; then
-  gh pr comment "$pr" --body "**ai-review override** for \`${head:0:7}\`: $override"
-  set_status success "Override: ${override:0:100}"
-  echo "ai-review: success (override)"
-  exit 0
-fi
-
-git fetch -q origin "$base"
-set_status pending "Reviewing with $model"
-
-out="$(mktemp)"
-prompt="You are reviewing pull request #$pr in the Hekate repo. The change is exactly
-\`git diff origin/$base...HEAD -- . ':(exclude)**/package-lock.json' ':(exclude)**/go.sum'\`
-(lockfiles are excluded on purpose; also run \`git log origin/$base..HEAD\`). Read surrounding code as needed,
-but keep the review focused on the diff.
+dir="$(git rev-parse --absolute-git-dir)/ai-review"
+mkdir -p "$dir"
+head="$(git rev-parse HEAD)"
+excludes="-- . ':(exclude)**/package-lock.json' ':(exclude)**/go.sum'"
+rules="Read surrounding code as needed, but keep the review focused on the diff.
 Read docs/PLAN.md and docs/DEVELOPMENT.md for intent and conventions. Report real problems:
 correctness bugs, security issues (this repo is public: flag any secret, private hostname/IP or
-personal data), data loss, broken gates, races, missing tests for risky logic, and clear
-violations of the documented conventions. Severity: blocker = must not merge; major = should
-fix before merge; minor/nit = optional. Verdict is approve when there are no blocker or major
-findings. Do not report style preferences as major."
+personal data), data loss, races, missing tests for risky logic, and clear violations of the
+documented conventions. Severity: blocker = must not land; major = should fix before landing;
+minor/nit = optional. Verdict is approve when there are no blocker or major findings. Do not
+report style preferences as major."
 
-# Progress goes to .git/ai-review.log so a slow review can be watched (tail -f).
-log="$(git rev-parse --absolute-git-dir)/ai-review.log"
+if [[ -n "$fixes" ]]; then
+  last="$dir/last.json"
+  if [[ ! -f "$last" ]]; then
+    echo "No earlier review in this worktree; run a full review first." >&2
+    exit 2
+  fi
+  from="$(jq -r .head "$last")"
+  if [[ "$from" == "$head" ]]; then
+    echo "Nothing committed since the last review (${head:0:7})." >&2
+    exit 2
+  fi
+  if ! git merge-base --is-ancestor "$from" HEAD; then
+    echo "The last review's head (${from:0:7}) is no longer in this branch; run a full review." >&2
+    exit 2
+  fi
+  range="$from..HEAD"
+  round="$(( $(jq -r .round "$last") + 1 ))"
+  prompt="You are re-checking fixes in the Hekate repo after an earlier review of commit
+${from:0:7}. That review reported these findings (JSON):
+
+$(jq '.findings' "$last")
+
+The fixes are exactly \`git diff $range $excludes\` (lockfiles are excluded on purpose;
+also run \`git log $range\`). Do two things only:
+1. For each earlier blocker or major finding, decide whether these commits fix it. Report any
+   that are not fixed again, at their original severity.
+2. Review the fix diff itself for new problems it introduces.
+Do not re-review code these commits leave unchanged, and do not raise new findings about it.
+$rules"
+else
+  if [[ -z "$base" ]]; then
+    git fetch -q origin main
+    base="origin/main"
+  fi
+  range="$base...HEAD"
+  round=1
+  prompt="You are reviewing a change in the Hekate repo before it lands on main. The change is
+exactly \`git diff $range $excludes\` (lockfiles are excluded on purpose; also run
+\`git log ${base}..HEAD\`).
+$rules"
+fi
+if [[ -z "$(git log --oneline "${range/.../..}")" ]]; then
+  echo "No commits in $range." >&2
+  exit 2
+fi
+
+# Progress goes to .git/ai-review/codex.log so a slow review can be watched (tail -f).
+out="$(mktemp)"
 trap 'rm -f "$out"' EXIT
+echo "Reviewing $range with $model (round $round)…" >&2
 if ! codex exec -m "$model" -c model_reasoning_effort="high" -s read-only --ephemeral \
-  --output-schema scripts/ai-review.schema.json -o "$out" "$prompt" </dev/null >"$log" 2>&1; then
-  tail -20 "$log" >&2
-  set_status error "Codex review failed to run"
+  --output-schema scripts/ai-review.schema.json -o "$out" "$prompt" </dev/null >"$dir/codex.log" 2>&1; then
+  tail -20 "$dir/codex.log" >&2
   echo "codex review failed" >&2
+  exit 2
+fi
+
+report="$dir/${head:0:7}-r$round.json"
+jq --arg head "$head" --arg range "$range" --arg model "$model" --argjson round "$round" \
+  '. + {head: $head, range: $range, model: $model, round: $round}' "$out" >"$report"
+cp "$report" "$dir/last.json"
+
+jq -r '
+  "AI review (\(.model)) of \(.range), round \(.round): \(.verdict)\n\n\(.summary)\n" +
+  (if (.findings | length) == 0 then "\nNo findings."
+   else ([.findings[] | "\n[\(.severity)] \(.file):\(.line) \(.title)\n  \(.detail)"] | join("\n"))
+   end)' "$report"
+echo
+echo "Report: $report"
+
+blocking="$(jq '[.findings[] | select(.severity == "blocker" or .severity == "major")] | length' "$report")"
+if [[ "$blocking" != "0" ]]; then
   exit 1
 fi
-
-verdict="$(jq -r .verdict "$out")"
-blocking="$(jq '[.findings[] | select(.severity == "blocker" or .severity == "major")] | length' "$out")"
-
-body="$(jq -r --arg model "$model" --arg sha "${head:0:7}" '
-  "### AI review (\($model)) of `\($sha)`: **\(.verdict)**\n\n\(.summary)\n" +
-  (if (.findings | length) == 0 then "\nNo findings."
-   else "\n| Severity | Where | Finding |\n|---|---|---|\n" +
-     ([.findings[] | "| \(.severity) | `\(.file):\(.line)` | **\(.title)**: \(.detail | gsub("\n"; " ") | gsub("\\|"; "\\\\|")) |"] | join("\n"))
-   end)' "$out")"
-gh pr comment "$pr" --body "$body" >/dev/null
-
-if [[ "$verdict" == "approve" && "$blocking" == "0" ]]; then
-  set_status success "Approved by $model"
-  echo "ai-review: success"
-else
-  set_status failure "$blocking blocking finding(s) from $model"
-  echo "ai-review: failure ($blocking blocking)"
-fi
-jq . "$out"

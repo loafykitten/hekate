@@ -1,7 +1,7 @@
 # Developing Hekate
 
-This repo is maintained mostly by AI agents. The gates below make it hard to ship something
-broken, and they keep every change reviewable after the fact. Read `PLAN.md` for what we're
+This repo is maintained mostly by AI agents. Every change gets an independent review before it
+lands, and CI must pass before anything deploys. Read `PLAN.md` for what we're
 building and `HANDOFF.md` for the character slice.
 
 ## Layout
@@ -17,52 +17,61 @@ building and `HANDOFF.md` for the character slice.
 
 ## Change flow
 
-1. Branch from `main`: `feat/<topic>`, `fix/<topic>` or `chore/<topic>`.
+1. Work on a local branch from `main` (`feat/<topic>`, `fix/<topic>`, `chore/<topic>`) or in a
+   worktree. Commit as you go; a batch of related changes can land together.
 2. Make the change with tests. Run locally:
    - `cd service && go vet ./... && go test ./...` (and `golangci-lint run` if installed)
    - `cd app && npm run check` (typecheck, lint, unit tests, build)
+   - `scripts/check-hygiene.sh` (no character assets, renders or env files in the tree)
    - for UI changes, start the dev servers and run `npm run verify:screens -- app/verify-out/<name>`,
      then look at the screenshots. `npm run verify:tour -- verify-out/tour` screenshots every screen
      (stage, a turn with cards, notices, the log, each menu section, empty and error states) on
      phone and desktop with fixture data, for a UX pass
    - for offline-shell changes, `npm run build`, `npx vite preview --port 5318 --strictPort`, then
      `npm run verify:offline -- verify-out` (it needs the character files; see the script header)
-3. Push and open a PR with `gh pr create --fill` (or a written body: what, why, how verified).
-4. **AI review**: `scripts/ai-review.sh` (see below). Fix what's real, push, run it again.
-5. Merge with `gh pr merge --squash --delete-branch` once the required checks are green.
-   Auto-merge (`--auto`) is fine.
-6. The merge builds an image and the homelab deployer rolls it out within ~2 minutes. Confirm
-   with `curl -s https://<hekate-host>/healthz` (it reports the deployed commit).
+3. **AI review**, at most two rounds (see `scripts/ai-review.sh` below):
+   1. `scripts/ai-review.sh` reviews everything since `origin/main`. Verify each finding against
+      the code, fix what's real, commit.
+   2. `scripts/ai-review.sh --fixes` checks only that those findings are fixed and that the fix
+      commits are sound. It doesn't re-review the rest.
+   After round 2, only a blocker holds the change back. Open an issue for any major finding
+   still standing and land the change; don't keep looping.
+4. Land it: squash onto `main` with a message that says what, why and how it was verified
+   (`git switch main && git pull && git merge --squash <branch> && git commit`), then
+   `git push`. Delete the branch.
+5. The push runs CI on `main`. When it passes, an image is built and the homelab deployer rolls
+   it out within ~2 minutes. Confirm with `curl -s https://<hekate-host>/healthz` (it reports
+   the deployed commit). If CI fails, nothing deploys: fix forward on `main` right away.
 
-## Gates on `main`
+## Gates
 
-Branch protection (applies to admins too, so agents can't push around it):
-
-- Pull request required. Squash merge only, linear history, branches auto-deleted.
-- Required status checks:
+- `main` keeps a linear history and can't be force-pushed or deleted (this applies to admins
+  too). There is no PR or status requirement: review happens before the push, CI after it.
+- CI (`.github/workflows/ci.yml`) runs on every push to `main` and on any PR:
   - `service`: gofmt, `go vet`, golangci-lint, `go test -race`
   - `app`: typecheck, lint, unit tests, production build
   - `hygiene`: gitleaks secret scan, and no character assets or model files in the tree
-  - `ai-review`: a commit status on the PR's head SHA, posted by `scripts/ai-review.sh`
-- Any new push invalidates `ai-review`, because the status is tied to the commit SHA.
+- Deploys wait for CI: `image.yml` builds only for a commit whose `ci` run passed on `main`.
+
+A PR is still fine when you want a change looked at on GitHub first; CI runs on it, and the
+review flow above is the same.
 
 ### `scripts/ai-review.sh`
 
-Runs an independent Codex review of the PR (`gpt-6.1-sol`, high effort by default) against its
-base branch. It asks for a structured verdict, posts the findings as a PR comment, and sets the
-`ai-review` status on the head commit:
-
-- **success**: no blocker or major findings
-- **failure**: anything blocking. Fix it, push, rerun.
+Runs an independent Codex review (`gpt-6.1-sol`, high effort by default) of local commits and
+asks for a structured verdict. It prints the findings and saves the report under
+`.git/ai-review/` (per worktree, never committed). It exits 0 when there is no blocker or major
+finding, 1 when there is, and 2 when it couldn't review.
 
 ```sh
-scripts/ai-review.sh                      # Sol, high effort
-scripts/ai-review.sh --astra              # GPT 6 Astra for complex or touchy changes
-scripts/ai-review.sh --override "why"     # finding verified as a false positive: records the reason
+scripts/ai-review.sh                 # round 1: origin/main...HEAD with Sol
+scripts/ai-review.sh --astra         # GPT 6 Astra, for complex or touchy changes
+scripts/ai-review.sh some/base       # a different base
+scripts/ai-review.sh --fixes         # round 2: the commits since the last review, against its findings
 ```
 
-Verify findings against the code before acting on them. Override only a finding you've shown to
-be wrong. The override reason is posted on the PR for the record.
+Verify findings against the code before acting on them. A finding you've shown to be wrong
+needs no override: note it in the commit message and move on.
 
 ## Deploys
 
@@ -87,8 +96,8 @@ take them up. Nothing builds them automatically. To work one:
 1. Read it: `curl -s https://hekate.<domain>/api/changes?status=queued`. The proposal is
    Renamon's words: check it holds nothing private before anything goes public.
 2. `POST /api/changes/{id}/claim`, then build it like any other change (branch or worktree, tests,
-   PR, `scripts/ai-review.sh`, squash-merge). Record steps and links with
-   `POST /api/changes/{id}/progress` (`{ stage, issue_url?, pr_url? }`) as you go.
+   review, land on `main`). Record steps and links with `POST /api/changes/{id}/progress`
+   (`{ stage, issue_url?, pr_url? }`) as you go.
 3. `POST /api/changes/{id}/finish` with `merged`, `rejected` or `failed` and a line or two the
    owner and Renamon will read. The owner gets a push.
 

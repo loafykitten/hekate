@@ -186,7 +186,7 @@ func TestReadOnlyTurnIsNotReviewed(t *testing.T) {
 	f, rv := reviewFixture(t, [][]string{callTool("lab_shell", `{"command":"docker ps; df -h"}`), reply("Two containers run.")}, nil)
 	th, _ := f.svc.Create(t.Context(), "", "", OriginOwner)
 	f.say(t, th.ID, "what's running?")
-	waitFor(t, "her reply", func() bool { return len(ofType[proto.TurnEnd](f.hub.inner(th.ID))) == 1 })
+	waitFor(t, "her reply", func() bool { return len(ofType[proto.TurnEnd](f.hub.inner(th.ID))) == 1 && f.svc.idle(th.ID) })
 	if r, rev := f.svc.running(th.ID); r || rev {
 		t.Errorf("running %v reviewing %v after a look", r, rev)
 	}

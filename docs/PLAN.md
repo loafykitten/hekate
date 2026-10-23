@@ -285,6 +285,58 @@ opener and the routines scheduler from the briefing and heartbeat.
   running ahead of last month, a bill due before payday), answer questions, and help plan. She
   isn't a licensed advisor and says so when a question needs one.
 
+### Her lab (agreed 2026-10-22)
+
+The owner wants her to set things up and use them on request ("set up qBittorrent", then
+"download Arch with it") without approving every step, behind a strong boundary from the rest of
+the system. Setup: `deploy/lab/README.md`. Service: `service/internal/lab`.
+
+- **Give Hekate a VM; don't put Hekate in one.** Her valuable data (mail, bank tokens, memories,
+  every key) stays in the Hekate container. The lab VM (Debian 13 under KVM on the homelab) is
+  hers: root, Docker, the internet. She reaches it over SSH on the tailnet with her own key, and
+  pins the VM's host key, which is written when the VM is built.
+- **Containment is the network.** The host's own nftables table lets the VM reach the internet
+  only: no private ranges (LAN, tailnet, Docker networks), only DHCP and DNS to the host, no
+  IPv6, nothing to port 25. A tailnet tag keeps the VM from starting anything on the tailnet
+  while the owner's devices reach her apps at `http://hekate-lab:<port>`.
+- **Tools:** `lab_shell` (at most 60 s: a turn has 90 s and 12 tool calls in all), `lab_write_file`,
+  `lab_status`, `lab_snapshot`, `lab_isolate`, `lab_security_check` (runs in the background), and
+  two approvals: `lab_rollback` and `lab_reconnect`. Everything else she does there needs no
+  approval. Only conversation turns, all started by the owner, have these tools.
+- **Lab tasks** carry multi-step work ("set up qBittorrent"). `lab_task` hands a goal to a worker
+  running in the background: the deep model in a loop with only `lab_shell` (up to 10 minutes per
+  command), `lab_write_file` and `lab_status`, for up to 60 tool calls and 45 minutes. Older tool
+  results are shortened to keep the history small. A snapshot comes first, but only when the last
+  check was complete and clean and the newest snapshot is a nightly one, so tasks never push out
+  the last checked snapshot. The worker can't take snapshots itself. Its steps
+  are recorded in her activity under the turn that asked. Its closing report reaches the owner as
+  a notification and her as context; one task runs at a time and `lab_task_stop` ends it.
+- **The host side** is `hekate-labctl`, a root script with fixed verbs: stats, snapshot, rollback,
+  isolate, reconnect. Hekate asks through request files (a systemd path unit wakes it) and reads
+  answers from a directory only root writes.
+- **Snapshots:** at most two, newest replaces oldest (the owner's disk is small). They are qcow2
+  internal disk-only snapshots taken live through QEMU's monitor, with the guest frozen by its
+  agent, so each costs only what changed. The nightly snapshot is taken only after a full security
+  check (every part ran) finds no sign of a break-in, so a compromise doesn't push the good
+  snapshots out. The VM starts only through a unit that requires its firewall.
+- **Nightly security check** (05:00, and on demand). It's not paranoid: it acts on little.
+  - *Vulnerable:* Debian packages (debsecan) and running container images (grype, pinned to a
+    release and checksum; Trivy was ruled out after its March 2026 supply-chain compromise) are
+    compared with published vulnerabilities. Only remotely exploitable, high-urgency Debian fixes
+    and Critical image problems with a fix count; she brings them up, without a push.
+    Unattended-upgrades installs Debian security fixes daily.
+  - *Urgent:* any of it on CISA's Known Exploited Vulnerabilities list, which Hekate fetches
+    herself: a push.
+  - *Suspicious* (a push): weak signs, such as a program running from /tmp, 20+ blocked
+    connections into private networks, CPUs over 85% busy on average for 6+ hours, or no
+    complete check (every scanner ran) for 3 days.
+  - *Compromised:* strong signs. Mail sent to port 25 (counted by the host), a changed packaged
+    binary, a program running from /dev/shm or deleted from /tmp, an extra uid-0 account, changed
+    SSH keys, or a login with an unknown key. The lab is cut off at once (its virtual NIC unplugged;
+    it keeps running for a look), with an urgent push. Reconnecting is the owner's call.
+  - The VM's report can be forged by whoever owns the VM. The verdict is computed in Go from it and
+    from what the host counts, never by the model, and the VM's text reaches her marked untrusted.
+
 ### M5 as built (2026-10-20)
 
 - **Viseme lip sync**: the service turns the voice's per-character timing into timed mouth shapes

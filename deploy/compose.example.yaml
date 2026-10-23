@@ -21,6 +21,10 @@ services:
       - ./data:/data
       - ./character:/character:ro   # your character's manifest.json + GLBs
       - ./state:/deploy-state:ro
+      # Her lab VM, once deploy/lab is set up: the key to it, and requests to the host's labctl.
+      # - ./lab/ssh:/lab/ssh:ro
+      # - ./lab/requests:/lab/requests
+      # - ./lab/results:/lab/results:ro
 
   radicale:
     image: tomsquest/docker-radicale:3.8.3.0

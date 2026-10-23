@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# lab-audit: one security pass over the lab, printed as JSON for Hekate's security check. Runs as
+# root (sudo -n /usr/local/sbin/lab-audit). Installed by the VM's cloud-init; see deploy/lab.
+#
+#   debsecan          Debian packages with a published, fixed vulnerability not yet installed
+#   images            High and Critical vulnerabilities in the images of running containers (grype)
+#   signals           signs of a break-in: "strong" ones cut the lab off, "weak" ones are reported
+#   listeners         what listens on the network, for context
+#
+# Everything here can be faked by whoever owns the machine. Hekate also checks what the host sees
+# (firewall counters, CPU, traffic), which the lab can't touch.
+set -uo pipefail
+export LC_ALL=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export GRYPE_DB_CACHE_DIR=/var/cache/grype GRYPE_CHECK_FOR_APP_UPDATE=false
+
+conf=/etc/hekate-lab
+out="$(mktemp -d)"
+trap 'rm -rf "$out"' EXIT
+: >"$out/signals"
+: >"$out/errors"
+
+signal() { jq -nc --arg level "$1" --arg check "$2" --arg detail "$3" '{level: $level, check: $check, detail: $detail}' >>"$out/signals"; }
+error() { jq -nc --arg e "$1" '$e' >>"$out/errors"; }
+
+# Debian: fixes published for the installed release and not installed yet. Unattended upgrades
+# install security fixes daily, so what lingers here is worth a look.
+# shellcheck source=/dev/null
+if ! timeout 300 debsecan --suite "$(. /etc/os-release && echo "$VERSION_CODENAME")" --only-fixed >"$out/debsecan.txt" 2>"$out/debsecan.err"; then
+  error "debsecan: $(head -c 300 "$out/debsecan.err")"
+fi
+head -n 500 "$out/debsecan.txt" | jq -R . | jq -s . >"$out/debsecan.json"
+
+reboot_since=0
+[[ -f /run/reboot-required ]] && reboot_since="$(stat -c %Y /run/reboot-required)"
+
+# Containers: every image that's running.
+: >"$out/images"
+if command -v docker >/dev/null && command -v grype >/dev/null; then
+  timeout 300 grype db update >/dev/null 2>"$out/grype-db.err" || error "grype db update: $(head -c 300 "$out/grype-db.err")"
+  # The image each container actually runs (its ID), not whatever its tag points at now.
+  while read -r id name; do
+    [[ -n "$id" ]] || continue
+    short="${id#sha256:}"
+    image="${name:0:80} @${short:0:12}"
+    rc=0
+    timeout 900 grype "docker:$id" --by-cve -o json >"$out/grype.json" 2>"$out/grype.err" || rc=$?
+    if [[ $rc -eq 0 ]]; then
+      jq -c --arg image "$image" '{
+        image: $image,
+        vulns: ([.matches[] | select(.vulnerability.severity == "Critical" or .vulnerability.severity == "High")
+          | {id: .vulnerability.id, severity: .vulnerability.severity, package: .artifact.name, version: .artifact.version,
+             fix: ((.vulnerability.fix.versions // []) | join(", "))}] | unique_by(.id + " " + .package) | .[:200]),
+        cves: ([.matches[] | .vulnerability.id, (.relatedVulnerabilities // [] | .[].id)] | map(select(startswith("CVE-"))) | unique | .[:2000])
+      }' "$out/grype.json" >>"$out/images" || error "grype output for $image was unreadable"
+    else
+      # Never an empty error: an empty one would read as a scan that worked.
+      e="grype exited $rc$([[ $rc -eq 124 ]] && echo " (timed out)"): $(head -c 300 "$out/grype.err")"
+      jq -nc --arg image "$image" --arg e "$e" '{image: $image, vulns: [], cves: [], error: $e}' >>"$out/images"
+    fi
+  done < <(docker ps -q | xargs -r docker inspect --format '{{.Image}} {{.Config.Image}}' | sort -u -k1,1)
+fi
+
+# Packaged programs and libraries that no longer match what Debian shipped. Install your own
+# software under /usr/local or /opt instead of over packaged files.
+dpkg --verify 2>/dev/null | awk '$1 ~ /^..5/ && $2 != "c" {print $NF}' \
+  | grep -E '^/(usr/)?(s?bin|lib|lib64|libexec)/' | head -n 20 | while read -r f; do
+  signal strong modified_system_file "$f"
+done
+
+# Programs running from scratch space: /dev/shm, or deleted from /tmp after starting, is a
+# dropper's habit. Running from /tmp is only odd.
+for exe in /proc/[0-9]*/exe; do
+  target="$(readlink "$exe" 2>/dev/null)" || continue
+  pid="${exe#/proc/}"
+  pid="${pid%/exe}"
+  name="$(head -c 40 "/proc/$pid/comm" 2>/dev/null | tr -d '\n')"
+  case "$target" in
+    /dev/shm/*) signal strong exec_from_shm "$name (pid $pid): $target" ;;
+    /tmp/*" (deleted)" | /var/tmp/*" (deleted)") signal strong exec_deleted_from_tmp "$name (pid $pid): $target" ;;
+    /tmp/* | /var/tmp/*) signal weak exec_from_tmp "$name (pid $pid): $target" ;;
+  esac
+done
+
+# Accounts with root's powers besides root.
+awk -F: '$3 == 0 && $1 != "root" {print $1}' /etc/passwd | while read -r u; do
+  signal strong extra_root_account "$u"
+done
+
+# SSH: sshd reads keys only from /etc/ssh/authorized_keys (root's), fixed when the lab was built.
+if [[ -f $conf/authorized_keys.sha256 ]]; then
+  sha256sum --quiet -c "$conf/authorized_keys.sha256" >/dev/null 2>&1 || signal strong ssh_keys_changed "/etc/ssh/authorized_keys differs from when the lab was built"
+fi
+find /root /home -maxdepth 3 -name authorized_keys -size +0 2>/dev/null | head -n 5 | while read -r f; do
+  signal weak stray_authorized_keys "$f (sshd ignores it, but someone put keys there)"
+done
+journalctl -u ssh --since "-25h" -o cat 2>/dev/null | grep -E '^Accepted ' >"$out/logins" || true
+while read -r line; do
+  fp="$(grep -oE 'SHA256:[A-Za-z0-9+/]+' <<<"$line" || true)"
+  if [[ -z "$fp" ]] || ! grep -qxF "$fp" "$conf/allowed-fingerprints" 2>/dev/null; then
+    echo "$line"
+  fi
+done <"$out/logins" | head -n 5 | while read -r line; do
+  signal strong unknown_ssh_login "$(head -c 200 <<<"$line")"
+done
+
+ss -Hlntup 2>/dev/null | awk '{print $1, $5, $7}' | head -n 100 | jq -R . | jq -s . >"$out/listeners.json"
+
+jq -n \
+  --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --argjson reboot "$reboot_since" \
+  --slurpfile debsecan "$out/debsecan.json" \
+  --slurpfile images "$out/images" \
+  --slurpfile signals "$out/signals" \
+  --slurpfile listeners "$out/listeners.json" \
+  --slurpfile errors "$out/errors" \
+  '{version: 1, generated_at: $at, reboot_required_since: $reboot, debsecan: $debsecan[0],
+    images: $images, signals: $signals[:100], listeners: $listeners[0], errors: $errors}'

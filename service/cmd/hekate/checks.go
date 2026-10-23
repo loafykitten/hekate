@@ -7,6 +7,7 @@ import (
 
 	"github.com/loafykitten/hekate/service/internal/calendar"
 	"github.com/loafykitten/hekate/service/internal/inspect"
+	"github.com/loafykitten/hekate/service/internal/lab"
 	"github.com/loafykitten/hekate/service/internal/llm"
 	"github.com/loafykitten/hekate/service/internal/mail"
 	"github.com/loafykitten/hekate/service/internal/money"
@@ -18,7 +19,7 @@ import (
 
 // healthChecks are what self_status reports on, one line each.
 func healthChecks(llmClient *llm.Client, tts bool, stt voice.Transcriber, cal *calendar.Service, mailSvc *mail.Service, moneySvc *money.Service,
-	pushSvc *push.Service, tg *telegram.Service, webSvc *web.Service) []inspect.Check {
+	pushSvc *push.Service, tg *telegram.Service, webSvc *web.Service, labSvc *lab.Service) []inspect.Check {
 	configured := func(ok bool, yes, no string) (bool, string) {
 		if ok {
 			return true, yes
@@ -111,6 +112,12 @@ func healthChecks(llmClient *llm.Client, tts bool, stt voice.Transcriber, cal *c
 		}},
 		{Name: "Web search", Run: func(context.Context) (bool, string) {
 			return configured(webSvc.SearchConfigured(), "", "no search key: web_read still works")
+		}},
+		{Name: "Lab", Run: func(ctx context.Context) (bool, string) {
+			if !labSvc.Configured() {
+				return false, "not set up"
+			}
+			return labSvc.Health(ctx)
 		}},
 	}
 }

@@ -86,6 +86,11 @@ type Config struct {
 	// means it's off.
 	TelegramBotToken Secret
 	TelegramChatID   int64
+
+	// Lab: her own VM on the homelab (deploy/lab). An empty host means it's not set up.
+	LabHost string // the VM's SSH address over the tailnet, host or host:port
+	LabName string // what the owner's devices call it, for the addresses of apps she runs there
+	LabDir  string // where the stack's lab/ssh, lab/requests and lab/results are mounted
 }
 
 // MailAccount is one IMAP mailbox, from HEKATE_MAIL_<n>_* (n = 1..9).
@@ -177,6 +182,13 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 		default:
 			cfg.MailSweep = d
 		}
+	}
+
+	cfg.LabHost = str("HEKATE_LAB_HOST", "")
+	cfg.LabName = str("HEKATE_LAB_NAME", "hekate-lab")
+	cfg.LabDir = str("HEKATE_LAB_DIR", "/lab")
+	if strings.ContainsAny(cfg.LabHost, "/@ ") {
+		errs = append(errs, fmt.Errorf("HEKATE_LAB_HOST: %q must be a host or host:port", cfg.LabHost))
 	}
 
 	cfg.PlaidClientID = str("PLAID_CLIENT_ID", "")
@@ -295,6 +307,7 @@ func (c Config) LogValue() slog.Value {
 		slog.Bool("money_configured", c.PlaidClientID != ""),
 		slog.String("plaid_env", c.PlaidEnv),
 		slog.Bool("web_search_configured", c.BraveAPIKey != ""),
+		slog.Bool("lab_configured", c.LabHost != ""),
 		slog.String("units", c.Units),
 		slog.String("push_subject", c.PushSubject),
 	)

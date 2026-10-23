@@ -351,3 +351,19 @@ func TestPlaid(t *testing.T) {
 		t.Errorf("error leaks the secret: %v", err)
 	}
 }
+
+func TestLab(t *testing.T) {
+	cfg, err := LoadFrom(env(map[string]string{}))
+	if err != nil || cfg.LabHost != "" || cfg.LabName != "hekate-lab" || cfg.LabDir != "/lab" {
+		t.Errorf("unset = %+v, %v", cfg, err)
+	}
+	cfg, err = LoadFrom(env(map[string]string{"HEKATE_LAB_HOST": "100.64.0.9", "HEKATE_LAB_NAME": "lab", "HEKATE_LAB_DIR": "/x"}))
+	if err != nil || cfg.LabHost != "100.64.0.9" || cfg.LabName != "lab" || cfg.LabDir != "/x" {
+		t.Errorf("set = %+v, %v", cfg, err)
+	}
+	for _, bad := range []string{"hekate@100.64.0.9", "ssh://lab", "two words"} {
+		if _, err := LoadFrom(env(map[string]string{"HEKATE_LAB_HOST": bad})); err == nil {
+			t.Errorf("%q: accepted", bad)
+		}
+	}
+}

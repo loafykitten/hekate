@@ -1,0 +1,14 @@
+<!-- The lab VM's network: NAT to the internet through the host. firewall.nft keeps it away from
+     everything private (the LAN, the tailnet, the host's own services, Docker networks). The VM
+     always gets the same address, so the firewall and labctl can name it. -->
+<network>
+  <name>hekate-lab</name>
+  <forward mode="nat"/>
+  <bridge name="virbr-lab" stp="on" delay="0"/>
+  <ip address="10.231.0.1" netmask="255.255.255.0">
+    <dhcp>
+      <range start="10.231.0.100" end="10.231.0.120"/>
+      <host mac="52:54:00:4c:41:42" name="hekate-lab" ip="10.231.0.10"/>
+    </dhcp>
+  </ip>
+</network>

@@ -1,0 +1,8 @@
+[Unit]
+Description=Answer Hekate's lab requests
+After=libvirtd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/hekate-labctl serve
+TimeoutStartSec=10min

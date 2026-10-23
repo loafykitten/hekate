@@ -1,0 +1,14 @@
+[Unit]
+Description=Hekate's lab VM, started only once its firewall is in place
+Requires=hekate-lab-firewall.service libvirtd.service
+After=hekate-lab-firewall.service libvirtd.service network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/hekate-labctl start
+ExecStop=/usr/local/sbin/hekate-labctl stop
+TimeoutStopSec=90
+
+[Install]
+WantedBy=multi-user.target

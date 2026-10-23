@@ -1,0 +1,177 @@
+package lab
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"golang.org/x/crypto/ssh"
+)
+
+const handshakeTimeout = 20 * time.Second
+
+// shellResult is what a command did.
+type shellResult struct {
+	Exit     int    // -1: no exit status (the connection dropped, or it was cut off here)
+	Output   string // stdout and stderr together, cut in the middle when long
+	Cut      int    // bytes left out of Output
+	TimedOut bool
+}
+
+// shell runs command with bash on the lab as User. stdin may be nil (the command reads end of
+// file). The time limit holds on the lab's side (timeout(1) kills the command) and here; at most
+// maxOut bytes of output are kept, from its start and its end.
+func (s *Service) shell(ctx context.Context, command string, stdin io.Reader, limit time.Duration, maxOut int) (shellResult, error) {
+	if !s.Configured() {
+		return shellResult{}, errNotSetUp
+	}
+	cfg, err := s.clientConfig()
+	if err != nil {
+		return shellResult{}, err
+	}
+	secs := int(limit.Round(time.Second) / time.Second)
+	remote := "DEBIAN_FRONTEND=noninteractive timeout --kill-after=5 " + strconv.Itoa(secs) + " bash -c " + quote(command)
+	ctx, cancel := context.WithTimeout(ctx, limit+handshakeTimeout+10*time.Second)
+	defer cancel()
+
+	conn, err := s.dial(ctx, s.addr)
+	if err != nil {
+		return shellResult{}, fmt.Errorf("can't reach the lab: %w", err)
+	}
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
+	_ = conn.SetDeadline(s.now().Add(handshakeTimeout))
+	c, chans, reqs, err := ssh.NewClientConn(conn, s.addr, cfg)
+	if err != nil {
+		_ = conn.Close()
+		return shellResult{}, fmt.Errorf("can't log in to the lab: %w", err)
+	}
+	_ = conn.SetDeadline(time.Time{})
+	client := ssh.NewClient(c, chans, reqs)
+	defer func() { _ = client.Close() }()
+	sess, err := client.NewSession()
+	if err != nil {
+		return shellResult{}, fmt.Errorf("open a session on the lab: %w", err)
+	}
+	defer func() { _ = sess.Close() }()
+
+	out := newCapWriter(maxOut)
+	sess.Stdin = stdin
+	sess.Stdout = out
+	sess.Stderr = out
+	res := shellResult{Exit: 0}
+	runErr := sess.Run(remote)
+	var exitErr *ssh.ExitError
+	var missing *ssh.ExitMissingError
+	switch {
+	case runErr == nil:
+	case errors.As(runErr, &exitErr):
+		res.Exit = exitErr.ExitStatus()
+	case errors.As(runErr, &missing), ctx.Err() != nil:
+		res.Exit = -1
+	default:
+		return shellResult{}, fmt.Errorf("run on the lab: %w", runErr)
+	}
+	// timeout(1) exits 124 when it stopped the command, 137 when it had to kill it.
+	res.TimedOut = ctx.Err() != nil || res.Exit == 124 || res.Exit == 137
+	res.Output, res.Cut = out.result()
+	return res, nil
+}
+
+// clientConfig logs in with her key and accepts only the lab's own host key, written when the
+// lab was built: nothing is trusted on first use.
+func (s *Service) clientConfig() (*ssh.ClientConfig, error) {
+	keyPEM, err := readFile(s.keyPath())
+	if err != nil {
+		return nil, err
+	}
+	signer, err := ssh.ParsePrivateKey(keyPEM)
+	if err != nil {
+		return nil, fmt.Errorf("the lab key: %w", err)
+	}
+	hostPub, err := readFile(s.hostKeyPath())
+	if err != nil {
+		return nil, err
+	}
+	hostKey, _, _, _, err := ssh.ParseAuthorizedKey(hostPub)
+	if err != nil {
+		return nil, fmt.Errorf("the lab's host key: %w", err)
+	}
+	return &ssh.ClientConfig{
+		User:              User,
+		Auth:              []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		HostKeyCallback:   ssh.FixedHostKey(hostKey),
+		HostKeyAlgorithms: []string{hostKey.Type()},
+		Timeout:           handshakeTimeout,
+	}, nil
+}
+
+// quote makes s one single-quoted shell word.
+func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// capWriter keeps the first and last bytes written to it, for output that may run long. Stdout
+// and stderr write from their own goroutines.
+type capWriter struct {
+	mu      sync.Mutex
+	headMax int
+	tailMax int
+	head    []byte
+	tail    []byte
+	total   int
+}
+
+func newCapWriter(maxOut int) *capWriter {
+	return &capWriter{headMax: maxOut / 3, tailMax: maxOut - maxOut/3}
+}
+
+func (w *capWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.total += len(p)
+	rest := p
+	if room := w.headMax - len(w.head); room > 0 {
+		n := min(room, len(rest))
+		w.head = append(w.head, rest[:n]...)
+		rest = rest[n:]
+	}
+	if len(rest) > 0 {
+		w.tail = append(w.tail, rest...)
+		if len(w.tail) > 2*w.tailMax {
+			w.tail = append([]byte(nil), w.tail[len(w.tail)-w.tailMax:]...)
+		}
+	}
+	return len(p), nil
+}
+
+// result is the kept output as text, and how many bytes were left out of its middle.
+func (w *capWriter) result() (string, int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	tail := w.tail
+	if len(tail) > w.tailMax {
+		tail = tail[len(tail)-w.tailMax:]
+	}
+	cut := w.total - len(w.head) - len(tail)
+	text := clean(string(w.head))
+	if cut > 0 {
+		text += fmt.Sprintf("\n[... %d bytes left out ...]\n", cut)
+	}
+	return text + clean(string(tail)), cut
+}
+
+var ansi = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
+
+// clean makes terminal output plain text: valid UTF-8, no color codes, carriage returns as
+// line breaks.
+func clean(s string) string {
+	s = strings.ToValidUTF8(s, "�")
+	s = ansi.ReplaceAllString(s, "")
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.ReplaceAll(s, "\r", "\n")
+}

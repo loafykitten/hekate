@@ -37,6 +37,8 @@ Mail: for each account, create an app-specific password at your provider with IM
 optional host, label and archive folder). Restart the service; the first sweep caches the last
 30 days of inbox headers and sorts the last 14 days.
 
+Her lab (optional): a VM on the homelab she can set things up on. See `lab/README.md`.
+
 ## On your phone
 
 1. With Tailscale connected, open `https://hekate.<your domain>/` in Safari (iOS) or Chrome

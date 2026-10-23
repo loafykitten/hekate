@@ -1,0 +1,8 @@
+[Unit]
+Description=Watch for Hekate's lab requests
+
+[Path]
+PathExistsGlob=@STACK_DIR@/lab/requests/*.json
+
+[Install]
+WantedBy=multi-user.target

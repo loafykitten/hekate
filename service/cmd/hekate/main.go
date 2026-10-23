@@ -23,6 +23,7 @@ import (
 	"github.com/loafykitten/hekate/service/internal/config"
 	"github.com/loafykitten/hekate/service/internal/inspect"
 	"github.com/loafykitten/hekate/service/internal/jobs"
+	"github.com/loafykitten/hekate/service/internal/lab"
 	"github.com/loafykitten/hekate/service/internal/llm"
 	"github.com/loafykitten/hekate/service/internal/logging"
 	"github.com/loafykitten/hekate/service/internal/mail"
@@ -201,9 +202,25 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("build routines: %w", err)
 	}
+
+	// Her lab: a VM on the homelab she runs commands on, with a background worker for longer
+	// work there, checked nightly for security.
+	labSvc, err := lab.New(lab.Options{
+		Store: db, Approvals: approvalSvc, Host: cfg.LabHost, Name: cfg.LabName, Dir: cfg.LabDir, CacheDir: cfg.DataDir,
+		LLM: lab.StreamCompleter{Client: llmClient}, Model: cfg.ModelDeep,
+		Location: cfg.Location, Events: hub, Push: notifier, Logger: logger.Logger,
+	})
+	if err != nil {
+		return fmt.Errorf("build lab: %w", err)
+	}
+	if labSvc.Configured() {
+		toolList = slices.Concat(toolList, labSvc.Tools())
+		sources = append(sources, agent.Source{Name: "Your lab", Source: labSvc})
+	}
+	runner.Add(labSvc.Job())
 	selfSvc, err := inspect.New(inspect.Options{
 		Store: db, Jobs: runner, Ring: logger.Ring, DeployLog: cfg.DeployLog,
-		Checks:  healthChecks(llmClient, synth != nil, stt, calSvc, mailSvc, moneySvc, pushSvc, tg, webSvc),
+		Checks:  healthChecks(llmClient, synth != nil, stt, calSvc, mailSvc, moneySvc, pushSvc, tg, webSvc, labSvc),
 		Version: buildinfo.Version + " (" + buildinfo.Commit + ")", Location: cfg.Location, Events: hub, Logger: logger.Logger,
 	})
 	if err != nil {
@@ -275,6 +292,7 @@ func run() error {
 	background.Go(func() { mailSvc.Run(ctx) })
 	background.Go(func() { tg.Run(ctx) })
 	background.Go(func() { runner.Run(ctx) })
+	background.Go(func() { labSvc.Run(ctx) })
 
 	srv := server.New(server.Options{
 		Logger:       logger.Logger,

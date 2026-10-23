@@ -1,0 +1,18 @@
+[Unit]
+Description=Firewall that keeps Hekate's lab VM to the internet only
+Wants=network-online.target
+After=network-online.target docker.service libvirtd.service firewalld.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/hekate-lab/firewall.nft
+ExecStart=/usr/local/sbin/hekate-labctl docker-user
+# Reload swaps the table atomically. A restart would restart the VM too (it Requires= this unit).
+ExecReload=/usr/sbin/nft -f /etc/hekate-lab/firewall.nft
+ExecReload=/usr/local/sbin/hekate-labctl docker-user
+# No ExecStop: the rules stay until the host goes down. The VM (hekate-lab-vm.service) starts only
+# after this succeeds, and stops with it.
+
+[Install]
+WantedBy=multi-user.target

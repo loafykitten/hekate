@@ -147,13 +147,15 @@ EOF
 } >"$work/user-data"
 
 echo "Creating the VM..."
+# A video card with no display attached: Debian's GRUB entry runs load_video, and with no card at
+# all that crashes into a reset before the kernel starts (a boot loop).
 virt-install --connect qemu:///system --name "$DOMAIN" \
   --memory "$MEMORY" --vcpus "$VCPUS" --cpu host-passthrough --osinfo linux2022 --import \
   --disk "path=$DISK,format=qcow2,bus=virtio,discard=unmap" \
   --network "network=hekate-lab,model=virtio,mac=$MAC" \
   --channel unix,target.type=virtio,target.name=org.qemu.guest_agent.0 \
   --cloud-init "user-data=$work/user-data" \
-  --graphics none --console pty,target.type=serial --noautoconsole
+  --graphics none --video vga --console pty,target.type=serial --noautoconsole
 built=1
 # Not libvirt's autostart: hekate-lab-vm.service starts it at boot, after its firewall.
 systemctl enable hekate-lab-vm.service

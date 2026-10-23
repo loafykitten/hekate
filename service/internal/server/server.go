@@ -33,7 +33,9 @@ type Options struct {
 
 	// Conversation and Hub enable /api/ws and the history endpoint.
 	Conversation Conversation
-	Hub          *Hub
+	// Threads, if set, takes socket input sent to a thread.
+	Threads Threads
+	Hub     *Hub
 	// STT may be nil (not configured); TTS says whether replies carry audio.
 	STT voice.Transcriber
 	TTS bool
@@ -61,26 +63,44 @@ type Server struct {
 	pingEvery time.Duration
 	pingWait  time.Duration
 
-	// inputs counts new inputs (typed or push-to-talk) across every connection,
-	// since all of them talk to the same conversation. A transcription that
-	// finishes after newer input from any device is stale. inputMu also makes
-	// "is it still current?" and starting the turn one step.
+	threads Threads
+
+	// inputs counts new inputs (typed or push-to-talk) per conversation, across
+	// every connection, since all of them talk to the same conversations. A
+	// transcription that finishes after newer input from any device is stale.
+	// inputMu also makes "is it still current?" and starting the turn one step.
 	inputMu sync.Mutex
-	inputs  uint64
+	inputs  map[string]uint64
 }
 
-// startPTT records a push-to-talk as the newest input and hushes her, as one
-// step: no other input can be ordered between them (or an older recording
-// could cut a newer typed turn). Returns the input's number.
-func (s *Server) startPTT() uint64 {
+// Input is what socket input goes to: the main conversation or a thread.
+type Input interface {
+	ConversationID() string
+	Say(origin, inputID, text string, quiet bool)
+	Interrupt(turnID string, heardSeq int)
+	// Hush stops whatever she's saying because someone started talking.
+	Hush()
+}
+
+// Threads finds a thread for socket input.
+type Threads interface {
+	// Input returns the thread's conversation, or an error for an unknown or
+	// archived thread.
+	Input(ctx context.Context, id string) (Input, error)
+}
+
+// startPTT records a push-to-talk as in's newest input and hushes her there,
+// as one step: no other input can be ordered between them (or an older
+// recording could cut a newer typed turn). Returns the input's number.
+func (s *Server) startPTT(in Input) uint64 {
 	s.inputMu.Lock()
 	defer s.inputMu.Unlock()
-	s.inputs++
+	s.inputs[in.ConversationID()]++
 	if testHookInPTTStart != nil {
 		testHookInPTTStart()
 	}
-	s.conv.Hush()
-	return s.inputs
+	in.Hush()
+	return s.inputs[in.ConversationID()]
 }
 
 // testHookInPTTStart lets tests try to slip an input into startPTT.
@@ -89,32 +109,32 @@ var testHookInPTTStart func()
 // sayIfCurrent starts a turn only if no newer input arrived since gen, and
 // reports whether it did. before runs first under the same lock (to send the
 // transcript ahead of the turn).
-func (s *Server) sayIfCurrent(gen uint64, before func(), origin, id, text string, quiet bool) bool {
+func (s *Server) sayIfCurrent(in Input, gen uint64, before func(), origin, id, text string, quiet bool) bool {
 	s.inputMu.Lock()
 	defer s.inputMu.Unlock()
-	if s.inputs != gen {
+	if s.inputs[in.ConversationID()] != gen {
 		return false
 	}
 	before()
 	if text != "" {
-		s.conv.Say(origin, id, text, quiet)
+		in.Say(origin, id, text, quiet)
 	}
 	return true
 }
 
 // say records a typed input and starts its turn.
-func (s *Server) say(origin, id, text string, quiet bool) {
+func (s *Server) say(in Input, origin, id, text string, quiet bool) {
 	s.inputMu.Lock()
 	defer s.inputMu.Unlock()
-	s.inputs++
-	s.conv.Say(origin, id, text, quiet)
+	s.inputs[in.ConversationID()]++
+	in.Say(origin, id, text, quiet)
 }
 
 // checkIn starts the evening check-in: input like any other.
 func (s *Server) checkIn(origin, id, day string, quiet bool) {
 	s.inputMu.Lock()
 	defer s.inputMu.Unlock()
-	s.inputs++
+	s.inputs[s.conv.ConversationID()]++
 	s.conv.CheckIn(origin, id, day, quiet)
 }
 
@@ -132,6 +152,8 @@ func New(o Options) *Server {
 		assetsDir: o.AssetsDir,
 		startedAt: time.Now().UTC(),
 		conv:      o.Conversation,
+		threads:   o.Threads,
+		inputs:    map[string]uint64{},
 		hub:       o.Hub,
 		api:       o.API,
 		stt:       o.STT,

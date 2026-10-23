@@ -869,3 +869,74 @@ export function parseCard(raw: unknown): Card | undefined {
       return undefined;
   }
 }
+
+// --- threads -------------------------------------------------------------------------------
+
+export type ThreadModel = "deep" | "chat";
+
+export interface Thread {
+  id: string;
+  title: string;
+  model: ThreadModel;
+  origin: "owner" | "renamon";
+  running: boolean;
+  archived: boolean;
+  preview: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ThreadMessage {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  turn_id: string;
+  created_at: string;
+}
+
+// One tool call of a turn, as saved.
+export interface ThreadStep {
+  turn_id: string;
+  tool: string;
+  label: string;
+  status: "ok" | "error";
+  summary: string;
+  created_at: string;
+}
+
+export function asThread(v: unknown): Thread | undefined {
+  if (!isRec(v)) return undefined;
+  const id = idOf(v.id);
+  if (id === undefined || !isStr(v.title)) return undefined;
+  return {
+    id,
+    title: v.title,
+    // A model this app doesn't know is shown as the default.
+    model: v.model === "chat" ? "chat" : "deep",
+    origin: v.origin === "renamon" ? "renamon" : "owner",
+    running: v.running === true,
+    archived: v.archived === true,
+    preview: strOr(v.preview),
+    created_at: strOr(v.created_at),
+    updated_at: strOr(v.updated_at),
+  };
+}
+
+export function asThreadMessage(v: unknown): ThreadMessage | undefined {
+  if (!isRec(v)) return undefined;
+  const id = idOf(v.id);
+  if (id === undefined || !isStr(v.text) || (v.role !== "user" && v.role !== "assistant")) return undefined;
+  return { id, role: v.role, text: v.text, turn_id: strOr(v.turn_id), created_at: strOr(v.created_at) };
+}
+
+export function asThreadStep(v: unknown): ThreadStep | undefined {
+  if (!isRec(v) || !isStr(v.turn_id)) return undefined;
+  return {
+    turn_id: v.turn_id,
+    tool: strOr(v.tool),
+    label: strOr(v.label) || strOr(v.tool),
+    status: v.status === "error" ? "error" : "ok",
+    summary: strOr(v.summary),
+    created_at: strOr(v.created_at),
+  };
+}

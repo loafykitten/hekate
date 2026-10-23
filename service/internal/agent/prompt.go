@@ -13,17 +13,20 @@ import (
 	"github.com/loafykitten/hekate/service/persona"
 )
 
-// History window. It starts at a fixed message and only grows at its end, so
-// the provider's prompt cache keeps matching from one turn to the next. Past
-// the high limits it is cut back to the low ones in one step and grows again.
-// Characters are a rough proxy for tokens that avoids shipping a tokenizer.
-const (
-	historyMaxMessages = 40
-	historyMaxChars    = 32000
-	historyLowMessages = 20
-	historyLowChars    = 16000
-	historyToolChars   = 1500 // tool results are long-lived noise; keep the head
-)
+// Window bounds the history sent with a turn. It starts at a fixed message and
+// only grows at its end, so the provider's prompt cache keeps matching from one
+// turn to the next. Past the high limits it is cut back to the low ones in one
+// step and grows again. Characters are a rough proxy for tokens that avoids
+// shipping a tokenizer.
+type Window struct {
+	MaxMessages, MaxChars int // high limits
+	LowMessages, LowChars int // what a cut leaves
+}
+
+// DefaultWindow is the voice conversation's: short, so a turn stays quick.
+var DefaultWindow = Window{MaxMessages: 40, MaxChars: 32000, LowMessages: 20, LowChars: 16000}
+
+const historyToolChars = 1500 // tool results are long-lived noise; keep the head
 
 // PromptInput is everything that goes into one turn's prompt.
 type PromptInput struct {
@@ -37,6 +40,9 @@ type PromptInput struct {
 	// Context holds what the context sources contributed; it follows the clock
 	// in the "Now" section, each block under its source's name.
 	Context []ContextBlock
+	// System, if set, replaces the persona and rules (SystemPrompt), e.g. a
+	// thread's written-work prompt.
+	System string
 }
 
 // BuildMessages lays the prompt out for the provider's prefix cache: first
@@ -45,7 +51,11 @@ type PromptInput struct {
 // the context sources) as a system message just before the current input. The
 // caller appends nothing for the current input: it is the last history message.
 func BuildMessages(in PromptInput) []llm.Message {
-	msgs := []llm.Message{{Role: llm.RoleSystem, Content: SystemPrompt(in)}}
+	system := in.System
+	if system == "" {
+		system = SystemPrompt(in)
+	}
+	msgs := []llm.Message{{Role: llm.RoleSystem, Content: system}}
 	hist := make([]llm.Message, len(in.History))
 	for i, m := range in.History {
 		hist[i] = toLLM(m)
@@ -115,18 +125,23 @@ func nowBlock(now time.Time, loc *time.Location) string {
 // starts at a user message, so no tool result is left without its call. It
 // returns the window and the id of its first message, the next turn's anchor.
 func historyWindow(hist []store.Message, anchor int64) ([]store.Message, int64) {
+	return DefaultWindow.apply(hist, anchor)
+}
+
+// apply is historyWindow with w's limits.
+func (win Window) apply(hist []store.Message, anchor int64) ([]store.Message, int64) {
 	if len(hist) == 0 {
 		return nil, 0
 	}
 	if i := slices.IndexFunc(hist, func(m store.Message) bool { return m.ID == anchor }); anchor != 0 && i >= 0 {
-		if w := hist[i:]; len(w) <= historyMaxMessages && historyChars(w) <= historyMaxChars {
+		if w := hist[i:]; len(w) <= win.MaxMessages && historyChars(w) <= win.MaxChars {
 			return w, anchor
 		}
 	}
-	w := hist[max(len(hist)-historyLowMessages, 0):]
+	w := hist[max(len(hist)-win.LowMessages, 0):]
 	total := historyChars(w)
 	// Drop the oldest messages while over budget, but never the last one.
-	for len(w) > 1 && total > historyLowChars {
+	for len(w) > 1 && total > win.LowChars {
 		total -= historyChars(w[:1])
 		w = w[1:]
 	}

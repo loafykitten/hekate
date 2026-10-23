@@ -305,7 +305,7 @@ func TestConversationRoundTrip(t *testing.T) {
 	if err := s.BeginTurn(ctx, Turn{ID: "t2", ConversationID: "default", StartedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AbortRunningTurns(ctx); err != nil {
+	if err := s.AbortRunningTurns(ctx, "default"); err != nil {
 		t.Fatal(err)
 	}
 	var status string

@@ -23,6 +23,7 @@ const (
 	TypeNotify       = "notify"
 	TypeInvalidate   = "invalidate"
 	TypeApproval     = "approval"
+	TypeThreadEvent  = "thread_event"
 )
 
 // Error codes the service sends.
@@ -35,6 +36,7 @@ const (
 	CodeSTTFailed      = "stt_failed"
 	CodeBadMessage     = "bad_message"
 	CodeTooLong        = "too_long"
+	CodeBusy           = "busy" // a thread is still working, or too many are
 )
 
 // Turn end statuses.
@@ -227,6 +229,9 @@ type ClientMessage struct {
 	TurnID     string `json:"turn_id"` // interrupt: the turn heard_seq describes
 	Quiet      bool   `json:"quiet"`   // say, ptt_end, checkin: answer in text only (the device has her voice off)
 	Day        string `json:"day"`     // checkin: the day the notice asked about, YYYY-MM-DD
+	// Thread sends say, push-to-talk and interrupt to that thread instead of
+	// the main conversation.
+	Thread string `json:"thread"`
 }
 
 // Limits from PROTOCOL.md.
@@ -237,3 +242,17 @@ const (
 	PTTSampleRate     = 16000
 	MaxPTTSeconds     = 60
 )
+
+// ThreadEvent carries one of a thread's turn events (turn_start, activity,
+// segment, card, turn_end, error), so the main conversation's are never
+// mistaken for a thread's.
+type ThreadEvent struct {
+	Type   string `json:"type"`
+	Thread string `json:"thread"`
+	Event  any    `json:"event"`
+}
+
+// NewThreadEvent wraps event for thread.
+func NewThreadEvent(thread string, event any) ThreadEvent {
+	return ThreadEvent{TypeThreadEvent, thread, event}
+}

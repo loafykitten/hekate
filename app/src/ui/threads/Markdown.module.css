@@ -1,0 +1,151 @@
+.md {
+  min-width: 0;
+  color: var(--fg);
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.md > :first-child {
+  margin-top: 0;
+}
+
+.md > :last-child {
+  margin-bottom: 0;
+}
+
+.md p,
+.md ul,
+.md ol,
+.md blockquote,
+.md h1,
+.md h2,
+.md h3,
+.md h4,
+.md hr {
+  margin: 0 0 var(--space-3);
+}
+
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  margin-top: var(--space-4);
+  color: var(--fg);
+  font-weight: var(--weight-bold);
+  line-height: 1.3;
+}
+
+.md h1 {
+  font-size: var(--text-xl);
+}
+
+.md h2 {
+  font-size: var(--text-lg);
+}
+
+.md h3,
+.md h4 {
+  font-size: var(--text-md);
+}
+
+.md ul,
+.md ol {
+  padding-left: 1.4em;
+}
+
+.md li + li {
+  margin-top: 0.25em;
+}
+
+.md li > p {
+  margin-bottom: 0.25em;
+}
+
+.md a {
+  color: var(--accent);
+  text-decoration-color: var(--accent-line);
+  text-underline-offset: 2px;
+}
+
+.md a:hover {
+  text-decoration-color: var(--accent);
+}
+
+.md blockquote {
+  padding-left: var(--space-3);
+  border-left: 3px solid var(--hairline);
+  color: var(--fg-muted);
+}
+
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.md code {
+  padding: 0.1em 0.38em;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  font: 0.86em / 1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* Code blocks and tables scroll sideways on their own instead of widening the page. */
+.scroll {
+  max-width: 100%;
+  margin: 0 0 var(--space-3);
+  overflow-x: auto;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: rgba(10, 8, 18, 0.55);
+  scrollbar-width: thin;
+  scrollbar-color: var(--hairline) transparent;
+}
+
+.scroll:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.scroll pre {
+  margin: 0;
+  padding: var(--space-3);
+  overflow-wrap: normal;
+  white-space: pre;
+  width: max-content;
+  min-width: 100%;
+  box-sizing: border-box;
+}
+
+.scroll pre code {
+  padding: 0;
+  background: none;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--fg);
+}
+
+.scroll table {
+  border-collapse: collapse;
+  width: max-content;
+  min-width: 100%;
+  font-size: 0.875rem;
+}
+
+.scroll th,
+.scroll td {
+  padding: 6px var(--space-3);
+  border-bottom: 1px solid var(--hairline);
+  text-align: left;
+  vertical-align: top;
+}
+
+.scroll th {
+  color: var(--fg-muted);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+.scroll tr:last-child td {
+  border-bottom: 0;
+}

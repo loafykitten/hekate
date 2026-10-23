@@ -25,7 +25,8 @@ client whose input started a turn (`origin` matches its `client_id`) plays the a
 | `segment` | see below | One sentence of her reply, ready to perform. |
 | `card` | `turn_id`, `card: { kind, id, title, data }` | Something to show on screen (M2+). |
 | `turn_end` | `turn_id`, `status: "done" \| "interrupted" \| "error"`, `text`, `model`, `usage: { input_tokens, output_tokens, cost_usd \| null }` | The turn is over. `text` is the full display text. |
-| `error` | `code`, `message`, `input_id?` | A problem the user should see. Codes: `llm_unavailable` (no key), `llm_error`, `empty_reply`, `turn_timeout`, `stt_unavailable` (unconfigured or model still loading), `stt_failed`, `bad_message`, `too_long`. |
+| `error` | `code`, `message`, `input_id?` | A problem the user should see. Codes: `llm_unavailable` (no key), `llm_error`, `empty_reply`, `turn_timeout`, `stt_unavailable` (unconfigured or model still loading), `stt_failed`, `bad_message`, `too_long`, `busy` (too many threads running). |
+| `thread_event` | `thread`, `event` | Something happened in a thread: `event` is a `turn_start`, `activity`, `segment`, `card`, `turn_end` or `error` exactly as above, for the thread `thread`. The main conversation's events never come wrapped; a thread's always do. Thread segments carry no audio, words or visemes, and their `text` is the reply exactly as written (markdown, code, line breaks), cut at line breaks or every ~200 characters: concatenate them with nothing in between. A thread's `turn_end` `text` is the whole reply as stored. |
 
 `segment`:
 
@@ -69,12 +70,24 @@ shape is made; with no visemes the mouth follows loudness alone.
 | `interrupt` | `heard_seq` (last segment seq the user heard at least partly, or -1), `turn_id` (the turn `heard_seq` describes) | Stop that turn. The server keeps segments up to `heard_seq` in history, and ignores an interrupt for a turn that is no longer the current one. |
 | `checkin` | `id`, `day?`, `quiet?` | The owner tapped the evening check-in (see Routines). `day` (YYYY-MM-DD) is the day its notification asked about; without it, the current one. Starts a turn with an empty `user_text`, opened with an `evening_checkin` call, unless there's nothing to start: then nothing is sent back. `quiet` as for `say`. |
 
+`say`, `ptt_start`, `ptt_end`, `ptt_cancel` and `interrupt` take an optional `thread` (a thread id,
+see Threads): the input goes to that thread instead of the main conversation. A thread's
+push-to-talk doesn't hush the main conversation, and thread replies are text only (no audio). A
+`say` to an unknown or archived thread gets `error` `bad_message`. A thread doesn't cut its own
+work short for new input: a `say` (typed or transcribed) while it's working, or one that would
+start a fourth running thread, gets `error` `busy` (wrapped as a `thread_event`, with `input_id`).
+`interrupt` to a thread stops its running turn and keeps everything it wrote; `heard_seq` and
+`turn_id` are ignored, and a finished reply is never trimmed.
+
 An `interrupt` that arrives after the turn already ended (the client was still playing queued audio) trims the saved reply to `heard_seq` and broadcasts a second `turn_end` with status `interrupted`, so every client stops playing that turn. With no recent turn it is ignored. New input while a turn is running interrupts that turn first. The client sends `interrupt` with its `heard_seq` only for a turn it started (it knows what was heard); for another device's turn it just sends the input, and the server interrupts that turn keeping what it delivered.
 
 ### Limits
 
 - Text input ≤ 4000 characters. Push-to-talk ≤ 60 s of audio (longer is cut and transcribed).
-- One turn at a time per conversation.
+- One turn at a time per conversation (each thread is one), and at most three threads running at
+  once.
+- Thread turns: up to 30 minutes, 40 model rounds and 80 tool calls each (the main conversation's
+  are 90 s, 6 rounds and 12 calls).
 - The socket is pinged every 20 s. Clients reconnect with backoff, and on reconnect they get a
   fresh `ready` and refetch history over REST.
 
@@ -551,6 +564,49 @@ each run is recorded and kept 90 days.
 |---|---|
 | `GET /api/weather?place=` (default: the home place from settings) | `Weather` card data (below), or 404 `{ error }` when no place is known |
 
+### Threads
+
+A thread is a conversation of its own for longer work: research, lab work, anything that would
+crowd the main conversation. Renamon answers in writing (markdown), as herself, with work tools
+only: web search and reading, her lab (`lab_shell` with up to 10-minute commands,
+`lab_write_file`, `lab_status`, a guarded `lab_snapshot`) and `think_deeper`. What she knows about
+the owner comes along as context; mail, money, calendar, tasks and reminders don't. Threads aren't
+read by the nightly reflection.
+
+```jsonc
+// Thread
+{
+  "id": "th_3f9c2a71",
+  "title": "Set up qBittorrent",
+  "model": "deep",                  // "deep" (GLM 5.3, the default) | "chat" (GLM 5.3 Flash)
+  "model_name": "glm-5.3",          // what "model" means on this server
+  "origin": "owner",                // "owner": opened in the app | "renamon": she opened it for the owner
+  "running": false,                 // a turn is in progress
+  "archived": false,
+  "preview": "qBittorrent runs at http://hekate-lab:8080 …",  // her latest reply, ≤ 160 characters, "" before one
+  "created_at": "…",
+  "updated_at": "…"                 // last message or change
+}
+```
+
+| Method & path | Body | Returns |
+|---|---|---|
+| `GET /api/threads?archived=true` | | `{ threads: [Thread] }`, most recently updated first; archived ones only with `archived=true` (then only those) |
+| `POST /api/threads` | `{ title?, model? }` | `Thread` (201). Without a title it's "New thread" until the first message names it (its first words, up to 60 characters). The first message is a `say` with `thread` on the socket. |
+| `GET /api/threads/{id}` | | `Thread` |
+| `PATCH /api/threads/{id}` | `{ title?, model?, archived? }` | `Thread`. Title 1–80 characters. Archiving stops a running turn. |
+| `GET /api/threads/{id}/messages?before=<message id>&limit=<n ≤ 100>` | | `{ messages: [{ id, role, text, turn_id, created_at }], steps: [{ turn_id, tool, label, status: "ok" \| "error", summary, created_at }] }`: messages as in `/api/conversation/messages` (newest last), and the tool steps of the turns those messages belong to, oldest first. `summary` is the start of the step's result (≤ 200 characters). |
+
+Renamon reaches threads from the main conversation too: `thread_start` opens one with a first
+message and starts it working (e.g. "set up qBittorrent in the lab"), `thread_send` passes the
+owner's words to one, `thread_read` reads its latest replies, `thread_stop` stops it. Her prompt
+lists the threads active in the last three days ("Your threads"). When a turn in a thread she
+started or messaged ends, or any thread turn ends after running a minute or more, the owner gets a
+`notify` (kind `thread`, `id` the thread id) and a push that opens `/?thread=<id>`.
+
+Thread changes (created, renamed, archived, started or finished a turn) broadcast `invalidate`
+with `threads`.
+
 ## Cards
 
 `card.card` is `{ kind, id, title, data }`. Tools attach cards to their results; cards are built
@@ -576,6 +632,6 @@ from stored or fetched data, never from model text. Shapes of `data` by `kind`:
 
 | type | fields | meaning |
 |---|---|---|
-| `notify` | `id`, `kind: "reminder" \| "approval" \| "change" \| "nudge" \| "checkin"`, `title`, `body`, `card?` | Something fired, or she needs a decision she asked for outside a conversation (e.g. a rule from the weekly noise report). The app shows it even with no turn running. |
+| `notify` | `id`, `kind: "reminder" \| "approval" \| "change" \| "nudge" \| "checkin" \| "thread"`, `title`, `body`, `card?` | Something fired, or she needs a decision she asked for outside a conversation (e.g. a rule from the weekly noise report). The app shows it even with no turn running. |
 | `approval` | `approval: Approval` | An approval was created or changed (decided, ran, expired). Clients update any card showing it. |
-| `invalidate` | `domains: ("tasks" \| "reminders" \| "calendar" \| "memory" \| "weather" \| "mail" \| "approvals" \| "changes" \| "ideas" \| "journal" \| "routines" \| "money")[]` | Data changed; refetch those menu sections (`weather`: the home place changed). |
+| `invalidate` | `domains: ("tasks" \| "reminders" \| "calendar" \| "memory" \| "weather" \| "mail" \| "approvals" \| "changes" \| "ideas" \| "journal" \| "routines" \| "money" \| "threads")[]` | Data changed; refetch those menu sections (`weather`: the home place changed). |

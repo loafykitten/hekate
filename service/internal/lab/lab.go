@@ -17,11 +17,9 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/loafykitten/hekate/service/internal/approvals"
-	"github.com/loafykitten/hekate/service/internal/config"
 	"github.com/loafykitten/hekate/service/internal/proto"
 	"github.com/loafykitten/hekate/service/internal/push"
 	"github.com/loafykitten/hekate/service/internal/store"
@@ -57,9 +55,6 @@ type Options struct {
 	Events   proto.Events
 	Push     Pusher // nil: in-app notifications only
 	Logger   *slog.Logger
-	// LLM and Model run lab tasks' workers; nil LLM means no lab tasks.
-	LLM   Completer
-	Model config.Model
 	// HTTP fetches the known-exploited list; nil uses a client with a timeout.
 	HTTP *http.Client
 	Now  func() time.Time // tests replace the clock
@@ -87,19 +82,12 @@ type Service struct {
 	ctl      *ctl
 	kevURL   string // tests point it elsewhere; empty is CISA's feed
 
-	llm   Completer
-	model config.Model
-
 	checking sync.Mutex // one security check at a time
+	snapping sync.Mutex // one snapshot at a time, its checks included
 
 	bgMu  sync.Mutex
 	bgCtx context.Context //nolint:containedctx // Run's context, for background work started by tools
 	bg    sync.WaitGroup
-
-	taskMu        sync.Mutex
-	taskBusy      bool
-	taskCancel    context.CancelFunc
-	stopRequested atomic.Bool
 }
 
 // New builds the service and registers its approval kinds. With no host it's built anyway and
@@ -108,7 +96,7 @@ func New(o Options) (*Service, error) {
 	if o.Store == nil || o.Approvals == nil {
 		return nil, errors.New("lab: Store and Approvals are required")
 	}
-	s := &Service{store: o.Store, db: o.Store.DB(), llm: o.LLM, model: o.Model, appr: o.Approvals, name: o.Name, dir: o.Dir, cacheDir: o.CacheDir, loc: o.Location,
+	s := &Service{store: o.Store, db: o.Store.DB(), appr: o.Approvals, name: o.Name, dir: o.Dir, cacheDir: o.CacheDir, loc: o.Location,
 		events: o.Events, pusher: o.Push, log: o.Logger, http: o.HTTP, now: o.Now, dial: o.Dial}
 	if o.Host != "" {
 		s.addr = o.Host

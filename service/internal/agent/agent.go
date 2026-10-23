@@ -4,6 +4,7 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -23,18 +24,19 @@ import (
 	"github.com/loafykitten/hekate/service/internal/voice"
 )
 
-// ConversationID is the single conversation Hekate has.
+// ConversationID is the main conversation: the voice one, which memory, the
+// reflection and the routines read. Threads are conversations of their own.
 const ConversationID = "default"
 
 // Turn bounds from PLAN.md.
 const (
-	defaultMaxRounds   = 6
-	defaultMaxCalls    = 12
-	maxParallelReads   = 4
-	defaultTurnTimeout = 90 * time.Second
-	maxReplyTokens     = 4096
-	maxToolResultChars = 8000
-	dbTimeout          = 5 * time.Second
+	defaultMaxRounds       = 6
+	defaultMaxCalls        = 12
+	maxParallelReads       = 4
+	defaultTurnTimeout     = 90 * time.Second
+	maxReplyTokens         = 4096
+	defaultToolResultChars = 8000
+	dbTimeout              = 5 * time.Second
 )
 
 var errInterrupted = errors.New("turn interrupted")
@@ -44,10 +46,23 @@ type Limits struct {
 	MaxRounds   int // LLM rounds that may call tools
 	MaxCalls    int // tool calls in total
 	TurnTimeout time.Duration
+	// ToolResultChars cuts each tool result sent back to the model.
+	ToolResultChars int
+	// Window is the history sent with each turn.
+	Window Window
 }
 
 // Options are the agent's dependencies.
 type Options struct {
+	// ConversationID is the conversation this agent holds; empty is the main one.
+	ConversationID string
+	// System, if set, builds the system prompt instead of the voice persona,
+	// from the owner's name.
+	System func(tamer string) string
+	// Written replies are read, not performed: the model's text goes out and
+	// is kept exactly as written (markdown, code, line breaks), with no tags
+	// parsed and no speech.
+	Written   bool
 	LLM       *llm.Client
 	Store     *store.Store
 	Hub       Hub
@@ -81,8 +96,11 @@ type Opening struct {
 	Settle func(given bool)
 }
 
-// Agent owns the conversation and runs one turn at a time.
+// Agent owns a conversation and runs one turn at a time.
 type Agent struct {
+	conv     string
+	system   func(tamer string) string
+	written  bool
 	llm      *llm.Client
 	store    *store.Store
 	hub      Hub
@@ -92,7 +110,7 @@ type Agent struct {
 	log      *slog.Logger
 	tamer    string
 	loc      *time.Location
-	chat     config.Model
+	chat     atomic.Pointer[config.Model] // SetModel changes it between turns
 	deep     config.Model
 	gestures *gestureSource
 	limits   Limits
@@ -192,11 +210,13 @@ func New(o Options) (*Agent, error) {
 		}
 	}
 	a := &Agent{
+		conv: cmp.Or(o.ConversationID, ConversationID), system: o.System, written: o.Written,
 		llm: o.LLM, store: o.Store, hub: o.Hub, synth: o.Synth, tools: reg, sources: o.Context, log: o.Logger,
-		tamer: o.Tamer, loc: o.Location, chat: o.Chat, deep: o.Deep,
+		tamer: o.Tamer, loc: o.Location, deep: o.Deep,
 		gestures: newGestureSource(o.AssetsDir), limits: o.Limits, now: o.Now, opener: o.Opener,
 		checkIn: o.CheckIn,
 	}
+	a.SetModel(o.Chat)
 	if a.log == nil {
 		a.log = slog.New(slog.DiscardHandler)
 	}
@@ -215,15 +235,28 @@ func New(o Options) (*Agent, error) {
 	if a.limits.TurnTimeout <= 0 {
 		a.limits.TurnTimeout = defaultTurnTimeout
 	}
+	if a.limits.ToolResultChars <= 0 {
+		a.limits.ToolResultChars = defaultToolResultChars
+	}
+	if a.limits.Window == (Window{}) {
+		a.limits.Window = DefaultWindow
+	}
 	return a, nil
 }
 
+// SetModel sets the model the next turns start with. When it is the deep
+// model, think_deeper isn't offered: there's nothing deeper to switch to.
+func (a *Agent) SetModel(m config.Model) { a.chat.Store(&m) }
+
+// Model is the model turns start with.
+func (a *Agent) Model() config.Model { return *a.chat.Load() }
+
 // Start prepares the conversation. ctx bounds every turn's lifetime.
 func (a *Agent) Start(ctx context.Context) error {
-	if err := a.store.EnsureConversation(ctx, ConversationID); err != nil {
+	if err := a.store.EnsureConversation(ctx, a.conv); err != nil {
 		return fmt.Errorf("agent start: %w", err)
 	}
-	if err := a.store.AbortRunningTurns(ctx); err != nil {
+	if err := a.store.AbortRunningTurns(ctx, a.conv); err != nil {
 		return fmt.Errorf("agent start: %w", err)
 	}
 	a.baseCtx = ctx
@@ -247,8 +280,8 @@ func (a *Agent) Shutdown(ctx context.Context) error {
 	}
 }
 
-// ConversationID returns the id of the one conversation.
-func (a *Agent) ConversationID() string { return ConversationID }
+// ConversationID returns the id of the agent's conversation.
+func (a *Agent) ConversationID() string { return a.conv }
 
 // Gestures lists the gesture names the character can perform.
 // Timezone is the IANA zone the agent schedules and speaks in.
@@ -387,8 +420,31 @@ func (a *Agent) Hush() {
 	case !f.hushed && time.Since(f.at) <= lateInterruptWindow:
 		f.hushed = true
 		f.stopped(false)
-		_, text := collectMessages(t.id, f.rounds, f.segs, f.kept)
+		_, text := collectMessages(a.conv, a.written, t.id, f.rounds, f.segs, f.kept)
 		a.hub.Broadcast(proto.NewTurnEnd(t.id, proto.StatusInterrupted, text, f.model, f.usage))
+	}
+}
+
+// Stop ends the running turn, keeping everything it delivered. Unlike an
+// interrupt, it never trims a turn that already finished: for written work,
+// where nothing is "heard", what was written stays. A written turn is
+// cancelled without a heard boundary, so a piece emitted while it stops is
+// kept too; a spoken one keeps what was delivered when it was stopped.
+func (a *Agent) Stop() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	t := a.cur
+	if t == nil {
+		return
+	}
+	t.endMu.Lock()
+	defer t.endMu.Unlock()
+	switch {
+	case t.fin != nil:
+	case a.written:
+		t.cancel(errInterrupted)
+	default:
+		t.interrupt(t.delivered())
 	}
 }
 
@@ -399,7 +455,7 @@ var testHookDuringTrim func()
 // tells clients it was interrupted. Called with t.endMu held.
 func (a *Agent) trimFinished(t *turn, heard int) {
 	f := t.fin
-	msgs, text := collectMessages(t.id, f.rounds, f.segs, heard)
+	msgs, text := collectMessages(a.conv, a.written, t.id, f.rounds, f.segs, heard)
 	if testHookDuringTrim != nil {
 		testHookDuringTrim()
 	}
@@ -420,7 +476,7 @@ func (a *Agent) trimFinished(t *turn, heard int) {
 // Messages returns visible history, newest last. before is a message id (0 for
 // the newest page).
 func (a *Agent) Messages(ctx context.Context, before int64, limit int) ([]proto.HistoryMessage, error) {
-	msgs, err := a.store.VisibleMessages(ctx, ConversationID, before, limit)
+	msgs, err := a.store.VisibleMessages(ctx, a.conv, before, limit)
 	if err != nil {
 		return nil, fmt.Errorf("messages: %w", err)
 	}

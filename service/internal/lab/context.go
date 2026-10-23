@@ -20,16 +20,12 @@ func (s *Service) PromptContext(ctx context.Context, _ time.Time) (string, error
 	if !s.Configured() {
 		return "", nil
 	}
-	tasks, err := s.taskLines(ctx)
-	if err != nil {
-		return "", err
-	}
 	c, err := s.lastCheck(ctx)
 	if err != nil {
 		return "", err
 	}
 	if c != nil && c.State == StateClean && !c.Isolated {
-		return tasks + "Last security check " + c.At.In(s.loc).Format("Mon Jan 2 15:04") + ": nothing to act on.", nil
+		return "Last security check " + c.At.In(s.loc).Format("Mon Jan 2 15:04") + ": nothing to act on.", nil
 	}
 	var fs []Finding
 	if c != nil {
@@ -40,7 +36,7 @@ func (s *Service) PromptContext(ctx context.Context, _ time.Time) (string, error
 		}
 		c = &Check{At: c.At, State: c.State, Findings: fs, Isolated: c.Isolated}
 	}
-	text := tasks + strings.TrimSpace(s.checkLines(c, contextFindings))
+	text := strings.TrimSpace(s.checkLines(c, contextFindings))
 	if c != nil && rank[c.State] >= rank[StateSuspicious] {
 		text += "\nBring it up with the owner; don't keep working in the lab until they've seen it."
 	}

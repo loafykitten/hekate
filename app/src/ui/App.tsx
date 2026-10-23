@@ -15,6 +15,8 @@ import { Dock } from "./Dock";
 import { LogButton } from "./LogButton";
 import { LogSheet } from "./LogSheet";
 import { Menu } from "./menu/Menu";
+import { setThreadTarget, useActiveThread } from "./menu/threadTarget";
+import { useHoldToTalk } from "./useHoldToTalk";
 import { isSection, type Section } from "./menu/sections";
 import { MenuButton } from "./MenuButton";
 import { StageView } from "./StageView";
@@ -24,9 +26,19 @@ import { Toasts } from "./Toasts";
 // Dev-only tools; the dead branch is dropped from production builds.
 const GesturePicker = import.meta.env.DEV ? lazy(() => import("./dev/GesturePicker")) : undefined;
 
+// `?thread=th_3f9c2a71`: a tapped thread notification, for that thread.
+function threadFromUrl(url: string): string | undefined {
+  try {
+    return new URL(url, location.href).searchParams.get("thread") || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // `?menu=reminders` (and the url in a push notification) opens the menu on that section.
 function sectionFromUrl(url: string): Section | undefined {
   try {
+    if (threadFromUrl(url)) return "threads";
     // A bank's own sign-in sends the browser back to /money/oauth; the Money section finishes it.
     if (new URL(url, location.href).pathname.replace(/\/+$/, "") === OAUTH_PATH) return "money";
     const value = new URL(url, location.href).searchParams.get("menu");
@@ -65,6 +77,14 @@ export function App() {
     setLogOpen(false);
     setMenu((m) => ({ open: true, section: section ?? m.section }));
   }, []);
+  // A thread's notification: the menu opens on Threads with that thread open.
+  const openThread = useCallback(
+    (id: string) => {
+      setThreadTarget(id);
+      openMenu("threads");
+    },
+    [openMenu],
+  );
   const closeMenu = useCallback(() => setMenu((m) => ({ ...m, open: false })), []);
   const selectSection = useCallback((section: Section) => setMenu({ open: true, section }), []);
   // The check-in's notice button: she answers on the stage, so nothing should cover it. Called from
@@ -100,7 +120,21 @@ export function App() {
     history.replaceState(history.state, "", url);
   }, [conversation]);
 
+  // Opened by a thread's notification: the Threads section picks the target up once.
+  useEffect(() => {
+    const id = threadFromUrl(location.href);
+    if (!id) return;
+    setThreadTarget(id);
+    const url = new URL(location.href);
+    url.searchParams.delete("thread");
+    history.replaceState(history.state, "", url);
+  }, []);
+
   useEffect(() => stage?.setCover(cardCover), [stage, cardCover]);
+
+  // P held down talks to the open thread, or else to the voice stage (when nothing covers it).
+  const activeThread = useActiveThread();
+  useHoldToTalk(conversation, menu.open ? (menu.section === "threads" ? activeThread : undefined) : logOpen ? undefined : "main");
 
   useEffect(() => {
     conversation.attachStage(stage);
@@ -127,8 +161,10 @@ export function App() {
     const onMessage = (e: MessageEvent) => {
       const data = e.data as { type?: unknown; url?: unknown } | null;
       if (data?.type !== "open-url" || typeof data.url !== "string") return;
+      const thread = threadFromUrl(data.url);
       const section = sectionFromUrl(data.url);
-      if (section) openMenu(section);
+      if (thread) openThread(thread);
+      else if (section) openMenu(section);
       const day = checkInFromUrl(data.url);
       if (day !== undefined) {
         // She answers on the stage: nothing should cover it.
@@ -139,7 +175,7 @@ export function App() {
     };
     navigator.serviceWorker.addEventListener("message", onMessage);
     return () => navigator.serviceWorker.removeEventListener("message", onMessage);
-  }, [conversation, openMenu, closeMenu, closeLog]);
+  }, [conversation, openMenu, openThread, closeMenu, closeLog]);
 
   return (
     <PersistQueryClientProvider
@@ -161,7 +197,7 @@ export function App() {
         <Dock onOpenLog={openLog} logOpen={logOpen || menu.open} />
         <LogSheet open={logOpen} onClose={closeLog} />
         <Menu open={menu.open} section={menu.section} onSection={selectSection} onClose={closeMenu} />
-        <Toasts onOpenSection={selectSection} onCheckIn={checkInNow} cardsShown={!menu.open && !logOpen} />
+        <Toasts onOpenSection={selectSection} onOpenThread={openThread} onCheckIn={checkInNow} cardsShown={!menu.open && !logOpen} />
         {GesturePicker && stage?.character && (
           <Suspense>
             <GesturePicker character={stage.character} />

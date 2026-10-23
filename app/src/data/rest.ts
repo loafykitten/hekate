@@ -22,6 +22,9 @@ import {
   asMessage,
   asReminder,
   asTask,
+  asThread,
+  asThreadMessage,
+  asThreadStep,
   asTaskList,
   asWeather,
   isRec,
@@ -47,6 +50,10 @@ import {
   type Memory,
   type Message,
   type Task,
+  type Thread,
+  type ThreadMessage,
+  type ThreadModel,
+  type ThreadStep,
   type TaskList,
   type Weather,
 } from "./model";
@@ -369,4 +376,27 @@ export const moneyApi = {
   transactions: async (params: TransactionQuery, signal?: AbortSignal): Promise<MoneyTransaction[]> =>
     many(await request("GET", "/money/transactions", { query: { ...params }, signal }), "transactions", asMoneyTransaction),
   spending: async (month: string, signal?: AbortSignal): Promise<Spending> => one(await request("GET", "/money/spending", { query: { month }, signal }), asSpending),
+};
+
+// --- threads -------------------------------------------------------------------------------
+
+export const THREAD_PAGE = 50;
+export type ThreadFields = { title?: string; model?: ThreadModel; archived?: boolean };
+
+export interface ThreadPage {
+  messages: ThreadMessage[]; // oldest first
+  steps: ThreadStep[];
+}
+
+export const threadsApi = {
+  list: async (archived: boolean, signal?: AbortSignal): Promise<Thread[]> =>
+    many(await request("GET", "/threads", { query: { archived: archived ? "true" : undefined }, signal }), "threads", asThread),
+  create: async (fields: { title?: string; model?: ThreadModel } = {}) => one(await request("POST", "/threads", { body: fields }), asThread),
+  get: async (id: string, signal?: AbortSignal) => one(await request("GET", `/threads/${encodeURIComponent(id)}`, { signal }), asThread),
+  patch: async (id: string, fields: ThreadFields) => one(await request("PATCH", `/threads/${encodeURIComponent(id)}`, { body: fields }), asThread),
+  // `before` is the id of the oldest message already shown.
+  messages: async (id: string, before?: string, signal?: AbortSignal): Promise<ThreadPage> => {
+    const body = await request("GET", `/threads/${encodeURIComponent(id)}/messages`, { query: { before, limit: THREAD_PAGE }, signal });
+    return { messages: many(body, "messages", asThreadMessage), steps: many(body, "steps", asThreadStep) };
+  },
 };

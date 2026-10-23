@@ -569,7 +569,7 @@ describe("Conversation: cards, notices and invalidation", () => {
     t.conversation.client.reconnectNow();
     FakeSocket.last.open();
     FakeSocket.last.receive(READY);
-    expect(seen.at(-1)).toEqual(["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes", "ideas", "journal", "routines"]);
+    expect(seen.at(-1)).toEqual(["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes", "ideas", "journal", "routines", "threads"]);
   });
 });
 
@@ -580,5 +580,185 @@ describe("Conversation: authoritative turn text", () => {
     t.socket.receive(seg("t1", 0, "Never heard."));
     t.socket.receive({ ...turnEnd("t1", ""), status: "interrupted" });
     expect(t.state().live.find((e) => e.role === "assistant")?.text).toBe("");
+  });
+});
+
+describe("Conversation: threads", () => {
+  const wrapped = (thread: string, event: object) => ({ type: "thread_event", thread, event });
+  const threadTurn = (turn = "tt1") => [
+    wrapped("th1", { type: "turn_start", turn_id: turn, input_id: "i1", origin: "c1", user_text: "look into it" }),
+    wrapped("th1", { type: "activity", turn_id: turn, tool: "web_search", label: "Searching the web", state: "start" }),
+    wrapped("th1", { ...seg(turn, 0, "Here is what I found."), audio_b64: null }),
+    wrapped("th1", { ...turnEnd(turn, "Here is what I found.") }),
+  ];
+
+  it("keeps wrapped events away from the main conversation", () => {
+    const t = setup();
+    const before = t.state();
+    for (const m of threadTurn()) t.socket.receive(m);
+    const after = t.state();
+    expect(after.live).toEqual([]);
+    expect(after.caption).toBeUndefined();
+    expect(after.activity).toBeUndefined();
+    expect(after.phase).toBe("idle");
+    expect(after.cards).toEqual([]);
+    expect(after.historyEpoch).toBe(before.historyEpoch);
+    expect(t.conversation.client.turnActive).toBe(false);
+    expect(t.conversation.threads.get("th1").turn?.text).toBe("Here is what I found.");
+  });
+
+  it("leaves the main turn running while a thread's turn comes and goes", () => {
+    const t = setup();
+    t.socket.receive({ type: "turn_start", turn_id: "m1", input_id: "x", origin: "c1", user_text: "hi" });
+    for (const m of threadTurn()) t.socket.receive(m);
+    expect(t.conversation.client.activeTurnId).toBe("m1");
+    expect(t.state().live.map((e) => e.turnId)).toEqual(["m1", "m1"]);
+  });
+
+  it("sends text to a thread without interrupting the main turn", () => {
+    const t = setup();
+    t.socket.receive({ type: "turn_start", turn_id: "m1", input_id: "x", origin: "c1", user_text: "hi" });
+    expect(t.conversation.sendThreadText("th1", "  go on  ")).toBeTruthy();
+    expect(t.socket.json.at(-1)).toMatchObject({ type: "say", text: "go on", thread: "th1" });
+    expect(t.types()).not.toContain("interrupt");
+    expect(t.conversation.client.activeTurnId).toBe("m1");
+    expect(t.state().caption?.text).toBe("hi"); // not "go on"
+  });
+
+  it("talks to a thread with the same microphone, without hushing the main conversation", async () => {
+    const t = setup();
+    t.socket.receive({ type: "turn_start", turn_id: "m1", input_id: "x", origin: "c1", user_text: "hi" });
+    t.conversation.pressTalk("th1");
+    await Promise.resolve();
+    expect(t.socket.json.at(-1)).toMatchObject({ type: "ptt_start", thread: "th1" });
+    expect(t.types()).not.toContain("interrupt");
+    expect(t.state().phase).not.toBe("listening"); // the stage stays out of it
+    expect(t.state().threadTalk).toMatchObject({ thread: "th1", ready: true });
+    t.conversation.pressTalk(); // the voice stage's button can't take the microphone meanwhile
+    expect(t.types().filter((x) => x === "ptt_start")).toHaveLength(1);
+    t.conversation.releaseTalk();
+    t.conversation.pressTalk("th1");
+    await vi.waitFor(() => expect(t.types()).toContain("ptt_end"));
+    expect(t.socket.json.at(-1)).toMatchObject({ type: "ptt_end", thread: "th1" });
+    expect(t.mic.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("takes no new input for a thread while it works (the service would refuse it)", () => {
+    const t = setup();
+    t.socket.receive(threadTurn()[0]); // turn_start: she's working
+    const sent = t.socket.json.length;
+    expect(t.conversation.sendThreadText("th1", "and also")).toBeUndefined();
+    t.conversation.pressTalk("th1");
+    expect(t.conversation.holdTalk("th1")).toBe(false);
+    expect(t.socket.json.length).toBe(sent);
+    t.socket.receive(threadTurn()[3]); // turn_end: done
+    expect(t.conversation.sendThreadText("th1", "and also")).toBeTruthy();
+  });
+
+  it("sends a held key's speech on release, and drops a bare tap", async () => {
+    const t = setup();
+    expect(t.conversation.holdTalk("th1")).toBe(true);
+    await Promise.resolve();
+    t.tick(600);
+    t.conversation.releaseHold();
+    await vi.waitFor(() => expect(t.types()).toContain("ptt_end"));
+    expect(t.socket.json.at(-1)).toMatchObject({ type: "ptt_end", thread: "th1" });
+
+    t.conversation.holdTalk();
+    await Promise.resolve();
+    t.tick(50);
+    t.conversation.releaseHold();
+    expect(t.socket.json.at(-1)).toMatchObject({ type: "ptt_cancel" });
+  });
+
+  it("cancels a held key when the window loses focus", async () => {
+    const t = setup();
+    t.conversation.holdTalk();
+    await Promise.resolve();
+    t.conversation.cancelHold();
+    expect(t.socket.json.at(-1)).toMatchObject({ type: "ptt_cancel" });
+    expect(t.state().phase).toBe("idle");
+  });
+
+  it("routes a thread input's transcript and errors to the thread", () => {
+    const t = setup();
+    t.conversation.sendThreadText("th1", "hello");
+    const id = t.socket.json.at(-1)?.id as string;
+    t.socket.receive({ type: "transcript", id, text: "hello" });
+    expect(t.state().caption).toBeUndefined();
+    t.socket.receive({ type: "error", code: "busy", message: "Three threads are already working.", input_id: id });
+    expect(t.state().toasts).toEqual([]);
+    expect(t.conversation.threads.get("th1").error).toBe("Three threads are already working.");
+  });
+
+  it("stops a thread's turn by id, and a thread notice carries its thread", () => {
+    const t = setup();
+    t.socket.receive(threadTurn()[0]);
+    t.conversation.stopThread("th1");
+    expect(t.socket.json.at(-1)).toEqual({ type: "interrupt", heard_seq: -1, thread: "th1", turn_id: "tt1" });
+    t.socket.receive({ type: "notify", id: "th1", kind: "thread", title: "Done", body: "Set up the thing" });
+    expect(t.state().notices[0]).toMatchObject({ thread: "th1" });
+    expect(t.state().notices[0].section).toBeUndefined();
+  });
+
+  it("closing the menu during a latched thread recording cancels it and frees the microphone", async () => {
+    const t = setup();
+    t.conversation.pressTalk("th1");
+    await Promise.resolve();
+    t.conversation.releaseTalk();
+    expect(t.state().threadTalk).toMatchObject({ thread: "th1", latched: true });
+    t.conversation.cancelThreadCapture("other"); // another thread's view going away leaves it be
+    expect(t.state().threadTalk).toBeDefined();
+    t.conversation.cancelThreadCapture("th1"); // the thread's view stopped being on screen
+    expect(t.socket.json.at(-1)).toMatchObject({ type: "ptt_cancel", thread: "th1" });
+    expect(t.mic.stop).toHaveBeenCalled();
+    expect(t.state().threadTalk).toBeUndefined();
+    t.chunk(new Int16Array([1]).buffer);
+    expect(t.socket.sent.at(-1)).not.toBeInstanceOf(ArrayBuffer); // nothing streams any more
+    t.conversation.pressTalk(); // the voice stage can have the microphone
+    expect(t.socket.json.at(-1)).toMatchObject({ type: "ptt_start" });
+    expect(t.socket.json.at(-1)?.thread).toBeUndefined();
+  });
+
+  it("holds the microphone until the last recording is flushed", async () => {
+    const t = setup();
+    let release: () => void = () => {};
+    t.mic.stop.mockImplementationOnce(() => new Promise<void>((r) => (release = r)));
+    t.conversation.pressTalk("th1");
+    await Promise.resolve();
+    t.conversation.releaseTalk();
+    t.conversation.pressTalk("th1"); // sends it; the mic is still stopping
+    const first = t.socket.json.at(-1)?.id;
+    t.conversation.pressTalk("th1"); // too soon: nothing starts
+    expect(t.conversation.holdTalk("th1")).toBe(false);
+    expect(t.types()).toEqual(["ptt_start"]);
+    release();
+    await vi.waitFor(() => expect(t.types()).toEqual(["ptt_start", "ptt_end"]));
+    expect(t.socket.json[1].id).toBe(first);
+    t.conversation.pressTalk("th1");
+    await Promise.resolve();
+    expect(t.types()).toEqual(["ptt_start", "ptt_end", "ptt_start"]);
+    const audio = new Int16Array([5]).buffer;
+    t.chunk(audio);
+    expect(t.socket.sent.at(-1)).toBe(audio); // the second recording streams
+  });
+
+  it("names the input a thread refused, from a wrapped error or a plain one", () => {
+    const t = setup();
+    const id = t.conversation.sendThreadText("th1", "hello")!;
+    t.socket.receive(wrapped("th1", { type: "error", code: "busy", message: "Too many threads.", input_id: id }));
+    expect(t.conversation.threads.get("th1")).toMatchObject({ error: "Too many threads.", failedInput: id });
+    const id2 = t.conversation.sendThreadText("th1", "again")!;
+    expect(t.conversation.threads.get("th1").failedInput).toBeUndefined();
+    t.socket.receive({ type: "error", code: "bad_message", message: "No such thread.", input_id: id2 });
+    expect(t.conversation.threads.get("th1").failedInput).toBe(id2);
+  });
+
+  it("doesn't call a turn that was taken and then failed a refusal (its words are saved)", () => {
+    const t = setup();
+    const id = t.conversation.sendThreadText("th1", "look into it")!;
+    t.socket.receive(wrapped("th1", { type: "turn_start", turn_id: "tt9", input_id: id, origin: "c1", user_text: "look into it" }));
+    t.socket.receive(wrapped("th1", { type: "error", code: "llm_error", message: "Something went wrong.", input_id: id }));
+    expect(t.conversation.threads.get("th1")).toMatchObject({ error: "Something went wrong.", failedInput: undefined });
   });
 });

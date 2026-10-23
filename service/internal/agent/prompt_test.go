@@ -121,7 +121,7 @@ func TestHistoryWindowCutsToTheLowLimits(t *testing.T) {
 		h[i].Content = strings.Repeat("x", 6000)
 	}
 	got, _ = historyWindow(h, 0)
-	if historyChars(got) > historyLowChars || got[len(got)-1].ID != h[9].ID || got[0].Role != store.RoleUser {
+	if historyChars(got) > DefaultWindow.LowChars || got[len(got)-1].ID != h[9].ID || got[0].Role != store.RoleUser {
 		t.Errorf("chars %d, messages %d", historyChars(got), len(got))
 	}
 	// A single input over the budget is still sent.
@@ -140,16 +140,16 @@ func TestHistoryWindowGrowsFromItsAnchor(t *testing.T) {
 	var anchor int64
 	var cuts []int
 	for n := 1; n <= len(all); n += 2 { // a turn adds the user's message and her reply
-		h := all[max(n-historyMaxMessages, 0):n]
+		h := all[max(n-DefaultWindow.MaxMessages, 0):n]
 		before := anchor
 		var w []store.Message
 		w, anchor = historyWindow(h, anchor)
-		if w[len(w)-1].ID != int64(n) || w[0].Role != store.RoleUser || len(w) > historyMaxMessages {
+		if w[len(w)-1].ID != int64(n) || w[0].Role != store.RoleUser || len(w) > DefaultWindow.MaxMessages {
 			t.Fatalf("turn %d: window %d..%d", n, w[0].ID, w[len(w)-1].ID)
 		}
 		if anchor != before {
 			cuts = append(cuts, n)
-			if before != 0 && len(w) > historyLowMessages {
+			if before != 0 && len(w) > DefaultWindow.LowMessages {
 				t.Errorf("turn %d: cut to %d messages", n, len(w))
 			}
 		}
@@ -284,7 +284,7 @@ func TestCollectMessages(t *testing.T) {
 		return out
 	}
 
-	msgs, text := collectMessages("t1", rounds(), segs, 2)
+	msgs, text := collectMessages(ConversationID, false, "t1", rounds(), segs, 2)
 	if got := roles(msgs); !slices.Equal(got, []string{"assistant:Hi there. Checking now.", "tool:", "assistant:All done."}) || text != "Hi there. Checking now. All done." {
 		t.Errorf("full = %v / %q", got, text)
 	}
@@ -292,19 +292,19 @@ func TestCollectMessages(t *testing.T) {
 		t.Errorf("full = %+v", msgs)
 	}
 
-	msgs, text = collectMessages("t1", rounds(), segs, 0)
+	msgs, text = collectMessages(ConversationID, false, "t1", rounds(), segs, 0)
 	if got := roles(msgs); !slices.Equal(got, []string{"assistant:Hi there.", "tool:"}) || text != "Hi there." {
 		t.Errorf("heard 0 = %v / %q", got, text)
 	}
 
-	msgs, text = collectMessages("t1", rounds(), segs, -1)
+	msgs, text = collectMessages(ConversationID, false, "t1", rounds(), segs, -1)
 	if got := roles(msgs); !slices.Equal(got, []string{"assistant:", "tool:"}) || text != "" {
 		t.Errorf("heard none keeps the tool exchange: %v / %q", got, text)
 	}
 
 	incomplete := rounds()
 	incomplete[0].results = map[string]string{}
-	msgs, _ = collectMessages("t1", incomplete, segs, 2)
+	msgs, _ = collectMessages(ConversationID, false, "t1", incomplete, segs, 2)
 	if len(msgs) != 0 {
 		t.Errorf("an unanswered tool call must not be stored: %+v", msgs)
 	}

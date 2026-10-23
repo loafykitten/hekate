@@ -163,11 +163,13 @@ export class ConversationClient {
     this.open();
   }
 
-  say(text: string, quiet = false): string | undefined {
+  // `thread` sends the input to that thread. A thread has its own turn: the main conversation's
+  // is left running, and the server restarts the thread's own on new input.
+  say(text: string, quiet = false, thread?: string): string | undefined {
     if (!this.canSend()) return undefined;
-    this.interruptForNewInput();
+    if (!thread) this.interruptForNewInput();
     const id = newId();
-    return this.send(quiet ? { type: "say", id, text, quiet } : { type: "say", id, text }) ? id : undefined;
+    return this.send({ type: "say", id, text, ...(quiet ? { quiet } : {}), ...(thread ? { thread } : {}) }) ? id : undefined;
   }
 
   checkIn(day?: string, quiet = false): string | undefined {
@@ -177,11 +179,11 @@ export class ConversationClient {
     return this.send({ type: "checkin", id, ...(day ? { day } : {}), ...(quiet ? { quiet } : {}) }) ? id : undefined;
   }
 
-  pttStart(sampleRate = PTT_SAMPLE_RATE): string | undefined {
+  pttStart(sampleRate = PTT_SAMPLE_RATE, thread?: string): string | undefined {
     if (!this.canSend()) return undefined;
-    this.interruptForNewInput();
+    if (!thread) this.interruptForNewInput();
     const id = newId();
-    return this.send({ type: "ptt_start", id, sample_rate: sampleRate }) ? id : undefined;
+    return this.send({ type: "ptt_start", id, sample_rate: sampleRate, ...(thread ? { thread } : {}) }) ? id : undefined;
   }
 
   // One binary frame of little-endian signed 16-bit mono PCM.
@@ -191,12 +193,18 @@ export class ConversationClient {
     return true;
   }
 
-  pttEnd(id: string, quiet = false): boolean {
-    return this.send(quiet ? { type: "ptt_end", id, quiet } : { type: "ptt_end", id });
+  pttEnd(id: string, quiet = false, thread?: string): boolean {
+    return this.send({ type: "ptt_end", id, ...(quiet ? { quiet } : {}), ...(thread ? { thread } : {}) });
   }
 
-  pttCancel(id: string): boolean {
-    return this.send({ type: "ptt_cancel", id });
+  pttCancel(id: string, thread?: string): boolean {
+    return this.send({ type: "ptt_cancel", id, ...(thread ? { thread } : {}) });
+  }
+
+  // Stops a thread's turn. Nothing is heard of a thread's reply, so heard_seq is -1; the main
+  // conversation's turn bookkeeping is untouched.
+  interruptThread(thread: string, turnId?: string): boolean {
+    return this.send({ type: "interrupt", heard_seq: -1, thread, ...(turnId ? { turn_id: turnId } : {}) });
   }
 
   // Stops the current turn; the server keeps segments up to heardSeq in history.

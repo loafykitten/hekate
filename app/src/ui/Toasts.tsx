@@ -7,7 +7,7 @@ import styles from "./Toasts.module.css";
 // and info (mic problems, a dropped connection, a failed save). A notice that came with a card
 // shows only while that card doesn't (the menu or log covers the cards, or it's gone): one or the
 // other, not both.
-export function Toasts({ onOpenSection, onCheckIn, cardsShown }: { onOpenSection: (section: Section) => void; onCheckIn: () => void; cardsShown: boolean }) {
+export function Toasts({ onOpenSection, onOpenThread, onCheckIn, cardsShown }: { onOpenSection: (section: Section) => void; onOpenThread: (id: string) => void; onCheckIn: () => void; cardsShown: boolean }) {
   const conversation = useConversation();
   const state = useConversationState();
   const { toasts } = state;
@@ -33,6 +33,18 @@ export function Toasts({ onOpenSection, onCheckIn, cardsShown }: { onOpenSection
               }}
             >
               Talk it over
+            </button>
+          )}
+          {n.thread && (
+            <button
+              type="button"
+              className={styles.action}
+              onClick={() => {
+                onOpenThread(n.thread!);
+                conversation.dismissNotice(n.id);
+              }}
+            >
+              View
             </button>
           )}
           {n.section && (

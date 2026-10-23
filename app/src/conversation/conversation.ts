@@ -7,7 +7,8 @@ import { SegmentPlayer } from "./player";
 import { asApproval, parseCard, type Approval } from "../data/model";
 import { setZone } from "../data/time";
 import { CardDeck, type DeckEntry } from "./deck";
-import { MAX_TEXT_LENGTH, type Capabilities, type Notify, type Segment, type TurnEnd } from "./protocol";
+import { MAX_TEXT_LENGTH, PTT_SAMPLE_RATE, type Capabilities, type Notify, type Segment, type ThreadEvent, type TurnEnd } from "./protocol";
+import { isRunning, ThreadLiveStore } from "./threadLive";
 
 // The conversation as the UI sees it: owns the socket, the segment player and the microphone,
 // and turns their events into one immutable state snapshot (for useSyncExternalStore). Framework
@@ -30,6 +31,8 @@ export interface Notice {
   body: string;
   // The menu section it belongs to, when it has one.
   section?: "reminders" | "today" | "changes";
+  // The thread it is about: its button opens that thread.
+  thread?: string;
   // The evening check-in: its button starts one.
   checkIn?: boolean;
   // The deck key of the card it came with, which says the same: while that card shows, the banner
@@ -42,6 +45,14 @@ function noticeSection(kind: string): Notice["section"] {
   if (kind === "reminder") return "reminders";
   if (kind === "approval" || kind === "nudge") return "today";
   return kind === "change" ? "changes" : undefined;
+}
+
+// A push-to-talk aimed at a thread, as the thread's view needs it (the main talk button's own
+// state is `phase`).
+export interface ThreadTalk {
+  thread: string;
+  ready: boolean;
+  latched: boolean;
 }
 
 export const NOTICE_MS = 12_000;
@@ -77,6 +88,8 @@ export interface ConversationState {
   historyEpoch: number;
   // Her voice on this device. Off, she answers in the bubble only.
   voice: boolean;
+  // Set while the microphone is open for a thread; the voice stage ignores it.
+  threadTalk?: ThreadTalk;
 }
 
 const PENDING_TIMEOUT_MS = 60_000;
@@ -88,7 +101,17 @@ interface Capture {
   released: boolean;
   latched: boolean;
   ready: boolean;
+  // Aimed at this thread instead of the main conversation.
+  thread?: string;
+  // Held down (a key), so letting go sends it, instead of latching until the next press.
+  hold: boolean;
+  // Let go before the microphone opened: send as soon as it has.
+  endWhenReady: boolean;
 }
+
+// A hold shorter than this was a tap on the key, not speech.
+const MIN_HOLD_MS = 250;
+const MAX_THREAD_INPUTS = 50;
 
 type Pending = { id: string; stage: "transcript" | "turn" };
 
@@ -135,6 +158,9 @@ export class Conversation {
 
   private capture?: Capture;
   private streamingId?: string; // ptt id whose audio chunks are being sent
+  // A finished recording is still being flushed (mic stopping, ptt_end not sent yet): the microphone
+  // and the socket's recording belong to it until then.
+  private flushing = false;
   private pressOwnsCapture = false;
   private pending?: Pending;
   private pendingTimer?: ReturnType<typeof setTimeout>;
@@ -153,6 +179,11 @@ export class Conversation {
   private noticeTimers = new Map<string, ReturnType<typeof setTimeout>>();
   // A check-in the owner tapped, waiting for the connection and the scene.
   private wantedCheckIn?: { day?: string; audible: boolean };
+  // Each thread's turn as it happens (text only); the thread views read it.
+  readonly threads = new ThreadLiveStore();
+  // Inputs sent to a thread, by input id, so their transcripts and errors go to the thread and
+  // not to the voice stage.
+  private threadInputs = new Map<string, string>();
   private invalidateListeners = new Set<(domains: string[]) => void>();
   private approvalListeners = new Set<(approval: Approval) => void>();
 
@@ -188,6 +219,7 @@ export class Conversation {
       c.on("notify", (m) => this.onNotify(m)),
       c.on("invalidate", (m) => this.emitInvalidate(m.domains)),
       c.on("approval", (m) => this.onApproval(m.approval)),
+      c.on("thread_event", (m) => this.onThreadEvent(m.thread, m.event)),
       c.on("error", (m) => this.onError(m.code, m.message, m.input_id)),
     ];
     c.connect();
@@ -326,15 +358,47 @@ export class Conversation {
   }
 
   // Press of the talk button (or Space). Starts push-to-talk, ends a latched one, or interrupts
-  // her first. Call synchronously from the event handler: iOS needs the gesture.
-  pressTalk() {
-    this.unlockAudio();
+  // her first. Call synchronously from the event handler: iOS needs the gesture. With `thread`,
+  // the speech goes to that thread: her voice on the stage is left alone.
+  pressTalk(thread?: string) {
+    if (!thread) this.unlockAudio();
+    if (this.flushing) return;
+    if (this.capture && this.capture.thread !== thread) return; // the microphone is in use for the other
+    if (!this.capture && thread && this.threadWorking(thread)) return;
     if (this.capture?.latched) {
       this.pressOwnsCapture = false;
       this.finishCapture();
       return;
     }
-    if (this.capture || this.pending?.stage === "transcript") return;
+    if (this.capture || (!thread && this.pending?.stage === "transcript")) return;
+    this.startCapture(thread, false);
+  }
+
+  // A key held down to talk (P): speaks while held, sends on release. False when it didn't start.
+  holdTalk(thread?: string): boolean {
+    if (this.flushing || this.capture || (!thread && this.pending?.stage === "transcript")) return false;
+    if (thread && this.threadWorking(thread)) return false;
+    if (!thread) this.unlockAudio();
+    this.startCapture(thread, true);
+    return !!this.capture;
+  }
+
+  // The held key was let go: send what was said (a bare tap sends nothing).
+  releaseHold() {
+    const capture = this.capture;
+    if (!capture?.hold || capture.released) return;
+    capture.released = true;
+    if (this.now() - capture.pressedAt < MIN_HOLD_MS) this.cancelCapture();
+    else if (capture.ready) this.finishCapture();
+    else capture.endWhenReady = true;
+  }
+
+  // The window lost focus while the key was down: the release will never arrive.
+  cancelHold() {
+    if (this.capture?.hold) this.cancelCapture();
+  }
+
+  private startCapture(thread: string | undefined, hold: boolean) {
     if (!this.connected) {
       this.toast("error", "Not connected to Hekate yet.", "offline-talk");
       return;
@@ -343,18 +407,19 @@ export class Conversation {
       this.toast("error", "Voice input isn't available right now. You can still type.", "stt-off");
       return;
     }
-    this.interruptIfBusy();
-    const id = this.client.pttStart();
+    if (!thread) this.interruptIfBusy();
+    const id = this.client.pttStart(PTT_SAMPLE_RATE, thread);
     if (!id) return;
-    const capture: Capture = { id, pressedAt: this.now(), released: false, latched: false, ready: false };
+    const capture: Capture = { id, pressedAt: this.now(), released: false, latched: false, ready: false, thread, hold, endWhenReady: false };
     this.capture = capture;
     this.streamingId = id;
-    this.pressOwnsCapture = true;
-    this.clearPending();
+    this.pressOwnsCapture = !hold;
+    if (!thread) this.clearPending();
     this.mic.start().then(
       (ok) => {
         if (!ok) return;
         capture.ready = true;
+        if (capture.endWhenReady && this.capture === capture) this.finishCapture();
         this.emit();
       },
       (e: unknown) => {
@@ -393,7 +458,7 @@ export class Conversation {
     this.pressOwnsCapture = false;
     this.streamingId = undefined;
     void this.mic.stop();
-    this.client.pttCancel(capture.id);
+    this.client.pttCancel(capture.id, capture.thread);
     this.emit();
   }
 
@@ -411,12 +476,70 @@ export class Conversation {
       return;
     }
     this.capture = undefined;
-    this.setPending({ id: capture.id, stage: "transcript" });
+    const { thread } = capture;
+    if (thread) {
+      this.rememberThreadInput(capture.id, thread);
+      this.threads.sent(thread, true);
+    } else {
+      this.setPending({ id: capture.id, stage: "transcript" });
+    }
     this.emit();
-    void this.mic.stop().then(() => {
-      this.streamingId = undefined;
-      this.client.pttEnd(capture.id, !this.voice);
-    });
+    this.flushing = true;
+    const flushed = () => {
+      this.flushing = false;
+      if (this.streamingId === capture.id) this.streamingId = undefined;
+      this.client.pttEnd(capture.id, !this.voice, thread);
+    };
+    void this.mic.stop().then(flushed, flushed);
+  }
+
+  // The thread's view went off screen: a recording for it is discarded, so the microphone is free.
+  cancelThreadCapture(thread: string) {
+    if (this.capture?.thread === thread) this.cancelCapture();
+  }
+
+  // --- threads ---------------------------------------------------------------------------
+
+  // Types into a thread. It runs beside the main conversation: nothing here is interrupted.
+  // Returns the input's id, which a later rejection (`threads.get(thread).failedInput`) names.
+  sendThreadText(thread: string, text: string): string | undefined {
+    const trimmed = text.trim();
+    if (!trimmed || this.threadWorking(thread)) return undefined;
+    if (trimmed.length > MAX_TEXT_LENGTH) {
+      this.toast("error", `That's too long to send (${MAX_TEXT_LENGTH} characters at most).`, "too-long");
+      return undefined;
+    }
+    if (!this.connected) {
+      this.toast("error", "Not connected to Hekate yet.", "offline-send");
+      return undefined;
+    }
+    const id = this.client.say(trimmed, false, thread);
+    if (!id) return undefined;
+    this.rememberThreadInput(id, thread);
+    this.threads.sent(thread);
+    return id;
+  }
+
+  // A thread takes no new input while it works (the service refuses it); the next message waits.
+  private threadWorking(thread: string): boolean {
+    return isRunning(this.threads.get(thread));
+  }
+
+  // Stops the thread's running turn, keeping what she wrote.
+  stopThread(thread: string) {
+    this.client.interruptThread(thread, this.threads.get(thread).turn?.id);
+  }
+
+  private rememberThreadInput(id: string, thread: string) {
+    this.threadInputs.set(id, thread);
+    if (this.threadInputs.size > MAX_THREAD_INPUTS) this.threadInputs.delete(this.threadInputs.keys().next().value!);
+  }
+
+  private onThreadEvent(thread: string, event: ThreadEvent) {
+    if (event.type === "turn_start") this.threadInputs.delete(event.input_id);
+    if (event.type === "error" && event.input_id) this.threadInputs.delete(event.input_id);
+    this.threads.apply(thread, event);
+    this.emit();
   }
 
   private onMicChunk(chunk: ArrayBuffer) {
@@ -464,14 +587,26 @@ export class Conversation {
     // Anything still live was lost with the old connection; history has what was saved.
     this.capabilities = capabilities;
     if (capabilities.stt) this.mic.prepare?.();
+    this.threads.clear();
+    this.threadInputs.clear();
     this.live = [];
     this.historyEpoch++;
     this.maybeCheckIn();
     this.emit();
-    this.emitInvalidate(["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes", "ideas", "journal", "routines"]);
+    this.emitInvalidate(["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes", "ideas", "journal", "routines", "threads"]);
   }
 
   private onTranscript(id: string, text: string, superseded = false) {
+    const thread = this.threadInputs.get(id);
+    if (thread) {
+      // A thread's speech: the words show in its transcript when its turn starts, not as a caption.
+      if (superseded || !text.trim()) {
+        this.threadInputs.delete(id);
+        this.threads.sent(thread);
+        if (!superseded) this.toast("info", "I didn't catch that.", "empty-transcript");
+      }
+      return this.emit();
+    }
     const mine = this.pending?.id === id;
     if (superseded) {
       if (mine) this.clearPending(); // something newer was sent; nothing to say about this one
@@ -570,6 +705,7 @@ export class Conversation {
       title: m.title || "Hekate",
       body: m.body || "",
       section: noticeSection(m.kind),
+      ...(m.kind === "thread" ? { thread: m.id } : {}),
       ...(m.kind === "checkin" ? { checkIn: true } : {}),
       ...(cardKey ? { cardKey } : {}),
     };
@@ -594,6 +730,14 @@ export class Conversation {
   }
 
   private onError(code: string, message: string, inputId?: string) {
+    const thread = inputId === undefined ? undefined : this.threadInputs.get(inputId);
+    if (thread && inputId !== undefined) {
+      // A thread's input that failed (too many running, unknown thread, no transcript) says so there.
+      this.threadInputs.delete(inputId);
+      if (this.capture?.id === inputId) this.cancelCapture();
+      this.threads.fail(thread, code, message || "Something went wrong.", inputId);
+      return this.emit();
+    }
     if (this.pending && (inputId === undefined || inputId === this.pending.id)) this.clearPending();
     if (inputId !== undefined && this.capture?.id === inputId) this.cancelCapture();
     this.toast("error", message || "Something went wrong.", `error-${code}`);
@@ -614,6 +758,8 @@ export class Conversation {
     this.running.clear();
     this.player?.stop();
     this.capabilities = undefined;
+    this.threads.clear(); // their turns were lost with the connection; the transcript has what was saved
+    this.threadInputs.clear();
   }
 
   // --- bookkeeping -----------------------------------------------------------------------
@@ -668,11 +814,20 @@ export class Conversation {
   }
 
   private phase(): Phase {
-    if (this.capture) return this.capture.ready ? "listening" : "starting";
+    // A thread's recording belongs to that thread's view, not to the voice stage.
+    if (this.capture && !this.capture.thread) return this.capture.ready ? "listening" : "starting";
     if (this.pending?.stage === "transcript") return "transcribing";
     if (this.pending) return "thinking";
     if (this.myTurn) return this.spoke || this.player?.busy ? "speaking" : "thinking";
     return this.player?.busy ? "speaking" : "idle";
+  }
+
+  private threadTalk(): ThreadTalk | undefined {
+    const c = this.capture;
+    if (!c?.thread) return undefined;
+    const prev = this.state.threadTalk;
+    const latched = c.latched;
+    return prev && prev.thread === c.thread && prev.ready === c.ready && prev.latched === latched ? prev : { thread: c.thread, ready: c.ready, latched };
   }
 
   private emit() {
@@ -691,6 +846,7 @@ export class Conversation {
       capabilities: this.capabilities,
       historyEpoch: this.historyEpoch,
       voice: this.voice,
+      threadTalk: this.threadTalk(),
     };
     const s = this.state;
     const same =
@@ -705,7 +861,8 @@ export class Conversation {
       s.live === next.live &&
       s.capabilities === next.capabilities &&
       s.historyEpoch === next.historyEpoch &&
-      s.voice === next.voice;
+      s.voice === next.voice &&
+      s.threadTalk === next.threadTalk;
     if (same) return;
     this.state = next;
     for (const listener of [...this.listeners]) listener();

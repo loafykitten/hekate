@@ -99,6 +99,7 @@ type session struct {
 
 	// push-to-talk state, touched only by the read loop
 	pttID    string
+	pttIn    Input  // where the recording goes
 	pttGen   uint64 // input number of this push-to-talk, see Server.inputs
 	pcm      []int16
 	carry    byte // odd byte left over from the previous frame
@@ -250,7 +251,9 @@ func (ss *session) onText(data []byte) {
 		if m.HeardSeq != nil {
 			heard = *m.HeardSeq
 		}
-		ss.s.conv.Interrupt(m.TurnID, heard)
+		if in, ok := ss.input(m); ok {
+			in.Interrupt(m.TurnID, heard)
+		}
 	default:
 		ss.sendTo(proto.NewError(proto.CodeBadMessage, "I don't know that kind of message.", m.ID))
 	}
@@ -273,7 +276,27 @@ func (ss *session) onSay(m proto.ClientMessage) {
 		ss.sendTo(proto.NewError(proto.CodeTooLong, "That's too long for me to take in at once.", m.ID))
 		return
 	}
-	ss.s.say(ss.id, m.ID, text, m.Quiet)
+	if in, ok := ss.input(m); ok {
+		ss.s.say(in, ss.id, m.ID, text, m.Quiet)
+	}
+}
+
+// input is where m goes: its thread, or the main conversation. An unknown
+// thread is answered with an error.
+func (ss *session) input(m proto.ClientMessage) (Input, bool) {
+	if m.Thread == "" {
+		return ss.s.conv, true
+	}
+	if ss.s.threads == nil {
+		ss.sendTo(proto.NewError(proto.CodeBadMessage, "Threads aren't available.", m.ID))
+		return nil, false
+	}
+	in, err := ss.s.threads.Input(ss.ctx, m.Thread)
+	if err != nil {
+		ss.sendTo(proto.NewError(proto.CodeBadMessage, "That thread isn't open.", m.ID))
+		return nil, false
+	}
+	return in, true
 }
 
 func (ss *session) onPTTStart(m proto.ClientMessage) {
@@ -286,15 +309,19 @@ func (ss *session) onPTTStart(m proto.ClientMessage) {
 		ss.sendTo(proto.NewError(proto.CodeSTTUnavailable, "I can't hear you yet: speech recognition isn't ready.", m.ID))
 		return
 	}
+	in, ok := ss.input(m)
+	if !ok {
+		return
+	}
 	// Someone started talking: she stops now, on every device, rather than
 	// after the recording is transcribed (and before her voice reaches the mic).
-	ss.pttID, ss.pttGen = m.ID, ss.s.startPTT()
+	ss.pttID, ss.pttIn, ss.pttGen = m.ID, in, ss.s.startPTT(in)
 }
 
 func (ss *session) sttReady() bool { return ss.s.stt != nil && ss.s.stt.Ready() }
 
 func (ss *session) resetPTT() {
-	ss.pttID, ss.pcm, ss.hasCarry = "", nil, false
+	ss.pttID, ss.pttIn, ss.pcm, ss.hasCarry = "", nil, nil, false
 }
 
 // onAudio appends little-endian 16-bit mono PCM, cutting at 60 s.
@@ -319,19 +346,19 @@ func (ss *session) onPTTEnd(m proto.ClientMessage) {
 	if m.ID == "" || m.ID != ss.pttID {
 		return
 	}
-	id, pcm := ss.pttID, ss.pcm
+	id, in, pcm := ss.pttID, ss.pttIn, ss.pcm
 	ss.resetPTT()
 	gen := ss.pttGen
 	ss.wg.Add(1)
 	go func() {
 		defer ss.wg.Done()
-		ss.transcribe(id, pcm, gen, m.Quiet)
+		ss.transcribe(in, id, pcm, gen, m.Quiet)
 	}()
 }
 
 // transcribe runs speech-to-text and starts a turn, unless a newer input
 // (gen changed) arrived while it ran.
-func (ss *session) transcribe(id string, pcm []int16, gen uint64, quiet bool) {
+func (ss *session) transcribe(in Input, id string, pcm []int16, gen uint64, quiet bool) {
 	if len(pcm) < minPTTSamples {
 		ss.sendTo(proto.NewTranscript(id, ""))
 		return
@@ -360,7 +387,7 @@ func (ss *session) transcribe(id string, pcm []int16, gen uint64, quiet bool) {
 		return
 	}
 	text = strings.TrimSpace(text)
-	if !ss.s.sayIfCurrent(gen, func() { ss.sendTo(proto.NewTranscript(id, text)) }, ss.id, id, text, quiet) {
+	if !ss.s.sayIfCurrent(in, gen, func() { ss.sendTo(proto.NewTranscript(id, text)) }, ss.id, id, text, quiet) {
 		ss.s.log.Info("dropping a transcription superseded by newer input", "client_id", ss.id)
 		superseded := proto.NewTranscript(id, "")
 		superseded.Superseded = true

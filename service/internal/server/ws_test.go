@@ -898,3 +898,62 @@ func TestPTTStartHushIsAtomicWithInputOrdering(t *testing.T) {
 		t.Errorf("order = %v, want %v", conv.order, want)
 	}
 }
+
+// threadConv is a thread for the socket: a fakeConv with its own id.
+type threadConv struct{ *fakeConv }
+
+func (threadConv) ConversationID() string { return "th_1" }
+
+type fakeThreads struct{ th threadConv }
+
+func (f fakeThreads) Input(_ context.Context, id string) (Input, error) {
+	if id != "th_1" {
+		return nil, errors.New("no such thread")
+	}
+	return f.th, nil
+}
+
+// Input with a thread goes to that thread: typed, push-to-talk and interrupts.
+// A thread's push-to-talk doesn't hush the main conversation, and an unknown
+// thread is an error for the sender.
+func TestThreadInput(t *testing.T) {
+	main, thread := newFakeConv(), threadConv{newFakeConv()}
+	hub := NewHub(nil)
+	srv := httptest.NewServer(New(Options{Conversation: main, Threads: fakeThreads{thread}, Hub: hub,
+		STT: &fakeSTT{ready: true, text: "use port 8090"}}).Routes())
+	t.Cleanup(func() { hub.Close(); srv.Close() })
+	c := (&wsEnv{srv: srv, hub: hub}).dial(t)
+	readMsg(t, c)
+
+	send(t, c, map[string]any{"type": "say", "id": "s1", "text": "set up qbit", "thread": "th_1"})
+	if got := <-thread.sayCh; got.text != "set up qbit" || got.id != "s1" {
+		t.Errorf("thread got %+v", got)
+	}
+	send(t, c, map[string]any{"type": "say", "id": "s2", "text": "hello", "thread": "th_9"})
+	if m := readUntil(t, c, "error"); m[len(m)-1]["code"] != proto.CodeBadMessage || m[len(m)-1]["input_id"] != "s2" {
+		t.Errorf("unknown thread: %v", m[len(m)-1])
+	}
+
+	send(t, c, map[string]any{"type": "ptt_start", "id": "p1", "sample_rate": 16000, "thread": "th_1"})
+	if err := c.Write(t.Context(), websocket.MessageBinary, make([]byte, 2*proto.PTTSampleRate)); err != nil {
+		t.Fatal(err)
+	}
+	send(t, c, map[string]any{"type": "ptt_end", "id": "p1"})
+	if got := <-thread.sayCh; got.text != "use port 8090" || got.id != "p1" {
+		t.Errorf("thread got %+v from push-to-talk", got)
+	}
+	send(t, c, map[string]any{"type": "interrupt", "heard_seq": -1, "turn_id": "t_3", "thread": "th_1"})
+	send(t, c, map[string]any{"type": "say", "id": "s3", "text": "sync", "thread": "th_1"})
+	<-thread.sayCh
+
+	main.mu.Lock()
+	defer main.mu.Unlock()
+	thread.mu.Lock()
+	defer thread.mu.Unlock()
+	if len(main.said) != 0 || main.hushes != 0 || len(main.interrupt) != 0 {
+		t.Errorf("the main conversation was touched: said %v, hushes %d, interrupts %v", main.said, main.hushes, main.interrupt)
+	}
+	if thread.hushes != 1 || len(thread.interruptTurns) != 1 || thread.interruptTurns[0] != "t_3" {
+		t.Errorf("thread hushes %d, interrupts %v", thread.hushes, thread.interruptTurns)
+	}
+}

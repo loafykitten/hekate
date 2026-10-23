@@ -37,6 +37,7 @@ import (
 	"github.com/loafykitten/hekate/service/internal/store"
 	"github.com/loafykitten/hekate/service/internal/tasks"
 	"github.com/loafykitten/hekate/service/internal/telegram"
+	"github.com/loafykitten/hekate/service/internal/threads"
 	"github.com/loafykitten/hekate/service/internal/voice"
 	"github.com/loafykitten/hekate/service/internal/voice/elevenlabs"
 	"github.com/loafykitten/hekate/service/internal/voice/parakeet"
@@ -203,21 +204,42 @@ func run() error {
 		return fmt.Errorf("build routines: %w", err)
 	}
 
-	// Her lab: a VM on the homelab she runs commands on, with a background worker for longer
-	// work there, checked nightly for security.
+	// Her lab: a VM on the homelab she runs commands on, checked nightly for security.
 	labSvc, err := lab.New(lab.Options{
 		Store: db, Approvals: approvalSvc, Host: cfg.LabHost, Name: cfg.LabName, Dir: cfg.LabDir, CacheDir: cfg.DataDir,
-		LLM: lab.StreamCompleter{Client: llmClient}, Model: cfg.ModelDeep,
 		Location: cfg.Location, Events: hub, Push: notifier, Logger: logger.Logger,
 	})
 	if err != nil {
 		return fmt.Errorf("build lab: %w", err)
 	}
+	labSource := agent.Source{Name: "Your lab", Source: labSvc}
 	if labSvc.Configured() {
 		toolList = slices.Concat(toolList, labSvc.Tools())
-		sources = append(sources, agent.Source{Name: "Your lab", Source: labSvc})
+		sources = append(sources, labSource)
 	}
 	runner.Add(labSvc.Job())
+
+	// Threads: conversations of their own for longer work, in writing, with work
+	// tools (web, the lab) and what she knows about the owner.
+	threadTools := webSvc.Tools()
+	threadContext := []agent.Source{{Name: "What you know about {{tamer}}", Source: memSvc}}
+	labName := ""
+	if labSvc.Configured() {
+		threadTools = slices.Concat(threadTools, labSvc.ThreadTools())
+		threadContext = append(threadContext, labSource)
+		labName = cfg.LabName
+	}
+	threadSvc, err := threads.New(threads.Options{
+		Store: db, LLM: llmClient, Deep: cfg.ModelDeep, Chat: cfg.ModelChat, Tools: threadTools, Context: threadContext,
+		System: threads.SystemPrompt(labName), Hub: hub, Events: hub, Push: notifier, Tamer: cfg.TamerName,
+		Location: cfg.Location, Logger: logger.Logger,
+	})
+	if err != nil {
+		return fmt.Errorf("build threads: %w", err)
+	}
+	toolList = slices.Concat(toolList, threadSvc.Tools())
+	sources = append(sources, agent.Source{Name: "Your threads", Source: threadSvc})
+	api = append(api, threadSvc.Routes)
 	selfSvc, err := inspect.New(inspect.Options{
 		Store: db, Jobs: runner, Ring: logger.Ring, DeployLog: cfg.DeployLog,
 		Checks:  healthChecks(llmClient, synth != nil, stt, calSvc, mailSvc, moneySvc, pushSvc, tg, webSvc, labSvc),
@@ -284,6 +306,9 @@ func run() error {
 	if err := ag.Start(ctx); err != nil {
 		return fmt.Errorf("start agent: %w", err)
 	}
+	if err := threadSvc.Start(ctx); err != nil {
+		return fmt.Errorf("start threads: %w", err)
+	}
 
 	// The schedulers run until the process is told to stop.
 	var background sync.WaitGroup
@@ -300,6 +325,7 @@ func run() error {
 		WebDir:       cfg.WebDir,
 		AssetsDir:    cfg.AssetsDir,
 		Conversation: ag,
+		Threads:      threadSvc,
 		Hub:          hub,
 		STT:          stt,
 		TTS:          synth != nil,
@@ -339,6 +365,9 @@ func run() error {
 	}
 	if err := ag.Shutdown(shutCtx); err != nil {
 		return fmt.Errorf("agent shutdown: %w", err)
+	}
+	if err := threadSvc.Shutdown(shutCtx); err != nil {
+		return fmt.Errorf("threads shutdown: %w", err)
 	}
 	if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("serve: %w", err)

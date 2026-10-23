@@ -125,9 +125,9 @@
   display: grid;
   flex: none;
   /* Sized to the labels, so a long one ("Reminders") takes the room a short one ("Mail") leaves. */
-  grid-template-columns: repeat(9, auto);
+  grid-template-columns: repeat(10, auto);
   justify-content: space-between;
-  /* Nine tabs are snug on the narrowest phones: scroll rather than clip. */
+  /* Ten tabs are snug on the narrowest phones: scroll rather than clip. */
   overflow-x: auto;
   scrollbar-width: none;
   padding: 4px calc(var(--space-1) + var(--safe-right)) calc(4px + var(--safe-bottom)) calc(var(--space-1) + var(--safe-left));
@@ -179,6 +179,21 @@
   background: var(--accent);
 }
 
+/* A thread open: it fills the content area (it scrolls its own transcript), and on phones it takes
+   the whole screen, so the section bar steps aside until the thread is left. */
+:global(html[data-thread-open]) .content {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+@media (max-width: 899.98px) {
+  :global(html[data-thread-open]) .nav {
+    display: none;
+  }
+}
+
 /* Wide: a side panel on the right; sections down its left edge. */
 @media (min-width: 900px) {
   .backdrop {
@@ -193,6 +208,15 @@
     border-left: 1px solid var(--card-border);
     box-shadow: -16px 0 56px rgba(0, 0, 0, 0.4);
     transform: translateX(40px);
+    transition:
+      transform var(--duration-slow) var(--ease),
+      opacity var(--duration-slow) var(--ease),
+      width var(--duration-slow) var(--ease);
+  }
+
+  /* A thread needs room for code and long replies. */
+  :global(html[data-thread-open]) .panel {
+    --menu-width: min(960px, 72vw);
   }
 
   .root[data-open] .panel {
@@ -253,5 +277,9 @@
 @media (min-width: 900px) {
   :global(html[data-menu-open]) {
     --stage-shift: calc(min(780px, 62vw) / -2);
+  }
+
+  :global(html[data-menu-open][data-thread-open]) {
+    --stage-shift: calc(min(960px, 72vw) / -2);
   }
 }

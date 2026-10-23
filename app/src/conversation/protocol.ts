@@ -100,7 +100,7 @@ export interface CapabilitiesChanged {
 // Something fired with no turn running (a reminder, an approval she asks for, a change that
 // finished). `card` has the same shape as a turn's card. `kind` stays a string so a newer
 // service's kinds still show as a plain banner.
-export type NotifyKind = "reminder" | "approval" | "change" | "nudge" | "checkin";
+export type NotifyKind = "reminder" | "approval" | "change" | "nudge" | "checkin" | "thread";
 export interface Notify {
   type: "notify";
   id: string;
@@ -123,6 +123,15 @@ export interface ApprovalChanged {
   approval: unknown;
 }
 
+// What happens in a thread, wrapped so it never mixes with the main conversation's turn. The inner
+// event is shaped like the main one of the same type; thread segments carry no audio.
+export type ThreadEvent = TurnStart | Activity | Segment | Card | TurnEnd | ServerError;
+export interface ThreadEventMessage {
+  type: "thread_event";
+  thread: string;
+  event: ThreadEvent;
+}
+
 export type ServerMessage =
   | Ready
   | CapabilitiesChanged
@@ -135,18 +144,20 @@ export type ServerMessage =
   | ServerError
   | Notify
   | Invalidate
-  | ApprovalChanged;
+  | ApprovalChanged
+  | ThreadEventMessage;
 export type ServerMessageType = ServerMessage["type"];
 
 export type ClientMessage =
   // quiet: this device has her voice off, so the turn is answered without speech.
-  | { type: "say"; id: string; text: string; quiet?: boolean }
-  | { type: "ptt_start"; id: string; sample_rate: number }
-  | { type: "ptt_end"; id: string; quiet?: boolean }
-  | { type: "ptt_cancel"; id: string }
+  // thread: the input goes to that thread instead of the main conversation.
+  | { type: "say"; id: string; text: string; quiet?: boolean; thread?: string }
+  | { type: "ptt_start"; id: string; sample_rate: number; thread?: string }
+  | { type: "ptt_end"; id: string; quiet?: boolean; thread?: string }
+  | { type: "ptt_cancel"; id: string; thread?: string }
   // The evening check-in the owner tapped; `day` is the day its notification asked about.
   | { type: "checkin"; id: string; day?: string; quiet?: boolean }
-  | { type: "interrupt"; heard_seq: number; turn_id?: string };
+  | { type: "interrupt"; heard_seq: number; turn_id?: string; thread?: string };
 
 export const MAX_TEXT_LENGTH = 4000;
 export const PTT_SAMPLE_RATE = 16000;
@@ -172,6 +183,7 @@ const SERVER_TYPES: ReadonlySet<string> = new Set<ServerMessageType>([
   "notify",
   "invalidate",
   "approval",
+  "thread_event",
 ]);
 
 // Parses one text frame. Returns undefined for anything that isn't a known server message, so

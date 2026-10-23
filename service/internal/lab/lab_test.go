@@ -2,17 +2,19 @@ package lab
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/loafykitten/hekate/service/internal/agent"
 	"github.com/loafykitten/hekate/service/internal/approvals"
-	"github.com/loafykitten/hekate/service/internal/llm"
 	"github.com/loafykitten/hekate/service/internal/push"
 )
 
@@ -335,153 +337,60 @@ func TestIncompleteCheckTakesNoSnapshotAndEscalates(t *testing.T) {
 	}
 }
 
-func TestTaskRunsAndReports(t *testing.T) {
-	f := newFixture(t)
-	f.lab.handle = func(cmd string, _ []byte) (string, int) { return "ran " + cmd, 0 }
-	f.llm.steps = append(f.llm.steps,
-		call("lab_write_file", `{"path":"/opt/stacks/qbit/compose.yaml","content":"services: {}\n"}`),
-		func(_ context.Context, req llm.Request) (string, []llm.ToolCall, error) {
-			if last := req.Messages[len(req.Messages)-1]; !strings.HasPrefix(last.Content, "Wrote /opt/stacks/qbit/compose.yaml") {
-				return "", nil, errors.New("write failed: " + last.Content)
-			}
-			return "", []llm.ToolCall{{ID: "c2", Name: "lab_status", Arguments: `{}`}}, nil
-		},
-		func(_ context.Context, req llm.Request) (string, []llm.ToolCall, error) {
-			if last := req.Messages[len(req.Messages)-1]; !strings.HasPrefix(last.Content, "The lab is running") {
-				return "", nil, errors.New("status failed: " + last.Content)
-			}
-			return "", []llm.ToolCall{{ID: "c3", Name: "lab_shell", Arguments: `{"command":"docker compose up -d","timeout_seconds":300}`}}, nil
-		},
-		func(_ context.Context, req llm.Request) (string, []llm.ToolCall, error) {
-			last := req.Messages[len(req.Messages)-1]
-			if last.Role != llm.RoleTool || !strings.Contains(last.Content, "ran docker compose up -d") {
-				return "", nil, errors.New("the tool result didn't come back")
-			}
-			return "qBittorrent runs at http://hekate-lab:8080; the password is in /opt/stacks/qbit/password.", nil, nil
-		})
-	out, err := f.run(t, "lab_task", `{"goal":"Set up qBittorrent."}`)
-	if err != nil || !strings.Contains(out, "Started lab task #1") {
-		t.Fatalf("%q, %v", out, err)
-	}
-	waitFor(t, func() bool { return f.task(t, 1).Status != TaskRunning })
-	tk := f.task(t, 1)
-	if tk.Status != TaskDone || tk.Steps != 3 || !strings.Contains(tk.Report, "http://hekate-lab:8080") {
-		t.Errorf("task %+v", tk)
-	}
-	// The worker's shell takes long commands; hers doesn't.
-	reqs := f.llm.requests()
-	if !strings.Contains(string(reqs[0].Tools[0].Parameters)+string(reqs[0].Tools[1].Parameters)+string(reqs[0].Tools[2].Parameters), `"maximum":600`) {
-		t.Errorf("worker tools %+v", reqs[0].Tools)
-	}
-	waitFor(t, func() bool { return len(f.push.titles()) > 0 })
-	if got := f.push.titles(); !strings.HasPrefix(got[0], "Lab: done") {
-		t.Errorf("pushes %v", got)
-	}
-	ctx, _ := f.svc.PromptContext(t.Context(), time.Now())
-	if !strings.Contains(ctx, "Lab task #1 done") || !strings.Contains(ctx, "hekate-lab:8080") {
-		t.Errorf("context %q", ctx)
-	}
-}
-
-func TestSnapshotBeforeTaskKeepsTheCheckedOne(t *testing.T) {
+func TestGuardedSnapshotKeepsTheCheckedOne(t *testing.T) {
 	cases := []struct {
 		name    string
+		check   bool
 		scanned int
 		state   string
 		snaps   []snapshot
 		want    bool
 	}{
-		{"after a complete clean check", 1, StateClean, []snapshot{{Name: "a-nightly"}}, true},
-		{"no snapshots yet", 1, StateVulnerable, nil, true},
-		{"newest is already a task's", 1, StateClean, []snapshot{{Name: "a-nightly"}, {Name: "b-before-task"}}, false},
-		{"last check incomplete", 0, StateClean, []snapshot{{Name: "a-nightly"}}, false},
-		{"last check suspicious", 1, StateSuspicious, []snapshot{{Name: "a-nightly"}}, false},
+		{"after a complete clean check", true, 1, StateClean, []snapshot{{Name: "a-nightly"}}, true},
+		{"no snapshots yet", true, 1, StateVulnerable, nil, true},
+		{"newest is already an unchecked one", true, 1, StateClean, []snapshot{{Name: "a-nightly"}, {Name: "b-before-x"}}, false},
+		{"no check yet", false, 0, "", nil, false},
+		{"last check incomplete", true, 0, StateClean, []snapshot{{Name: "a-nightly"}}, false},
+		{"last check suspicious", true, 1, StateSuspicious, []snapshot{{Name: "a-nightly"}}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
 			f.host.stats.Snapshots = tc.snaps
-			if _, err := f.svc.db.Exec(`INSERT INTO lab_checks (created_at, state, findings, host, scanned, isolated) VALUES (?, ?, '[]', '{}', ?, 0)`,
-				stamp(time.Now()), tc.state, tc.scanned); err != nil {
+			if tc.check {
+				if _, err := f.svc.db.Exec(`INSERT INTO lab_checks (created_at, state, findings, host, scanned, isolated) VALUES (?, ?, '[]', '{}', ?, 0)`,
+					stamp(time.Now()), tc.state, tc.scanned); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var snap func(context.Context, json.RawMessage) (agent.Result, error)
+			for _, tool := range f.svc.ThreadTools() {
+				if tool.Name == "lab_snapshot" {
+					snap = tool.Run
+				}
+			}
+			out, err := snap(t.Context(), json.RawMessage(`{"label":"before-x"}`))
+			if err != nil {
 				t.Fatal(err)
 			}
-			f.svc.snapshotBeforeTask(t.Context(), 1)
-			if got := slices.Contains(f.host.seen(), "snapshot before-task"); got != tc.want {
-				t.Errorf("snapshot taken: %v, want %v (%v)", got, tc.want, f.host.seen())
+			taken := slices.Contains(f.host.seen(), "snapshot before-x")
+			if taken != tc.want || taken != strings.HasPrefix(out.Content, "Took snapshot") {
+				t.Errorf("snapshot taken: %v, want %v (%q, %v)", taken, tc.want, out.Content, f.host.seen())
 			}
 		})
 	}
 }
 
-func TestTaskOneAtATimeAndStop(t *testing.T) {
-	f := newFixture(t)
-	f.llm.steps = append(f.llm.steps, func(ctx context.Context, _ llm.Request) (string, []llm.ToolCall, error) {
-		<-ctx.Done()
-		return "", nil, ctx.Err()
-	}, func(_ context.Context, req llm.Request) (string, []llm.ToolCall, error) {
-		if len(req.Tools) != 0 {
-			return "", nil, errors.New("the wrap-up offered tools")
-		}
-		return "Stopped before installing anything.", nil, nil
-	})
-	if _, err := f.run(t, "lab_task", `{"goal":"Build something long."}`); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, func() bool { return len(f.llm.requests()) == 1 })
-	out, _ := f.run(t, "lab_task", `{"goal":"Another thing."}`)
-	if !strings.Contains(out, "Task #1 is still running") {
-		t.Errorf("second task: %q", out)
-	}
-	if out, _ := f.run(t, "lab_task_stop", `{}`); !strings.Contains(out, "Stopping") {
-		t.Errorf("stop: %q", out)
-	}
-	waitFor(t, func() bool { return f.task(t, 1).Status != TaskRunning })
-	if tk := f.task(t, 1); tk.Status != TaskStopped || tk.Report != "Stopped before installing anything." {
-		t.Errorf("task %+v", tk)
-	}
-	if out, _ := f.run(t, "lab_task_stop", `{}`); !strings.Contains(out, "No lab task") {
-		t.Errorf("stop again: %q", out)
-	}
-}
-
-func TestTaskOutOfSteps(t *testing.T) {
-	f := newFixture(t)
-	f.lab.handle = func(string, []byte) (string, int) { return strings.Repeat("x", 1000), 0 }
-	for range taskMaxSteps {
-		f.llm.steps = append(f.llm.steps, call("lab_shell", `{"command":"cat big.log"}`))
-	}
-	f.llm.steps = append(f.llm.steps, func(_ context.Context, req llm.Request) (string, []llm.ToolCall, error) {
-		if len(req.Tools) != 0 || !strings.Contains(req.Messages[len(req.Messages)-1].Content, "out of steps") {
-			return "", nil, errors.New("not a wrap-up")
-		}
-		return "Got halfway.", nil, nil
-	})
-	if _, err := f.run(t, "lab_task", `{"goal":"Loop."}`); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, func() bool { return f.task(t, 1).Status != TaskRunning })
-	if tk := f.task(t, 1); tk.Status != TaskUnfinished || tk.Steps != taskMaxSteps || tk.Report != "Got halfway." {
-		t.Errorf("task %+v", tk)
-	}
-	// Older results were shortened, the newest kept whole.
-	reqs := f.llm.requests()
-	last := reqs[len(reqs)-1].Messages
-	n := 0
-	for _, m := range last {
-		if m.Role == llm.RoleTool && !strings.Contains(m.Content, "shortened") {
-			n++
-		}
-	}
-	if n != taskKeepWhole {
-		t.Errorf("%d whole tool results kept, want %d", n, taskKeepWhole)
-	}
-}
-
-func TestShortInTurnShell(t *testing.T) {
+func TestShellLimitsFitWhereTheyRun(t *testing.T) {
 	f := newFixture(t)
 	for _, tool := range f.svc.Tools() {
 		if tool.Name == "lab_shell" && (!strings.Contains(string(tool.Schema), `"maximum":60`) || tool.Timeout > 90*time.Second) {
-			t.Errorf("her lab_shell allows more than a turn has: %s, %s", tool.Schema, tool.Timeout)
+			t.Errorf("her voice lab_shell allows more than a turn has: %s, %s", tool.Schema, tool.Timeout)
+		}
+	}
+	for _, tool := range f.svc.ThreadTools() {
+		if tool.Name == "lab_shell" && (!strings.Contains(string(tool.Schema), `"maximum":600`) || tool.Timeout < 600*time.Second) {
+			t.Errorf("a thread's lab_shell doesn't allow 10-minute commands: %s, %s", tool.Schema, tool.Timeout)
 		}
 	}
 }
@@ -517,4 +426,48 @@ func mustInt(t *testing.T, s string) int64 {
 		t.Fatal(err)
 	}
 	return n
+}
+
+// Two threads asking for a snapshot at once take one: the second sees the first.
+func TestGuardedSnapshotIsAtomic(t *testing.T) {
+	f := newFixture(t)
+	f.host.stats.Snapshots = []snapshot{{Name: "a-nightly"}}
+	if _, err := f.svc.db.Exec(`INSERT INTO lab_checks (created_at, state, findings, host, scanned, isolated) VALUES (?, 'clean', '[]', '{}', 1, 0)`,
+		stamp(time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for _, label := range []string{"x", "y"} {
+		wg.Go(func() {
+			if _, _, err := f.svc.guardedSnapshot(t.Context(), label); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	wg.Wait()
+	n := 0
+	for _, r := range f.host.seen() {
+		if strings.HasPrefix(r, "snapshot ") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d snapshots taken: %v", n, f.host.seen())
+	}
+}
+
+func TestNightlyLabelsAreReserved(t *testing.T) {
+	f := newFixture(t)
+	for _, tools := range [][]agent.Tool{f.svc.Tools(), f.svc.ThreadTools()} {
+		for _, tool := range tools {
+			if tool.Name != "lab_snapshot" {
+				continue
+			}
+			for _, label := range []string{"nightly", "before-nightly"} {
+				if _, err := tool.Run(t.Context(), json.RawMessage(`{"label":"`+label+`"}`)); err == nil || !strings.Contains(err.Error(), "nightly") {
+					t.Errorf("label %q: %v", label, err)
+				}
+			}
+		}
+	}
 }

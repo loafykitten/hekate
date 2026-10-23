@@ -86,11 +86,12 @@ func (s *Store) EnsureConversation(ctx context.Context, id string) error {
 	return nil
 }
 
-// AbortRunningTurns marks turns left running by a crash or restart as errors.
-func (s *Store) AbortRunningTurns(ctx context.Context) error {
+// AbortRunningTurns marks the conversation's turns left running by a crash or
+// restart as errors.
+func (s *Store) AbortRunningTurns(ctx context.Context, conversationID string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE turns SET status = ?, error = 'service restarted', ended_at = ? WHERE status = ?`,
-		TurnError, ts(time.Now()), TurnRunning)
+		`UPDATE turns SET status = ?, error = 'service restarted', ended_at = ? WHERE status = ? AND conversation_id = ?`,
+		TurnError, ts(time.Now()), TurnRunning, conversationID)
 	if err != nil {
 		return fmt.Errorf("abort running turns: %w", err)
 	}

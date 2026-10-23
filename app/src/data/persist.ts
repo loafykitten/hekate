@@ -22,6 +22,8 @@ export function persistableKey(key: QueryKey): boolean {
   const [domain, kind, q] = key;
   if (domain === "money") return false;
   if (typeof domain !== "string" || !(DOMAINS as readonly string[]).includes(domain)) return false;
+  // A thread's detail and transcript are fetched when opened and can run long; only the list is kept.
+  if (domain === "threads" && kind !== "list") return false;
   if ((domain === "mail" && kind === "message") || (domain === "approvals" && kind === "item")) return false;
   if ((domain === "mail" || domain === "memory") && kind === "list" && q !== "") return false;
   return true;

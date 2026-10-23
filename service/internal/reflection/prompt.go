@@ -33,8 +33,10 @@ func (s *Service) gather(ctx context.Context, start, end time.Time) (*input, err
 	in.day = dayLabel(start, end, s.loc)
 
 	from, to := start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano)
+	// The main conversation only: threads are work (research, lab sessions), not the day.
 	rows, err := s.db.QueryContext(ctx, `SELECT turn_id, role, text, created_at FROM messages
-		WHERE role IN ('user', 'assistant') AND text != '' AND created_at >= ? AND created_at < ? ORDER BY id`, from, to)
+		WHERE conversation_id = 'default' AND role IN ('user', 'assistant') AND text != ''
+		AND created_at >= ? AND created_at < ? ORDER BY id`, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("read the conversation: %w", err)
 	}

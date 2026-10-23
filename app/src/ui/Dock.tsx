@@ -3,6 +3,7 @@ import { MAX_TEXT_LENGTH } from "../conversation/protocol";
 import { useConversation, useConversationState } from "./ConversationContext";
 import styles from "./Dock.module.css";
 import { KeyboardIcon, MicIcon, SendIcon, SpeakerIcon, SpeakerOffIcon } from "./icons";
+import { claimsSpace } from "./keys";
 import { useKeyboardInset } from "./keyboardInset";
 import { talkCopy, talkVerb } from "./talkCopy";
 import { TalkButton } from "./TalkButton";
@@ -26,14 +27,6 @@ function saveMode(mode: Mode) {
   } catch {
     // storage unavailable (private window, blocked): the mode just isn't remembered
   }
-}
-
-// Keys that belong to something else on the page.
-function claimsSpace(target: EventTarget | null): boolean {
-  if (!(target instanceof Element)) return false;
-  const talk = target.closest("#talk-button");
-  if (talk) return false;
-  return !!target.closest("input, textarea, select, button, a, summary, [contenteditable], [role=dialog]");
 }
 
 interface Props {

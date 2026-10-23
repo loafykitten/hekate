@@ -131,6 +131,13 @@ func (s *Service) stats(ctx context.Context) (hostStats, error) {
 
 // takeSnapshot asks the host for a snapshot labeled label and returns its name.
 func (s *Service) takeSnapshot(ctx context.Context, label string) (string, error) {
+	s.snapping.Lock()
+	defer s.snapping.Unlock()
+	return s.snapshotLocked(ctx, label)
+}
+
+// snapshotLocked is takeSnapshot for a caller holding s.snapping.
+func (s *Service) snapshotLocked(ctx context.Context, label string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 	raw, err := s.ctl.do(ctx, verbSnapshot, label)

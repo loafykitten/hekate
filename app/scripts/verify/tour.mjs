@@ -177,6 +177,53 @@ const HISTORY = [
   ["assistant", "Lake day with Mina is on your calendar for Saturday, 10 am to 4 pm.", 189],
 ].map(([role, text, min], i) => ({ id: String(100 + i), role, text, turn_id: `t${i >> 1}`, created_at: ago(min) }));
 
+// ---- threads --------------------------------------------------------------------------------
+
+const thread = (id, title, over = {}) => ({ id, title, model: "deep", model_name: "glm-5.3", origin: "owner", running: false, archived: false, preview: "", created_at: ago(900), updated_at: ago(30), ...over });
+const THREADS = [
+  thread("th_aa11", "Compare two ways to back up the lab", { running: true, updated_at: ago(1), preview: "I'm reading how restic and borg handle deduplication before I write anything." }),
+  thread("th_bb22", "Set up qBittorrent", { preview: "qBittorrent runs at http://lab.example.com:8080. The login is in the lab inventory.", updated_at: ago(42) }),
+  thread("th_cc33", "Which router should I buy?", { model: "chat", origin: "renamon", preview: "Short version: the middle one. It has the ports you listed and no cloud account.", updated_at: ago(60 * 26) }),
+];
+const THREAD_TURN = "tt_1";
+const THREAD_MESSAGES = [
+  { id: "m1", role: "user", text: "Set up qBittorrent in the lab and tell me where to find it.", turn_id: THREAD_TURN, created_at: ago(50) },
+  {
+    id: "m2",
+    role: "assistant",
+    turn_id: THREAD_TURN,
+    created_at: ago(42),
+    text: [
+      "## qBittorrent is running",
+      "",
+      "I installed it with Docker Compose in `/opt/stacks/qbittorrent`. Here is what I did:",
+      "",
+      "- pulled the image and checked its digest",
+      "- put the web UI on port **8080**, bound to the lab network only",
+      "- saved the service to the inventory so I find it next time",
+      "",
+      "```yaml",
+      "services:",
+      "  qbittorrent:",
+      "    image: lscr.io/linuxserver/qbittorrent:latest",
+      "    ports: ['8080:8080']   # web UI, lab network only, never forwarded to the internet",
+      "    volumes: ['/opt/stacks/qbittorrent/config:/config', '/srv/downloads:/downloads']",
+      "```",
+      "",
+      "Open it at [lab.example.com:8080](http://lab.example.com:8080). The first login uses a temporary password from the container log; I changed it and wrote where it lives in the inventory.",
+    ].join("\n"),
+  },
+];
+const THREAD_STEPS = [
+  ["lab_shell", "Running a command in the lab", "ok", "mkdir -p /opt/stacks/qbittorrent && cd /opt/stacks/qbittorrent"],
+  ["lab_write_file", "Writing compose.yaml", "ok", "wrote 412 bytes to /opt/stacks/qbittorrent/compose.yaml"],
+  ["lab_shell", "Running a command in the lab", "ok", "Container qbittorrent Started"],
+  ["lab_shell", "Running a command in the lab", "error", "curl: (7) Failed to connect to localhost port 8080: Connection refused"],
+  ["lab_shell", "Running a command in the lab", "ok", "HTTP/1.1 200 OK"],
+  ["web_search", "Searching the web", "ok", "qBittorrent docker temporary password first login"],
+  ["lab_write_file", "Updating the inventory", "ok", "wrote 1.2 KB to /opt/stacks/INVENTORY.md"],
+].map(([tool, label, status, summary], i) => ({ turn_id: THREAD_TURN, tool, label, status, summary, created_at: ago(49 - i) }));
+
 // ---- page wiring ----------------------------------------------------------------------------
 
 // mode: "full" (fixtures), "empty" (tasks, reminders and mail with nothing), "nomail" (mail not
@@ -243,6 +290,12 @@ async function open(browser, viewport, query, { mode = "full", onSay } = {}) {
     const one = p.match(/^\/api\/mail\/messages\/(\d+)$/);
     if (one) return json(route, { message: MAIL.find((m) => m.id === one[1]) ?? MAIL[0], body: { text: MAIL_BODY, truncated: false } });
     if (p === "/api/mail/rules") return json(route, { rules: MAIL_RULES });
+    if (p === "/api/threads") return json(route, { threads: empty ? [] : q.get("archived") === "true" ? [] : THREADS });
+    if (/^\/api\/threads\/[^/]+$/.test(p)) return json(route, THREADS.find((t) => p.endsWith(t.id)) ?? THREADS[1]);
+    if (/^\/api\/threads\/[^/]+\/messages$/.test(p)) {
+      const bb = p.includes("th_bb22");
+      return json(route, { messages: bb ? THREAD_MESSAGES : [{ ...THREAD_MESSAGES[0], id: "m9", turn_id: "tt_live", text: "Compare restic and borg for the lab's nightly backups." }], steps: bb ? THREAD_STEPS : [] });
+    }
     if (p === "/api/conversation/messages") return json(route, { messages: HISTORY });
     if (p === "/api/push/key") return json(route, { public_key: "BExampleKeyExampleKeyExampleKeyExampleKeyExampleKeyExampleKeyExampleKeyExampleKeyExampleKeyExample" });
     return route.fulfill({ status: 204 });
@@ -378,8 +431,33 @@ for (const [name, viewport] of [
   await shotScrolled(page, "settings-scroll");
   await page.close();
 
+  // 5b. Threads: the list, a finished thread (markdown, folded steps, expanded), and one working.
+  ({ page } = await open(browser, viewport, "menu=threads"));
+  await page.getByText("Set up qBittorrent").first().waitFor({ timeout: 10_000 }).catch(() => {});
+  await shot(page, "threads", 800);
+  await page.close();
+
+  ({ page } = await open(browser, viewport, "thread=th_bb22"));
+  await page.getByText("qBittorrent is running").waitFor({ timeout: 10_000 }).catch(() => {});
+  await shot(page, "thread-view", 1000);
+  await page.getByText("7 steps").click().catch(() => console.log("no steps toggle"));
+  await page.evaluate(() => document.querySelector("[class*=transcript]")?.scrollTo(0, 1e6));
+  await shot(page, "thread-steps", 600);
+  await page.close();
+
+  ({ page, sockets } = await open(browser, viewport, "thread=th_aa11"));
+  await page.getByText("Compare restic and borg").waitFor({ timeout: 10_000 }).catch(() => {});
+  const ev = (event) => send({ type: "thread_event", thread: "th_aa11", event });
+  ev({ type: "turn_start", turn_id: "tt_live", input_id: "x", origin: "c1", user_text: "Compare restic and borg for the lab's nightly backups." });
+  ev({ type: "activity", turn_id: "tt_live", tool: "web_search", label: "Searching the web", state: "start" });
+  ev({ type: "activity", turn_id: "tt_live", tool: "web_search", label: "Searching the web", state: "done" });
+  ev({ type: "segment", turn_id: "tt_live", seq: 0, text: "Both deduplicate well. Restic is one static binary and encrypts by default.", duration: 0, audio_b64: null, audio_format: null, words: null, gestures: [], expressions: [] });
+  ev({ type: "activity", turn_id: "tt_live", tool: "web_read", label: "Reading the borg docs", state: "start" });
+  await shot(page, "thread-live", 900);
+  await page.close();
+
   // 6. Empty states.
-  for (const section of ["tasks", "reminders", "mail"]) {
+  for (const section of ["tasks", "reminders", "mail", "threads"]) {
     ({ page } = await open(browser, viewport, `menu=${section}`, { mode: "empty" }));
     await shot(page, `empty-${section}`, 1500);
     await page.close();

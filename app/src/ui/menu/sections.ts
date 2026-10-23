@@ -1,4 +1,4 @@
-export const SECTIONS = ["today", "tasks", "reminders", "calendar", "mail", "money", "changes", "memory", "settings"] as const;
+export const SECTIONS = ["today", "tasks", "reminders", "calendar", "mail", "threads", "money", "changes", "memory", "settings"] as const;
 export type Section = (typeof SECTIONS)[number];
 
 export const SECTION_LABEL: Record<Section, string> = {
@@ -7,6 +7,7 @@ export const SECTION_LABEL: Record<Section, string> = {
   reminders: "Reminders",
   calendar: "Calendar",
   mail: "Mail",
+  threads: "Threads",
   money: "Money",
   changes: "Changes",
   memory: "Memory",

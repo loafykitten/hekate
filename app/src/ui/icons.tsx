@@ -216,3 +216,16 @@ export const BackIcon = (p: SVGProps<SVGSVGElement>) => (
     <path d="m14.5 6-6 6 6 6" />
   </Icon>
 );
+
+export const ThreadsIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M20 11.5a7.5 7.5 0 0 1-10.9 6.7L4.5 19.5l1.2-4.1A7.5 7.5 0 1 1 20 11.5z" />
+    <path d="M8.5 10h7M8.5 13h4.5" />
+  </Icon>
+);
+
+export const StopIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <rect x="6.5" y="6.5" width="11" height="11" rx="2.5" fill="currentColor" />
+  </Icon>
+);

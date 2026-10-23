@@ -1,5 +1,5 @@
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from "react";
-import { BellIcon, CalendarIcon, ChangesIcon, CloseIcon, MailIcon, MemoryIcon, MoneyIcon, SettingsIcon, TasksIcon, TodayIcon } from "../icons";
+import { BellIcon, CalendarIcon, ChangesIcon, CloseIcon, MailIcon, MemoryIcon, MoneyIcon, SettingsIcon, TasksIcon, ThreadsIcon, TodayIcon } from "../icons";
 import { CalendarSection } from "./CalendarSection";
 import { ChangesSection } from "./ChangesSection";
 import styles from "./Menu.module.css";
@@ -12,6 +12,7 @@ import { RemindersSection } from "./RemindersSection";
 import { SECTION_LABEL, SECTIONS, type Section } from "./sections";
 import { SettingsSection } from "./SettingsSection";
 import { TasksSection } from "./TasksSection";
+import { ThreadsSection } from "./ThreadsSection";
 import { TodaySection } from "./TodaySection";
 
 const ICONS: Record<Section, ReactNode> = {
@@ -20,6 +21,7 @@ const ICONS: Record<Section, ReactNode> = {
   reminders: <BellIcon />,
   calendar: <CalendarIcon />,
   mail: <MailIcon />,
+  threads: <ThreadsIcon />,
   money: <MoneyIcon />,
   changes: <ChangesIcon />,
   memory: <MemoryIcon />,
@@ -38,6 +40,8 @@ function SectionBody({ section }: { section: Section }) {
       return <CalendarSection />;
     case "mail":
       return <MailSection />;
+    case "threads":
+      return <ThreadsSection />;
     case "money":
       return <MoneySection />;
     case "changes":

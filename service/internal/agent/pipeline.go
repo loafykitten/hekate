@@ -104,6 +104,19 @@ func (p *pipeline) submit(round int, sentence string) {
 	}
 }
 
+// submitWritten queues written text as it is: no tags parsed, no speech.
+func (p *pipeline) submitWritten(round int, text string) {
+	if text == "" {
+		return
+	}
+	j := &job{round: round, raw: text, tagged: perform.Tagged{Display: text, TTSText: text}, done: make(chan struct{})}
+	close(j.done)
+	select {
+	case p.jobs <- j:
+	case <-p.ctx.Done():
+	}
+}
+
 func (p *pipeline) run() {
 	defer p.emitW.Done()
 	seq := 0

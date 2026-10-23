@@ -63,8 +63,9 @@ func (a *Agent) runTurn(t *turn, prev *turn) {
 	ctx, cancel := context.WithTimeout(t.ctx, a.limits.TurnTimeout)
 	defer cancel()
 
-	r := &turnRun{a: a, t: t, start: time.Now(), model: a.chat, lastUsed: a.chat.Name,
-		log: a.log.With("turn_id", t.id)}
+	model := a.Model()
+	r := &turnRun{a: a, t: t, start: time.Now(), model: model, lastUsed: model.Name,
+		deeper: model == a.deep, log: a.log.With("turn_id", t.id, "conversation", a.conv)}
 	r.log.Info("turn start", "origin", t.origin, "chars", len(t.userText), "quiet", t.quiet)
 
 	if err := r.begin(); err != nil {
@@ -94,29 +95,33 @@ func (r *turnRun) begin() error {
 	a, t := r.a, r.t
 	ctx, cancel := a.dbCtx()
 	defer cancel()
-	if err := a.store.BeginTurn(ctx, store.Turn{ID: t.id, ConversationID: ConversationID,
+	if err := a.store.BeginTurn(ctx, store.Turn{ID: t.id, ConversationID: a.conv,
 		InputID: t.inputID, Origin: t.origin, UserText: t.userText, StartedAt: r.start}); err != nil {
 		return fmt.Errorf("record turn: %w", err)
 	}
 	// A turn started without words (a tapped check-in) saves the note for the
 	// model and no display text, so the log doesn't show it.
 	if err := a.store.AddMessages(ctx, []store.Message{{
-		ConversationID: ConversationID, TurnID: t.id, Role: store.RoleUser,
+		ConversationID: a.conv, TurnID: t.id, Role: store.RoleUser,
 		Text: t.userText, Content: cmp.Or(t.userText, t.note), CreatedAt: r.start,
 	}}); err != nil {
 		return fmt.Errorf("record message: %w", err)
 	}
-	hist, err := a.store.RecentMessages(ctx, ConversationID, historyMaxMessages)
+	hist, err := a.store.RecentMessages(ctx, a.conv, a.limits.Window.MaxMessages)
 	if err != nil {
 		return fmt.Errorf("load history: %w", err)
 	}
-	hist, anchor := historyWindow(hist, a.anchor.Load())
+	hist, anchor := a.limits.Window.apply(hist, a.anchor.Load())
 	a.anchor.Store(anchor)
 	now := a.now()
-	r.msgs = BuildMessages(PromptInput{
+	in := PromptInput{
 		Tamer: a.tamer, Gestures: a.Gestures(), Now: now, Location: a.loc, History: hist,
 		Context: gatherContext(t.ctx, a.sources, now, t.userText, r.log),
-	})
+	}
+	if a.system != nil {
+		in.System = a.system(a.tamer)
+	}
+	r.msgs = BuildMessages(in)
 	return nil
 }
 
@@ -232,6 +237,7 @@ func (r *turnRun) llmRound(ctx context.Context, rd *roundRec, specs []llm.Tool) 
 
 	var split perform.Splitter
 	var text strings.Builder
+	var written writtenChunks
 	for {
 		ev, err := st.Recv()
 		if errors.Is(err, io.EOF) {
@@ -243,6 +249,12 @@ func (r *turnRun) llmRound(ctx context.Context, rd *roundRec, specs []llm.Tool) 
 		switch ev.Kind {
 		case llm.EventText:
 			text.WriteString(ev.Text)
+			if a.written {
+				for _, c := range written.push(ev.Text) {
+					r.pipe.submitWritten(rd.index, c)
+				}
+				continue
+			}
 			for _, s := range split.Push(ev.Text) {
 				r.pipe.submit(rd.index, s)
 			}
@@ -253,6 +265,9 @@ func (r *turnRun) llmRound(ctx context.Context, rd *roundRec, specs []llm.Tool) 
 		}
 	}
 	// Text before a tool call is spoken too.
+	if c := written.flush(); c != "" {
+		r.pipe.submitWritten(rd.index, c)
+	}
 	for _, s := range split.Flush() {
 		r.pipe.submit(rd.index, s)
 	}
@@ -387,10 +402,10 @@ func (r *turnRun) runTool(ctx context.Context, call llm.ToolCall, n int) toolOut
 		state, status = proto.ActivityError, "error"
 		content = "error: " + runErr.Error()
 	}
-	content = clipRunes(content, maxToolResultChars)
+	content = clipRunes(content, a.limits.ToolResultChars)
 	stored := ""
 	if runErr == nil && res.Stored != "" {
-		stored = clipRunes(res.Stored, maxToolResultChars)
+		stored = clipRunes(res.Stored, a.limits.ToolResultChars)
 	}
 	a.hub.Broadcast(proto.NewActivity(r.t.id, call.Name, label, state))
 	if runErr == nil && res.Card != nil {
@@ -466,7 +481,7 @@ func (r *turnRun) end(ctx context.Context, loopErr error) {
 			keep = min(int(h), keep)
 		}
 	}
-	msgs, text := collectMessages(t.id, r.rounds, segs, keep)
+	msgs, text := collectMessages(a.conv, a.written, t.id, r.rounds, segs, keep)
 
 	dbctx, cancel := a.dbCtx()
 	defer cancel()
@@ -493,8 +508,13 @@ func (r *turnRun) end(ctx context.Context, loopErr error) {
 // collectMessages builds the assistant and tool messages to store, keeping
 // segments up to seq keep. A round of tool calls is stored only if all its
 // results exist and nothing before it was lost, so the history always replays.
-// It also returns the kept display text.
-func collectMessages(turnID string, rounds []*roundRec, segs []segRecord, keep int) ([]store.Message, string) {
+// It also returns the kept display text. Spoken sentences are joined with
+// spaces; written chunks are joined as they came, and rounds with a blank line.
+func collectMessages(conv string, written bool, turnID string, rounds []*roundRec, segs []segRecord, keep int) ([]store.Message, string) {
+	within, between := " ", " "
+	if written {
+		within, between = "", "\n\n"
+	}
 	var (
 		out   []store.Message
 		texts []string
@@ -506,11 +526,14 @@ func collectMessages(turnID string, rounds []*roundRec, segs []segRecord, keep i
 				raws, shown = append(raws, s.raw), append(shown, s.display)
 			}
 		}
-		content, text := strings.Join(raws, " "), strings.Join(shown, " ")
+		content, text := strings.Join(raws, within), strings.Join(shown, within)
+		if strings.TrimSpace(text) == "" {
+			text = "" // whitespace alone is nothing said; anything else is kept as written
+		}
 		if text != "" {
 			texts = append(texts, text)
 		}
-		base := store.Message{ConversationID: ConversationID, TurnID: turnID, Role: store.RoleAssistant,
+		base := store.Message{ConversationID: conv, TurnID: turnID, Role: store.RoleAssistant,
 			Text: text, Content: content, Model: rd.model}
 		if len(rd.calls) == 0 {
 			if text != "" {
@@ -528,11 +551,38 @@ func collectMessages(turnID string, rounds []*roundRec, segs []segRecord, keep i
 			if !ok {
 				content = rd.results[c.ID]
 			}
-			out = append(out, store.Message{ConversationID: ConversationID, TurnID: turnID, Role: store.RoleTool,
+			out = append(out, store.Message{ConversationID: conv, TurnID: turnID, Role: store.RoleTool,
 				Content: content, ToolCallID: c.ID})
 		}
 	}
-	return out, strings.Join(texts, " ")
+	return out, strings.Join(texts, between)
+}
+
+// writtenChunks cuts streamed written text into pieces worth sending: at line
+// breaks, or once a piece is long, never altering a character.
+type writtenChunks struct{ buf strings.Builder }
+
+const writtenChunk = 200
+
+func (w *writtenChunks) push(s string) []string {
+	w.buf.WriteString(s)
+	cur := w.buf.String()
+	cut := strings.LastIndexByte(cur, '\n') + 1
+	if cut == 0 && len(cur) >= writtenChunk {
+		cut = len(cur)
+	}
+	if cut == 0 {
+		return nil
+	}
+	w.buf.Reset()
+	w.buf.WriteString(cur[cut:])
+	return []string{cur[:cut]}
+}
+
+func (w *writtenChunks) flush() string {
+	s := w.buf.String()
+	w.buf.Reset()
+	return s
 }
 
 // llmFailure turns a provider error into a code and a message in her voice.

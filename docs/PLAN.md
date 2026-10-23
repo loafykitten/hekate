@@ -285,6 +285,36 @@ opener and the routines scheduler from the briefing and heartbeat.
   running ahead of last month, a bill due before payday), answer questions, and help plan. She
   isn't a licensed advisor and says so when a question needs one.
 
+### Threads (agreed 2026-10-23)
+
+Lab work and long research would crowd the one voice conversation: its window is the last 20
+messages or 16,000 characters, and a single lab command can return 6,000. So longer work gets
+threads, each a conversation of its own. Contract: `PROTOCOL.md` (Threads, and `thread` on the
+socket). Service: `service/internal/threads`, on the agent made per-conversation.
+
+- **One life, many workbenches.** The main conversation stays the single voice context: memory,
+  reflection, check-ins and the briefing keep assuming it. Threads are general (lab work,
+  research, anything long) and the nightly reflection doesn't read them. Renamon is herself in
+  them, writing instead of speaking (markdown, code, length that fits), with work tools only (web,
+  her lab) and what she knows about the owner as context.
+- **The agent runs per conversation.** Conversation id, tools, system prompt, model, limits and
+  history window are options; a thread's hub wraps its events as `thread_event`. Thread turns:
+  30 minutes, 40 rounds, 80 tool calls, a history window of about 100k characters. At most three
+  threads run at once.
+- **Model:** threads default to GLM 5.3 (the deep model), switchable per thread to GLM 5.3 Flash.
+  The owner uses threads for harder work and shouldn't have to remember to switch.
+- **From the main conversation**, Renamon opens threads (`thread_start`), passes the owner's words
+  on (`thread_send`), reads them (`thread_read`) and stops them (`thread_stop`); "Your threads"
+  lists the active ones. `lab_shell` stays in voice for quick looks (an app's stats, a download's
+  progress); multi-step lab work goes to a thread. Threads replace the lab task worker.
+- **App:** a Threads section in the menu (list, new thread, archive) and a thread view: the
+  transcript with each turn's tool steps folded, markdown replies, a composer with push-to-talk,
+  a stop button while she works, the model switch, rename. A notification opens its thread.
+- **Hold P to talk** (both the voice stage and a thread view): press and hold P, speak, release to
+  send; ignored while typing in a field. The talk button keeps its tap-to-start, tap-to-send.
+- **Lab memory:** an inventory in the lab (`/opt/stacks/INVENTORY.md`: each service, its port,
+  where its data and login live) that threads keep current and read before lab work.
+
 ### Her lab (agreed 2026-10-22)
 
 The owner wants her to set things up and use them on request ("set up qBittorrent", then
@@ -303,14 +333,10 @@ the system. Setup: `deploy/lab/README.md`. Service: `service/internal/lab`.
   `lab_status`, `lab_snapshot`, `lab_isolate`, `lab_security_check` (runs in the background), and
   two approvals: `lab_rollback` and `lab_reconnect`. Everything else she does there needs no
   approval. Only conversation turns, all started by the owner, have these tools.
-- **Lab tasks** carry multi-step work ("set up qBittorrent"). `lab_task` hands a goal to a worker
-  running in the background: the deep model in a loop with only `lab_shell` (up to 10 minutes per
-  command), `lab_write_file` and `lab_status`, for up to 60 tool calls and 45 minutes. Older tool
-  results are shortened to keep the history small. A snapshot comes first, but only when the last
-  check was complete and clean and the newest snapshot is a nightly one, so tasks never push out
-  the last checked snapshot. The worker can't take snapshots itself. Its steps
-  are recorded in her activity under the turn that asked. Its closing report reaches the owner as
-  a notification and her as context; one task runs at a time and `lab_task_stop` ends it.
+- **Multi-step work goes to threads** (see Threads; until 2026-10-23 a separate lab-task worker
+  did it). In a thread, `lab_shell` takes commands of up to 10 minutes, and `lab_snapshot` is
+  guarded: it's skipped unless the last check was complete and clean and the newest snapshot is
+  a nightly one, so thread work never pushes out the last checked snapshot.
 - **The host side** is `hekate-labctl`, a root script with fixed verbs: stats, snapshot, rollback,
   isolate, reconnect. Hekate asks through request files (a systemd path unit wakes it) and reads
   answers from a directory only root writes.

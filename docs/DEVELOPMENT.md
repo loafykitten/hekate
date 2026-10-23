@@ -27,6 +27,8 @@ building and `HANDOFF.md` for the character slice.
      then look at the screenshots. `npm run verify:tour -- verify-out/tour` screenshots every screen
      (stage, a turn with cards, notices, the log, each menu section, empty and error states) on
      phone and desktop with fixture data, for a UX pass
+   - for push-to-talk or keyboard changes, `npm run verify:talkkey` checks hold-P to talk in real
+     Chrome with a fake microphone (the stage, a quick tap, typing in a field, an open thread)
    - for offline-shell changes, `npm run build`, `npx vite preview --port 5318 --strictPort`, then
      `npm run verify:offline -- verify-out` (it needs the character files; see the script header)
 3. **AI review**, at most two rounds (see `scripts/ai-review.sh` below):

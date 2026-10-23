@@ -1,0 +1,490 @@
+/* A thread fills the menu's content area: header and composer stay, the transcript scrolls. */
+.view {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  outline: none;
+}
+
+.head {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: 0 calc(var(--space-4) + var(--safe-right)) var(--space-2) calc(var(--space-4) + var(--safe-left));
+}
+
+.headRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-left: calc(-1 * var(--space-3));
+}
+
+.headTools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.title {
+  margin: 0;
+  min-width: 0;
+}
+
+.title button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  min-height: var(--tap);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+  line-height: 1.25;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.title button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.title button svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--fg-subtle);
+}
+
+.title button:hover svg {
+  color: var(--fg);
+}
+
+.titleInput {
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--accent-line);
+  border-radius: var(--radius-md);
+  background: var(--field-bg);
+  color: var(--fg);
+  /* 16px keeps iOS from zooming the page when the field is focused. */
+  font: var(--weight-bold) 16px / 1.25 var(--font);
+}
+
+.titleInput:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+
+.transcript {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-height: 0;
+  padding: var(--space-2) calc(var(--space-4) + var(--safe-right)) var(--space-4) calc(var(--space-4) + var(--safe-left));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: var(--hairline) transparent;
+}
+
+.earlier {
+  align-self: center;
+  min-height: 36px;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.earlier:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* The owner's messages sit to the right in a soft amber bubble; hers run the full width. */
+.mine {
+  align-self: flex-end;
+  max-width: min(85%, 560px);
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-lg) var(--radius-lg) 4px var(--radius-lg);
+  background: var(--accent-soft);
+  color: var(--fg);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.hers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.empty,
+.note {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+.problem {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid rgba(239, 122, 133, 0.4);
+  border-radius: var(--radius-md);
+  background: var(--danger-soft);
+  color: var(--fg);
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+/* --- tool steps ---------------------------------------------------------------------- */
+
+.steps {
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+}
+
+.steps summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 var(--space-2) 0 2px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  list-style: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.steps summary::-webkit-details-marker {
+  display: none;
+}
+
+.steps summary:hover {
+  color: var(--fg);
+}
+
+.steps summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.steps summary svg {
+  width: 14px;
+  height: 14px;
+  transition: rotate var(--duration) var(--ease);
+}
+
+.steps[open] summary svg {
+  rotate: 90deg;
+}
+
+.stepsFailed {
+  padding: 0 7px;
+  border-radius: var(--radius-pill);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: var(--text-xs);
+}
+
+.stepList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-1) 0 var(--space-1) 7px;
+  padding: 0 0 0 var(--space-3);
+  border-left: 1px solid var(--hairline);
+  list-style: none;
+}
+
+.step {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.stepLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px var(--space-2);
+}
+
+.stepLabel {
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+.stepTool {
+  color: var(--fg-subtle);
+  font: 0.75rem / 1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+.stepState {
+  margin-left: auto;
+  color: var(--ok);
+  font-size: var(--text-xs);
+}
+
+.step[data-state="error"] .stepState {
+  color: var(--danger);
+}
+
+.step[data-state="running"] .stepState {
+  color: var(--accent);
+}
+
+.stepSummary {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+/* --- working indicator --------------------------------------------------------------- */
+
+.working {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+}
+
+.dots {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  animation: beat 1.2s var(--ease) infinite;
+}
+
+.dots i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.dots i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+.pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: currentColor;
+  animation: beat 1.2s var(--ease) infinite;
+}
+
+@keyframes beat {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dots i,
+  .pulse {
+    animation: none;
+    opacity: 0.8;
+  }
+}
+
+/* --- composer ------------------------------------------------------------------------ */
+
+.composer {
+  flex: none;
+  padding: var(--space-1) calc(var(--space-4) + var(--safe-right)) calc(var(--space-2) + var(--safe-bottom)) calc(var(--space-4) + var(--safe-left));
+  /* On iOS the keyboard covers the page instead of resizing it. */
+  margin-bottom: var(--keyboard-inset, 0px);
+  border-top: 1px solid var(--hairline);
+}
+
+.composerHint {
+  min-height: 1.25em;
+  margin: var(--space-1) 0;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  text-align: center;
+}
+
+.composerRow {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.sideButton,
+.send,
+.stop {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--fg);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition:
+    background var(--duration) var(--ease),
+    opacity var(--duration) var(--ease);
+}
+
+.sideButton:hover:not(:disabled),
+.stop:hover {
+  background: var(--surface-strong);
+}
+
+.sideButton:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.micWrap {
+  position: relative;
+  display: grid;
+  flex: none;
+}
+
+.micWrap[data-listening] .sideButton {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.micRing {
+  --level: 0;
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--accent);
+  border-radius: var(--radius-pill);
+  box-shadow: 0 0 16px rgba(240, 168, 60, 0.45);
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(calc(1 + var(--level) * 0.35));
+  transition:
+    opacity var(--duration) var(--ease),
+    transform 90ms linear;
+}
+
+.micWrap[data-listening] .micRing {
+  opacity: 1;
+}
+
+.stop {
+  border-color: transparent;
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.stop:hover {
+  background: var(--danger);
+  color: #2a0d11;
+}
+
+.send {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.send:disabled {
+  border-color: var(--card-border);
+  background: var(--surface);
+  color: var(--fg-muted);
+  cursor: default;
+}
+
+.sideButton:focus-visible,
+.send:focus-visible,
+.stop:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  /* One line is as tall as the buttons beside it; more lines grow it (useAutoGrow sets the height). */
+  min-height: 44px;
+  margin: 0;
+  padding: 12px var(--space-4);
+  border: 1px solid var(--card-border);
+  border-radius: 22px;
+  background: var(--field-bg);
+  color: var(--fg);
+  /* 16px keeps iOS from zooming the page when the field is focused. */
+  font: 16px / 20px var(--font);
+  overflow-wrap: anywhere;
+  resize: none;
+  scrollbar-width: thin;
+}
+
+.input::placeholder {
+  color: var(--fg-muted);
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+
+.archivedNote {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) calc(var(--space-4) + var(--safe-right)) calc(var(--space-3) + var(--safe-bottom)) calc(var(--space-4) + var(--safe-left));
+  border-top: 1px solid var(--hairline);
+  color: var(--fg-muted);
+  font-size: 0.875rem;
+}

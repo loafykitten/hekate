@@ -21,7 +21,6 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/loafykitten/hekate/service/internal/approvals"
-	"github.com/loafykitten/hekate/service/internal/llm"
 	"github.com/loafykitten/hekate/service/internal/proto"
 	"github.com/loafykitten/hekate/service/internal/push"
 	"github.com/loafykitten/hekate/service/internal/store"
@@ -108,45 +107,8 @@ func (p *recPush) Send(_ context.Context, pl push.Payload, u push.Urgency) (push
 	return push.Result{}, nil
 }
 
-// fakeLLM plays the worker's model: each round takes the next scripted step; with none left it
-// answers "All done." without tools.
-type fakeLLM struct {
-	mu    sync.Mutex
-	steps []func(ctx context.Context, req llm.Request) (string, []llm.ToolCall, error)
-	reqs  []llm.Request
-}
-
-func (f *fakeLLM) Round(ctx context.Context, req llm.Request) (string, []llm.ToolCall, *llm.Result, error) {
-	f.mu.Lock()
-	f.reqs = append(f.reqs, req)
-	var step func(context.Context, llm.Request) (string, []llm.ToolCall, error)
-	if len(f.steps) > 0 {
-		step, f.steps = f.steps[0], f.steps[1:]
-	}
-	f.mu.Unlock()
-	if step == nil {
-		return "All done.", nil, nil, nil
-	}
-	text, calls, err := step(ctx, req)
-	return text, calls, nil, err
-}
-
-func (f *fakeLLM) requests() []llm.Request {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]llm.Request(nil), f.reqs...)
-}
-
-// call is a scripted round that asks for one tool call.
-func call(name, args string) func(context.Context, llm.Request) (string, []llm.ToolCall, error) {
-	return func(context.Context, llm.Request) (string, []llm.ToolCall, error) {
-		return "", []llm.ToolCall{{ID: "c-" + name, Name: name, Arguments: args}}, nil
-	}
-}
-
 type fixture struct {
 	svc    *Service
-	llm    *fakeLLM
 	lab    *fakeLab
 	host   *fakeHost
 	events *recEvents
@@ -179,7 +141,7 @@ func newFixture(t *testing.T) *fixture {
 	f := &fixture{
 		lab:    &fakeLab{handle: func(string, []byte) (string, int) { return "", 0 }},
 		host:   &fakeHost{stats: hostStats{State: "running", VCPUs: 4, At: 1000}, fail: map[string]string{}},
-		events: &recEvents{}, push: &recPush{}, appr: appr, dir: dir, llm: &fakeLLM{},
+		events: &recEvents{}, push: &recPush{}, appr: appr, dir: dir,
 	}
 	addr := f.serveSSH(t, dir)
 	f.serveHost(t, dir)
@@ -187,7 +149,7 @@ func newFixture(t *testing.T) *fixture {
 	t.Cleanup(kev.Close)
 
 	f.svc, err = New(Options{Store: db, Approvals: appr, Host: addr, Dir: dir, CacheDir: t.TempDir(), Location: time.UTC,
-		Events: f.events, Push: f.push, LLM: f.llm})
+		Events: f.events, Push: f.push})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,14 +352,4 @@ func (p *recPush) titles() []string {
 		out[i] = pl.Title
 	}
 	return out
-}
-
-// task reads a lab task's row.
-func (f *fixture) task(t *testing.T, id int64) Task {
-	t.Helper()
-	tk, err := scanTask(f.svc.db.QueryRowContext(t.Context(), `SELECT `+taskColumns+` FROM lab_tasks WHERE id = ?`, id))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return tk
 }

@@ -1,8 +1,8 @@
 import type { LinkedAccount } from "./plaid";
-import { keepPreviousData, MutationCache, QueryCache, QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, MutationCache, QueryCache, QueryClient, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { applyApproval, freshest } from "./approvals";
-import { asApproval, type Approval, type CalendarEvent, type IdeaStatus, type Message, type RoutineSettings, type Task } from "./model";
+import { asApproval, type Approval, type CalendarEvent, type IdeaStatus, type Message, type RoutineSettings, type Task, type ThreadModel } from "./model";
 import { PERSIST_MAX_AGE } from "./persist";
 import { DOMAINS, keys, type Domain } from "./queryKeys";
 import {
@@ -21,6 +21,9 @@ import {
   memoryApi,
   remindersApi,
   tasksApi,
+  threadsApi,
+  THREAD_PAGE,
+  type ThreadFields,
   type EventFields,
   type MemoryFields,
   type ReminderFields,
@@ -439,4 +442,41 @@ export function useRemoveMoneyItem() {
 
 export function useSyncMoney() {
   return useDomainMutation(["money"], () => moneyApi.sync());
+}
+
+// --- threads -------------------------------------------------------------------------------
+
+export function useThreads(archived: boolean, enabled = true) {
+  return useQuery({ queryKey: keys.threads(archived), queryFn: ({ signal }) => threadsApi.list(archived, signal), placeholderData: keepPreviousData, enabled });
+}
+
+export function useThread(id: string, enabled = true) {
+  return useQuery({
+    queryKey: keys.thread(id),
+    queryFn: ({ signal }) => threadsApi.get(id, signal),
+    retry: (count, error) => !(error instanceof ApiError) && count < 1,
+    meta: { quiet: true },
+    enabled,
+  });
+}
+
+// The transcript, newest page first; older pages are fetched on demand.
+export function useThreadMessages(id: string, enabled = true) {
+  return useInfiniteQuery({
+    queryKey: keys.threadMessages(id),
+    queryFn: ({ pageParam, signal }) => threadsApi.messages(id, pageParam, signal),
+    initialPageParam: undefined as string | undefined,
+    // A full page means there may be older messages.
+    getNextPageParam: (last) => (last.messages.length >= THREAD_PAGE ? last.messages[0]?.id : undefined),
+    meta: { quiet: true },
+    enabled,
+  });
+}
+
+export function useCreateThread() {
+  return useDomainMutation(["threads"], (fields: { title?: string; model?: ThreadModel }) => threadsApi.create(fields));
+}
+
+export function usePatchThread() {
+  return useDomainMutation(["threads"], ({ id, fields }: { id: string; fields: ThreadFields }) => threadsApi.patch(id, fields));
 }

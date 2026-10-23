@@ -27,9 +27,12 @@ export const keys = {
   ideas: ["ideas", "list"] as const,
   journal: ["journal", "list"] as const,
   routines: ["routines"] as const,
+  threads: (archived: boolean) => ["threads", "list", archived] as const,
+  thread: (id: string) => ["threads", "item", id] as const,
+  threadMessages: (id: string) => ["threads", "messages", id] as const,
 };
 
-export const DOMAINS = ["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes", "ideas", "journal", "routines", "money"] as const;
+export const DOMAINS = ["tasks", "reminders", "calendar", "memory", "weather", "mail", "approvals", "changes", "ideas", "journal", "routines", "money", "threads"] as const;
 export type Domain = (typeof DOMAINS)[number];
 
 // The query keys an `invalidate` event refreshes. Unknown domains are ignored (a newer service

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Builds Hekate's lab VM from Debian 13's cloud image. Run after install.sh, from this directory:
 #
-#   sudo TS_AUTHKEY=tskey-auth-... ./build-vm.sh [--replace] [owner-public-key.pub]
+#   sudo ./build-vm.sh [--replace] [owner-public-key.pub]
 #
-# TS_AUTHKEY: a one-off, pre-approved Tailscale auth key tagged tag:hekate-lab (see README.md).
+# It asks for a one-off, pre-approved Tailscale auth key tagged tag:hekate-lab (see README.md);
+# TS_AUTHKEY in the environment works too, but a key typed at the prompt stays out of shell history.
 # The owner's public key, if given, may also log in as hekate (for looking around by hand).
 # --replace deletes the existing VM, its disk and its snapshots first: a clean start, e.g. after
 # a break-in. Remove the old hekate-lab machine from the Tailscale admin console before that, so
@@ -40,6 +41,7 @@ svc="$(stat -c %u:%g "$STACK_DIR/data")"
 virsh() { command virsh -q -c qemu:///system "$@"; }
 
 nft list table inet hekate_lab >/dev/null 2>&1 || die "the lab's firewall isn't loaded: run install.sh first"
+virsh net-info hekate-lab 2>/dev/null | grep -Eq '^Active: +yes' || die "the lab's network isn't running: run install.sh again"
 if virsh dominfo "$DOMAIN" >/dev/null 2>&1; then
   [[ -n "$replace" ]] || die "$DOMAIN already exists; --replace deletes it, its disk and its snapshots"
   systemctl stop hekate-lab-vm.service 2>/dev/null || true
@@ -47,9 +49,12 @@ if virsh dominfo "$DOMAIN" >/dev/null 2>&1; then
   virsh undefine "$DOMAIN" >/dev/null
   rm -f "$DISK" /var/lib/hekate-lab/isolated
 fi
-[[ ! -e "$DISK" ]] || die "$DISK exists without a VM; move it away first"
+if [[ -e "$DISK" ]]; then
+  [[ -n "$replace" ]] || die "$DISK exists without a VM (left by a failed build?); --replace deletes it"
+  rm -f "$DISK"
+fi
 if [[ -z "${TS_AUTHKEY:-}" ]]; then
-  [[ -t 0 ]] || die "set TS_AUTHKEY"
+  [[ -t 0 ]] || die "run it in a terminal, or set TS_AUTHKEY"
   read -rsp "Tailscale auth key (tag:hekate-lab): " TS_AUTHKEY
   echo
 fi
@@ -57,7 +62,17 @@ fi
 
 work="$(mktemp -d /var/tmp/hekate-lab.XXXXXX)"
 chmod 0700 "$work"
-trap 'rm -rf "$work"' EXIT
+built=""
+# A build that stops partway leaves no VM or disk behind; the key material in $work goes either way.
+cleanup() {
+  rm -rf "$work"
+  if [[ -z "$built" ]]; then
+    virsh destroy "$DOMAIN" >/dev/null 2>&1 || true
+    virsh undefine "$DOMAIN" >/dev/null 2>&1 || true
+    rm -f "$DISK"
+  fi
+}
+trap cleanup EXIT
 
 echo "Downloading Debian 13's cloud image..."
 curl -fsSL -o "$work/SHA512SUMS" "$SUMS"
@@ -132,6 +147,7 @@ virt-install --connect qemu:///system --name "$DOMAIN" \
   --channel unix,target.type=virtio,target.name=org.qemu.guest_agent.0 \
   --cloud-init "user-data=$work/user-data" \
   --graphics none --console pty,target.type=serial --noautoconsole
+built=1
 # Not libvirt's autostart: hekate-lab-vm.service starts it at boot, after its firewall.
 systemctl enable hekate-lab-vm.service
 systemctl start hekate-lab-vm.service

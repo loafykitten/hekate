@@ -55,8 +55,9 @@ On the homelab, in a checkout of this repo (`git clone https://github.com/<owner
    ],
    ```
 3. **Auth key** (admin console → Settings → Keys): one-off, pre-approved, tag `tag:hekate-lab`.
-4. **VM:** `sudo TS_AUTHKEY=tskey-auth-... ./build-vm.sh [~/.ssh/id_ed25519.pub]`. With your
-   public key, you can also `ssh hekate@hekate-lab` to look around. It takes 5–10 minutes and
+4. **VM:** `sudo ./build-vm.sh [~/.ssh/id_ed25519.pub]`; it asks for the auth key (typed at the
+   prompt, it stays out of shell history). With your public key, you can also
+   `ssh hekate@hekate-lab` to look around. It takes 5–10 minutes and
    prints the VM's tailnet address.
 5. **Hekate:** add `HEKATE_LAB_HOST=<that address>` to `hekate.env`, the three `lab/` volumes from
    `compose.example.yaml` to the hekate service, then `docker compose up -d hekate`. Ask her for

@@ -20,6 +20,10 @@ svc_uid="$(stat -c %u "$stack/data")"
 svc_gid="$(stat -c %g "$stack/data")"
 
 pacman -S --needed --noconfirm libvirt qemu-base virt-install dnsmasq jq
+# libvirt installs firewalld zones and policies; a running firewalld only sees them after a reload.
+if systemctl is-active -q firewalld.service; then
+  firewall-cmd --reload >/dev/null
+fi
 systemctl enable --now libvirtd.service
 # The operator manages the VM with virsh without sudo (virsh -c qemu:///system).
 usermod -aG libvirt "$operator"
@@ -28,7 +32,9 @@ if ! virsh -q -c qemu:///system net-info hekate-lab >/dev/null 2>&1; then
   virsh -q -c qemu:///system net-define network.xml
 fi
 virsh -q -c qemu:///system net-autostart hekate-lab
-virsh -q -c qemu:///system net-start hekate-lab 2>/dev/null || true
+if ! virsh -q -c qemu:///system net-info hekate-lab | grep -Eq '^Active: +yes'; then
+  virsh -q -c qemu:///system net-start hekate-lab
+fi
 
 install -d -m 0755 /etc/hekate-lab /var/lib/hekate-lab
 install -m 0644 firewall.nft /etc/hekate-lab/firewall.nft

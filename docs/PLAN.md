@@ -327,8 +327,8 @@ the system. Setup: `deploy/lab/README.md`. Service: `service/internal/lab`.
     Unattended-upgrades installs Debian security fixes daily.
   - *Urgent:* any of it on CISA's Known Exploited Vulnerabilities list, which Hekate fetches
     herself: a push.
-  - *Suspicious* (a push): weak signs, such as a program running from /tmp, 20+ blocked
-    connections into private networks, CPUs over 85% busy on average for 6+ hours, or no
+  - *Suspicious* (a push): weak signs, such as a program running from /tmp, 200+ blocked
+    connection packets into private networks (a few dozen attempts), CPUs over 85% busy on average for 6+ hours, or no
     complete check (every scanner ran) for 3 days.
   - *Compromised:* strong signs. Mail sent to port 25 (counted by the host), a changed packaged
     binary, a program running from /dev/shm or deleted from /tmp, an extra uid-0 account, changed

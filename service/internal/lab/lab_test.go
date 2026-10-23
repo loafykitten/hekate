@@ -137,8 +137,8 @@ func TestEvaluate(t *testing.T) {
 		{name: "mail to port 25", host: func(h *hostStats) { h.SMTPBlocked = 3 }, state: StateCompromised, key: "smtp_out"},
 		{name: "port 25 already counted", prev: &Check{host: hostStats{SMTPBlocked: 3}}, host: func(h *hostStats) { h.SMTPBlocked = 3 }, state: StateClean},
 		{name: "counter reset", prev: &Check{host: hostStats{SMTPBlocked: 9}}, host: func(h *hostStats) { h.SMTPBlocked = 1 }, state: StateCompromised},
-		{name: "a few blocked connections", host: func(h *hostStats) { h.PrivateBlocked = 5 }, state: StateClean},
-		{name: "many blocked connections", host: func(h *hostStats) { h.PrivateBlocked = 15; h.HostBlocked = 5 }, state: StateSuspicious, key: "private_tcp"},
+		{name: "a few blocked connections", host: func(h *hostStats) { h.PrivateBlocked = 6; h.HostBlocked = 12 }, state: StateClean},
+		{name: "many blocked connections", host: func(h *hostStats) { h.PrivateBlocked = 150; h.HostBlocked = 50 }, state: StateSuspicious, key: "private_tcp"},
 		{
 			name: "busy CPUs", prev: &Check{host: hostStats{At: now.Add(-24 * time.Hour).Unix()}},
 			host:  func(h *hostStats) { h.CPUTimeNS = uint64(0.9 * 2 * float64(24*time.Hour)) },

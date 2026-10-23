@@ -33,14 +33,17 @@ const JobName = "lab_check"
 
 // Limits and thresholds. Tuned not to cry wolf: a weak sign is reported, only a strong one acts.
 const (
-	checkAt         = 5 // 05:00, while nobody's using the lab
-	checkCatchUp    = 12 * time.Hour
-	checkTimeout    = 45 * time.Minute
-	auditTimeout    = 40 * time.Minute
-	auditMaxOut     = 8 << 20
-	blindAfter      = 3 * 24 * time.Hour // no successful check for this long is itself suspicious
-	rebootGrace     = 3 * 24 * time.Hour
-	blockedTCPAlarm = 20   // blocked connections into private networks before it's odd
+	checkAt      = 5 // 05:00, while nobody's using the lab
+	checkCatchUp = 12 * time.Hour
+	checkTimeout = 45 * time.Minute
+	auditTimeout = 40 * time.Minute
+	auditMaxOut  = 8 << 20
+	blindAfter   = 3 * 24 * time.Hour // no successful check for this long is itself suspicious
+	rebootGrace  = 3 * 24 * time.Hour
+	// Blocked packets opening connections into private networks before it's odd. The firewall
+	// counts every retried SYN, so one blocked connection that times out counts six or seven
+	// times; 200 is a few dozen attempts, where a scan sends thousands.
+	blockedTCPAlarm = 200
 	busyCPU         = 0.85 // average share of all its CPUs since the last check
 	busyMinSpan     = 6 * time.Hour
 	keepChecks      = 90 * 24 * time.Hour
@@ -260,7 +263,7 @@ func evaluate(prev *Check, host hostStats, rep *vmReport, repErr error, kev map[
 		add(StateCompromised, "smtp_out", "The lab tried to send mail straight to mail servers (port 25): the host's firewall blocked %d packets. That's what spam bots do.", n)
 	}
 	if n := delta(host.PrivateBlocked, before.PrivateBlocked) + delta(host.HostBlocked, before.HostBlocked); n >= blockedTCPAlarm {
-		add(StateSuspicious, "private_tcp", "The lab tried %d connections into the home network, the tailnet or the host; the firewall blocked them all.", n)
+		add(StateSuspicious, "private_tcp", "The lab kept trying to connect into the home network, the tailnet or the host (%d blocked packets); the firewall stopped them all.", n)
 	}
 	if before.At > 0 && host.VCPUs > 0 && host.At > before.At && host.CPUTimeNS >= before.CPUTimeNS {
 		span := time.Duration(host.At-before.At) * time.Second

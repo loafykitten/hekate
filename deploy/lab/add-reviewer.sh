@@ -40,7 +40,7 @@ put() {
 run() {
   local pid status i
   pid="$(agent "$(jq -nc --arg p "$1" '{execute: "guest-exec", arguments: {path: $p, arg: $ARGS.positional, "capture-output": true}}' \
-    --args "${@:2}")" | jq -r .return.pid)"
+    --args -- "${@:2}")" | jq -r .return.pid)"
   [[ "$pid" =~ ^[0-9]+$ ]] || die "couldn't run $1 in the VM"
   for ((i = 0; i < 120; i++)); do
     status="$(agent "$(jq -nc --argjson p "$pid" '{execute: "guest-exec-status", arguments: {pid: $p}}')")"

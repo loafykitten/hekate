@@ -7,6 +7,7 @@
 # stack's lab/ directories. Safe to run again (after pulling changes to these files, for example).
 # Then build the VM with build-vm.sh. See README.md.
 set -euo pipefail
+export LC_ALL=C
 cd "$(dirname "$(readlink -f "$0")")"
 die() { echo "$*" >&2; exit 1; }
 

@@ -10,6 +10,7 @@
 # a break-in. Remove the old hekate-lab machine from the Tailscale admin console before that, so
 # the new one gets the same name.
 set -euo pipefail
+export LC_ALL=C
 cd "$(dirname "$(readlink -f "$0")")"
 die() { echo "$*" >&2; exit 1; }
 
@@ -23,6 +24,9 @@ IMAGE=https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud
 SUMS=https://cloud.debian.org/images/cloud/trixie/latest/SHA512SUMS
 
 [[ $EUID -eq 0 ]] || die "run with sudo"
+# One build at a time: a failed build cleans up, and must never clean up another's VM.
+exec 8>/run/hekate-lab-build.lock
+flock -n 8 || die "another build-vm.sh is running"
 replace=""
 owner_key=""
 for a in "$@"; do
@@ -62,11 +66,13 @@ fi
 
 work="$(mktemp -d /var/tmp/hekate-lab.XXXXXX)"
 chmod 0700 "$work"
+created=""
 built=""
-# A build that stops partway leaves no VM or disk behind; the key material in $work goes either way.
+# A build that stops partway leaves no VM or disk of its own behind; the key material in $work
+# goes either way.
 cleanup() {
   rm -rf "$work"
-  if [[ -z "$built" ]]; then
+  if [[ -n "$created" && -z "$built" ]]; then
     virsh destroy "$DOMAIN" >/dev/null 2>&1 || true
     virsh undefine "$DOMAIN" >/dev/null 2>&1 || true
     rm -f "$DISK"
@@ -80,6 +86,7 @@ curl -fL --progress-bar -o "$work/debian.qcow2" "$IMAGE"
 want="$(awk '$2 == "debian-13-genericcloud-amd64.qcow2" {print $1}' "$work/SHA512SUMS")"
 [[ -n "$want" ]] || die "the image isn't listed in SHA512SUMS"
 echo "$want  $work/debian.qcow2" | sha512sum -c --quiet - || die "the image's checksum doesn't match"
+created=1
 qemu-img convert -O qcow2 "$work/debian.qcow2" "$DISK"
 qemu-img resize -q "$DISK" "$SIZE"
 

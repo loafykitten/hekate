@@ -45,7 +45,7 @@ svc="$(stat -c %u:%g "$STACK_DIR/data")"
 virsh() { command virsh -q -c qemu:///system "$@"; }
 
 nft list table inet hekate_lab >/dev/null 2>&1 || die "the lab's firewall isn't loaded: run install.sh first"
-virsh net-info hekate-lab 2>/dev/null | grep -Eq '^Active: +yes' || die "the lab's network isn't running: run install.sh again"
+virsh net-info hekate-lab 2>/dev/null | grep -E '^Active: +yes' >/dev/null || die "the lab's network isn't running: run install.sh again"
 if virsh dominfo "$DOMAIN" >/dev/null 2>&1; then
   [[ -n "$replace" ]] || die "$DOMAIN already exists; --replace deletes it, its disk and its snapshots"
   systemctl stop hekate-lab-vm.service 2>/dev/null || true

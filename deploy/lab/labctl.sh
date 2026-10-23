@@ -33,7 +33,13 @@ STATE=/var/lib/hekate-lab
 virsh() { command virsh -q -c qemu:///system "$@"; }
 die() { echo "$*" >&2; exit 1; }
 
-domstate() { virsh domstate "$DOMAIN" 2>/dev/null | head -1 || echo "missing"; }
+# No early-exit readers (head, grep -q) after virsh in a pipeline: with pipefail, the broken pipe
+# fails the whole pipeline after the answer was read.
+domstate() {
+  local out
+  out="$(virsh domstate "$DOMAIN" 2>/dev/null)" || { echo missing; return; }
+  echo "${out%%$'\n'*}"
+}
 running() { [[ "$(domstate)" == running ]]; }
 isolated() { [[ -f $STATE/isolated ]]; }
 # qmp sends one command to QEMU's monitor and prints the reply. virsh exits 0 even when QEMU
@@ -41,7 +47,7 @@ isolated() { [[ -f $STATE/isolated ]]; }
 qmp() {
   local out
   out="$(virsh qemu-monitor-command "$DOMAIN" "$1")" || die "QEMU's monitor didn't answer"
-  jq -e 'has("return")' >/dev/null 2>&1 <<<"$out" || die "QEMU: $(jq -r '.error.desc // .' <<<"$out" 2>/dev/null | head -c 300)"
+  jq -e 'has("return")' >/dev/null 2>&1 <<<"$out" || die "QEMU: $(jq -r '.error.desc // .' <<<"$out" 2>/dev/null | cut -c 1-300)"
   printf '%s\n' "$out"
 }
 
@@ -49,7 +55,7 @@ qmp() {
 node() {
   local n
   n="$(qmp '{"execute":"query-block"}' | jq -r --arg disk "$DISK" \
-    '.return[] | select(.inserted.file == $disk or .inserted.image.filename == $disk) | .inserted["node-name"]' | head -1)"
+    '.return[] | select(.inserted.file == $disk or .inserted.image.filename == $disk) | .inserted["node-name"]' | sed -n 1p)"
   [[ -n "$n" && "$n" != null ]] || die "can't find the lab's disk in QEMU"
   echo "$n"
 }

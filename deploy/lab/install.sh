@@ -33,7 +33,7 @@ if ! virsh -q -c qemu:///system net-info hekate-lab >/dev/null 2>&1; then
   virsh -q -c qemu:///system net-define network.xml
 fi
 virsh -q -c qemu:///system net-autostart hekate-lab
-if ! virsh -q -c qemu:///system net-info hekate-lab | grep -Eq '^Active: +yes'; then
+if ! virsh -q -c qemu:///system net-info hekate-lab | grep -E '^Active: +yes' >/dev/null; then
   virsh -q -c qemu:///system net-start hekate-lab
 fi
 
@@ -63,5 +63,5 @@ fi
 systemctl restart hekate-labctl.path
 
 echo
-echo "Host side is ready. Next: sudo TS_AUTHKEY=tskey-... ./build-vm.sh (see README.md)."
+echo "Host side is ready. Next: sudo ./build-vm.sh [your-key.pub] (see README.md)."
 echo "$operator was added to the libvirt group; log in again for it to apply."

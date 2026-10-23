@@ -154,7 +154,8 @@ var (
 	chat = config.Model{Name: "glm-flash", Effort: "low"}
 )
 
-func newFixture(t *testing.T) *fixture {
+// newFixture builds the service; with, if given, adjusts its options first.
+func newFixture(t *testing.T, with ...func(*Options)) *fixture {
 	t.Helper()
 	db, err := store.Open(t.Context(), t.TempDir())
 	if err != nil {
@@ -188,11 +189,15 @@ func newFixture(t *testing.T) *fixture {
 		Label: "Echoing", Run: func(context.Context, json.RawMessage) (agent.Result, error) {
 			return agent.Result{Content: "echoed"}, nil
 		}}
-	f.svc, err = New(Options{
+	opts := Options{
 		Store: db, LLM: llm.New(llm.Config{BaseURL: srv.URL, APIKey: "k"}), Deep: deep, Chat: chat,
-		Tools: []agent.Tool{echo}, System: SystemPrompt("hekate-lab"), Hub: f.hub, Events: f.events, Push: f.push,
+		Tools: []agent.Tool{echo}, System: SystemPrompt("hekate-lab", nil), Hub: f.hub, Events: f.events, Push: f.push,
 		Tamer: "Sam", Location: time.UTC,
-	})
+	}
+	for _, w := range with {
+		w(&opts)
+	}
+	f.svc, err = New(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +339,8 @@ func TestBusyAndCapacity(t *testing.T) {
 	for _, id := range ids[:3] {
 		f.say(t, id, "work")
 	}
-	waitFor(t, "three running", func() bool { return f.svc.running(ids[0]) && f.svc.running(ids[1]) && f.svc.running(ids[2]) })
+	running := func(id string) bool { r, _ := f.svc.running(id); return r }
+	waitFor(t, "three running", func() bool { return running(ids[0]) && running(ids[1]) && running(ids[2]) })
 
 	f.say(t, ids[0], "more")
 	f.say(t, ids[3], "work")
@@ -344,15 +350,15 @@ func TestBusyAndCapacity(t *testing.T) {
 			t.Errorf("thread %d errors %+v", i, errs)
 		}
 	}
-	if f.svc.running(ids[3]) {
+	if running(ids[3]) {
 		t.Error("a fourth thread started")
 	}
 	// Stopping one makes room.
 	in, _ := f.svc.Input(t.Context(), ids[1])
 	in.Interrupt("", -1)
-	waitFor(t, "thread 1 stopped", func() bool { return !f.svc.running(ids[1]) })
+	waitFor(t, "thread 1 stopped", func() bool { return !running(ids[1]) })
 	f.say(t, ids[3], "work")
-	waitFor(t, "thread 3 running", func() bool { return f.svc.running(ids[3]) })
+	waitFor(t, "thread 3 running", func() bool { return running(ids[3]) })
 }
 
 func TestStepsAndModelSwitch(t *testing.T) {
@@ -365,7 +371,8 @@ func TestStepsAndModelSwitch(t *testing.T) {
 	}
 	th, _ := f.svc.Create(t.Context(), "Echo", ModelChat, OriginOwner)
 	f.say(t, th.ID, "echo please")
-	waitFor(t, "turn end", func() bool { return len(f.turnEnds(th.ID)) == 1 })
+	// turn_end goes out just before the turn lets go: wait for both, or "again" finds it busy.
+	waitFor(t, "turn end", func() bool { return len(f.turnEnds(th.ID)) == 1 && f.svc.idle(th.ID) })
 	msgs, steps, err := f.svc.Messages(t.Context(), th.ID, 0, 10)
 	if err != nil || len(msgs) != 2 || len(steps) != 1 || steps[0].Tool != "echo" || steps[0].Label != "Echoing" ||
 		steps[0].Status != "ok" || steps[0].Summary != "echoed" || steps[0].TurnID != msgs[1].TurnID {
@@ -469,7 +476,7 @@ func TestStartAbortsStaleTurns(t *testing.T) {
 }
 
 func TestSystemPromptWithoutLab(t *testing.T) {
-	p := SystemPrompt("")("Sam")
+	p := SystemPrompt("", nil)("Sam")
 	if strings.Contains(p, "## Your lab") || !strings.Contains(p, "## Who you are") || strings.Contains(p, "{{") {
 		t.Errorf("prompt without a lab:\n%s", p)
 	}

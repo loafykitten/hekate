@@ -183,6 +183,8 @@ const thread = (id, title, over = {}) => ({ id, title, model: "deep", model_name
 const THREADS = [
   thread("th_aa11", "Compare two ways to back up the lab", { running: true, updated_at: ago(1), preview: "I'm reading how restic and borg handle deduplication before I write anything." }),
   thread("th_bb22", "Set up qBittorrent", { preview: "qBittorrent runs at http://lab.example.com:8080. The login is in the lab inventory.", updated_at: ago(42) }),
+  thread("th_dd44", "Set up the downloads stack", { preview: "Fixed: the web UI now asks for a login and the ports are bound to the lab network.", updated_at: ago(20) }),
+  thread("th_ee55", "Move the photo share to the NAS volume", { preview: "Done. The share mounts at /srv/photos and the old copy is still in place.", updated_at: ago(90) }),
   thread("th_cc33", "Which router should I buy?", { model: "chat", origin: "renamon", preview: "Short version: the middle one. It has the ports you listed and no cloud account.", updated_at: ago(60 * 26) }),
 ];
 const THREAD_TURN = "tt_1";
@@ -223,6 +225,50 @@ const THREAD_STEPS = [
   ["web_search", "Searching the web", "ok", "qBittorrent docker temporary password first login"],
   ["lab_write_file", "Updating the inventory", "ok", "wrote 1.2 KB to /opt/stacks/INVENTORY.md"],
 ].map(([tool, label, status, summary], i) => ({ turn_id: THREAD_TURN, tool, label, status, summary, created_at: ago(49 - i) }));
+
+// Reviews of her lab work: one with findings and a follow-up reply (round 1), then the re-check of
+// her fixes; and one with nothing to report.
+const tmsg = (id, role, turn_id, text, min) => ({ id, role, turn_id, text, created_at: ago(min) });
+const review = (id, thread_id, turn_id, over = {}) => ({
+  id, thread_id, turn_id, round: 1, status: "done", model: "deepseek-v4.1-flash", verdict: "looks_good", summary: "", findings: [], verified: [], commands: 12,
+  error: "", followup_turn_id: "", started_at: ago(60), finished_at: ago(58), ...over,
+});
+const DL_MESSAGES = [
+  tmsg("d1", "user", "td_1", "Set up JDownloader and qBittorrent as one compose stack under /opt/stacks/downloads.", 80),
+  tmsg("d2", "assistant", "td_1", "The stack is up in `/opt/stacks/downloads`. JDownloader's web UI is on **5800** and qBittorrent's on **8080**, both on the lab network.", 70),
+  tmsg("d3", "assistant", "td_2", "Thanks, both were right. I turned on the web UI login for JDownloader and bound qBittorrent's ports to the lab address. The compose file now pins the image tags too.", 40),
+  tmsg("d4", "assistant", "td_3", "The re-check passed, so that's everything from the review done.", 20),
+];
+const DL_REVIEWS = [
+  review("rv_d1", "th_dd44", "td_1", {
+    verdict: "needs_changes",
+    followup_turn_id: "td_2",
+    commands: 23,
+    summary: "The stack's design is sound and everything she claimed about the images and volumes checked out. Two things would leave it open to anyone on the network.",
+    findings: [
+      {
+        severity: "low", title: "Image tags float on latest", claim: "The images are pinned.", evidence: "compose.yaml uses lscr.io/linuxserver/qbittorrent:latest.", fix: "Pin a version tag so an update can't change the stack unseen.",
+        unverified: false, commands: ["grep -n image: /opt/stacks/downloads/compose.yaml"],
+      },
+      {
+        severity: "high", title: "JDownloader's web UI has no login", claim: "The UI is only reachable from the lab network.",
+        evidence: "A request to port 5800 from another lab machine returned the full UI without asking for a password.", fix: "Turn on the web interface password in JDownloader's settings, or put it behind the reverse proxy.",
+        unverified: false, commands: ["curl -s -o /dev/null -w '%{http_code}' http://localhost:5800/", "docker exec jdownloader cat /opt/JDownloader/cfg/org.jdownloader.api.myjdownloader.MyJDownloaderSettings.json"],
+      },
+      {
+        severity: "medium", title: "qBittorrent listens on all interfaces", claim: "", evidence: "The reviewer knows the image's default bind address is 0.0.0.0 but couldn't read the effective setting.", fix: "Bind the published port to the lab address.",
+        unverified: true, commands: [],
+      },
+    ],
+    verified: ["All three image tags exist upstream.", "The download volume is on the 1 TB disk with 640 GB free.", "Both containers restart on boot."],
+  }),
+  review("rv_d2", "th_dd44", "td_2", { round: 2, followup_turn_id: "td_3", summary: "Her fixes hold: the login is required and the ports are bound to the lab network.", verified: ["JDownloader now answers 401 without a login."], commands: 8 }),
+];
+const EE_MESSAGES = [
+  tmsg("e1", "user", "te_1", "Move the photo share onto the NAS volume, keep the old copy until I say so.", 120),
+  tmsg("e2", "assistant", "te_1", "Done. The share mounts at `/srv/photos` and the old copy is still in place.", 100),
+];
+const EE_REVIEWS = [review("rv_e1", "th_ee55", "te_1", { summary: "The mount, permissions and the old copy are all as she described.", verified: ["The share is mounted from the NAS volume.", "The old copy is untouched."], commands: 9 })];
 
 // ---- page wiring ----------------------------------------------------------------------------
 
@@ -293,8 +339,10 @@ async function open(browser, viewport, query, { mode = "full", onSay } = {}) {
     if (p === "/api/threads") return json(route, { threads: empty ? [] : q.get("archived") === "true" ? [] : THREADS });
     if (/^\/api\/threads\/[^/]+$/.test(p)) return json(route, THREADS.find((t) => p.endsWith(t.id)) ?? THREADS[1]);
     if (/^\/api\/threads\/[^/]+\/messages$/.test(p)) {
+      if (p.includes("th_dd44")) return json(route, { messages: DL_MESSAGES, steps: [], reviews: DL_REVIEWS });
+      if (p.includes("th_ee55")) return json(route, { messages: EE_MESSAGES, steps: [], reviews: EE_REVIEWS });
       const bb = p.includes("th_bb22");
-      return json(route, { messages: bb ? THREAD_MESSAGES : [{ ...THREAD_MESSAGES[0], id: "m9", turn_id: "tt_live", text: "Compare restic and borg for the lab's nightly backups." }], steps: bb ? THREAD_STEPS : [] });
+      return json(route, { messages: bb ? THREAD_MESSAGES : [{ ...THREAD_MESSAGES[0], id: "m9", turn_id: "tt_live", text: "Compare restic and borg for the lab's nightly backups." }], steps: bb ? THREAD_STEPS : [], reviews: [] });
     }
     if (p === "/api/conversation/messages") return json(route, { messages: HISTORY });
     if (p === "/api/push/key") return json(route, { public_key: "BExampleKeyExampleKeyExampleKeyExampleKeyExampleKeyExampleKeyExampleKeyExampleKeyExampleKeyExample" });
@@ -445,6 +493,23 @@ for (const [name, viewport] of [
   await shot(page, "thread-steps", 600);
   await page.close();
 
+  // A review with findings and her follow-up reply, its re-check, and a clean one.
+  ({ page } = await open(browser, viewport, "thread=th_dd44"));
+  await page.getByText("Second opinion").first().waitFor({ timeout: 10_000 }).catch(() => {});
+  await shot(page, "thread-review", 800);
+  await page.getByText("JDownloader's web UI has no login").click().catch(() => console.log("no finding toggle"));
+  await page.getByText("What checked out").first().click().catch(() => {});
+  await page.evaluate(() => document.querySelector("[class*=transcript]")?.scrollTo(0, 0));
+  await shot(page, "thread-review-open", 600);
+  await page.evaluate(() => document.querySelector("[class*=transcript]")?.scrollTo(0, 1e6));
+  await shot(page, "thread-review-recheck", 600);
+  await page.close();
+
+  ({ page } = await open(browser, viewport, "thread=th_ee55"));
+  await page.getByText("Second opinion").first().waitFor({ timeout: 10_000 }).catch(() => {});
+  await shot(page, "thread-review-clean", 800);
+  await page.close();
+
   ({ page, sockets } = await open(browser, viewport, "thread=th_aa11"));
   await page.getByText("Compare restic and borg").waitFor({ timeout: 10_000 }).catch(() => {});
   const ev = (event) => send({ type: "thread_event", thread: "th_aa11", event });
@@ -454,6 +519,9 @@ for (const [name, viewport] of [
   ev({ type: "segment", turn_id: "tt_live", seq: 0, text: "Both deduplicate well. Restic is one static binary and encrypts by default.", duration: 0, audio_b64: null, audio_format: null, words: null, gestures: [], expressions: [] });
   ev({ type: "activity", turn_id: "tt_live", tool: "web_read", label: "Reading the borg docs", state: "start" });
   await shot(page, "thread-live", 900);
+  ev({ type: "turn_end", turn_id: "tt_live", status: "done", text: "Both deduplicate well.", model: "m", usage: { input_tokens: 1, output_tokens: 1, cost_usd: null } });
+  ev({ type: "review", review: review("rv_live", "th_aa11", "tt_live", { status: "running", verdict: "", commands: 0, finished_at: "" }) });
+  await shot(page, "thread-review-running", 900);
   await page.close();
 
   // 6. Empty states.

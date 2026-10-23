@@ -32,6 +32,8 @@ rm -rf "$(dirname "$deb")"
 install -d -m 0755 /var/cache/grype /opt/stacks
 
 systemctl enable --now nftables
+# The account a second model reviews her work with, using the key build-vm.sh wrote.
+/usr/local/lib/hekate-lab/reviewer-setup.sh "$conf/reviewer.pub"
 systemctl restart ssh
 
 sha256sum /etc/ssh/authorized_keys/* >"$conf/authorized_keys.sha256"

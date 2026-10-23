@@ -32,6 +32,7 @@ import (
 	"github.com/loafykitten/hekate/service/internal/push"
 	"github.com/loafykitten/hekate/service/internal/reflection"
 	"github.com/loafykitten/hekate/service/internal/reminders"
+	"github.com/loafykitten/hekate/service/internal/review"
 	"github.com/loafykitten/hekate/service/internal/routines"
 	"github.com/loafykitten/hekate/service/internal/server"
 	"github.com/loafykitten/hekate/service/internal/store"
@@ -224,14 +225,22 @@ func run() error {
 	threadTools := webSvc.Tools()
 	threadContext := []agent.Source{{Name: "What you know about {{tamer}}", Source: memSvc}}
 	labName := ""
+	// A second model reviews her lab work in threads, once the lab has its reviewer account.
+	var reviewer *review.Reviewer
 	if labSvc.Configured() {
 		threadTools = slices.Concat(threadTools, labSvc.ThreadTools())
 		threadContext = append(threadContext, labSource)
 		labName = cfg.LabName
+		reviewer, err = review.New(review.Options{Store: db, LLM: llmClient, Model: cfg.ModelReview, Lab: labSvc,
+			LabName: cfg.LabName, Logger: logger.Logger})
+		if err != nil {
+			return fmt.Errorf("build review: %w", err)
+		}
+		logger.Info("lab reviews", "ready", reviewer.Ready(), "model", cfg.ModelReview.String())
 	}
 	threadSvc, err := threads.New(threads.Options{
 		Store: db, LLM: llmClient, Deep: cfg.ModelDeep, Chat: cfg.ModelChat, Tools: threadTools, Context: threadContext,
-		System: threads.SystemPrompt(labName), Hub: hub, Events: hub, Push: notifier, Tamer: cfg.TamerName,
+		System: threads.SystemPrompt(labName, reviewer.Ready), Hub: hub, Events: hub, Push: notifier, Reviewer: reviewer, Tamer: cfg.TamerName,
 		Location: cfg.Location, Logger: logger.Logger,
 	})
 	if err != nil {

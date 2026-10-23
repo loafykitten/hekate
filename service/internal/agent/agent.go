@@ -314,6 +314,22 @@ func (a *Agent) Say(origin, inputID, text string, quiet bool) {
 		ctx: ctx, cancel: cancel, done: make(chan struct{})})
 }
 
+// Prompt starts a quiet turn the owner didn't type, such as handing her a review of her work:
+// note is what the model reads in their place, and nothing is shown for it. It returns the
+// turn's id, or "" when no model is set up.
+func (a *Agent) Prompt(origin, inputID, note string) string {
+	if !a.llm.Configured() {
+		a.hub.Broadcast(proto.NewError(proto.CodeLLMUnavailable,
+			"I can't think right now: no language model is set up.", inputID))
+		return ""
+	}
+	ctx, cancel := context.WithCancelCause(a.baseCtx)
+	t := &turn{id: newID("t_"), inputID: inputID, origin: origin, quiet: true, note: note,
+		ctx: ctx, cancel: cancel, done: make(chan struct{})}
+	a.start(t)
+	return t.id
+}
+
 // checkInNote is the owner's side of a check-in they started by tapping it.
 const checkInNote = "(The owner tapped your evening check-in, \"How did today go?\")"
 

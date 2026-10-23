@@ -488,3 +488,298 @@
   color: var(--fg-muted);
   font-size: 0.875rem;
 }
+
+/* --- review card ---------------------------------------------------------------------- */
+
+/* Her work reviewed by a second model: a card in the transcript, quieter than a reply but more
+   formal than a step list. The left edge carries the verdict's colour. */
+.review {
+  --tone: var(--fg-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--card-border);
+  border-left: 3px solid var(--tone);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+}
+
+.review[data-verdict="looks_good"] {
+  --tone: var(--ok);
+}
+
+.review[data-verdict="needs_changes"] {
+  --tone: var(--accent);
+}
+
+.review[data-verdict="blocked"],
+.review[data-status="failed"] {
+  --tone: var(--danger);
+}
+
+.reviewHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+}
+
+.reviewWho {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--space-2);
+  min-width: 0;
+  margin-right: auto;
+}
+
+.reviewTitle {
+  color: var(--fg);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+}
+
+.reviewModel {
+  color: var(--fg-subtle);
+  font: var(--text-xs) / 1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.reviewRound {
+  padding: 0 8px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-pill);
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  line-height: 20px;
+}
+
+.verdict {
+  padding: 0 10px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-strong);
+  color: var(--fg);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  line-height: 22px;
+  white-space: nowrap;
+}
+
+.verdict[data-verdict="looks_good"] {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.verdict[data-verdict="needs_changes"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.verdict[data-verdict="blocked"] {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.reviewLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+}
+
+.reviewSummary {
+  margin: 0;
+  color: var(--fg);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.reviewError {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  color: var(--fg);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.reviewMeta {
+  margin: 0;
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+}
+
+.findings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: var(--space-1) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.finding {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--field-bg);
+}
+
+.finding summary,
+.checked summary {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-height: 36px;
+  padding: 8px var(--space-3);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  list-style: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.finding summary::-webkit-details-marker,
+.checked summary::-webkit-details-marker {
+  display: none;
+}
+
+.finding summary:focus-visible,
+.checked summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.finding summary svg,
+.checked summary svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  align-self: center;
+  color: var(--fg-muted);
+  transition: rotate var(--duration) var(--ease);
+}
+
+.finding[open] summary svg,
+.checked[open] summary svg {
+  rotate: 90deg;
+}
+
+.severity {
+  flex: none;
+  min-width: 3.9em;
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.severity[data-severity="high"] {
+  color: var(--danger);
+}
+
+.severity[data-severity="medium"] {
+  color: var(--accent);
+}
+
+.findingTitle {
+  min-width: 0;
+  color: var(--fg);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.findingBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.field p {
+  margin: 0;
+  color: var(--fg);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.fieldLabel {
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+}
+
+.unverified {
+  align-self: flex-start;
+  margin: 0;
+  padding: 0 8px;
+  border: 1px dashed var(--accent-line);
+  border-radius: var(--radius-pill);
+  color: var(--accent);
+  font-size: var(--text-xs);
+  line-height: 20px;
+}
+
+.cmds {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cmds code {
+  display: block;
+  padding: 6px var(--space-2);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--fg);
+  font: 0.75rem / 1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.checked {
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+}
+
+.checked summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 var(--space-2) 0 2px;
+}
+
+.checked ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: var(--space-1) 0 var(--space-1) 7px;
+  padding: 0 0 0 var(--space-3);
+  border-left: 1px solid var(--ok);
+  list-style: none;
+}
+
+.checked li {
+  color: var(--fg-muted);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}

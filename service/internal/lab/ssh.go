@@ -24,19 +24,35 @@ type shellResult struct {
 	TimedOut bool
 }
 
+// account is who a command runs as on the lab, and with which key.
+type account struct {
+	user string
+	key  string // path of the private key
+	env  string // variables the command runs with, as VAR=value words
+}
+
+func (s *Service) hekate() account {
+	return account{user: User, key: s.keyPath(), env: "DEBIAN_FRONTEND=noninteractive"}
+}
+
 // shell runs command with bash on the lab as User. stdin may be nil (the command reads end of
 // file). The time limit holds on the lab's side (timeout(1) kills the command) and here; at most
 // maxOut bytes of output are kept, from its start and its end.
 func (s *Service) shell(ctx context.Context, command string, stdin io.Reader, limit time.Duration, maxOut int) (shellResult, error) {
+	return s.run(ctx, s.hekate(), command, stdin, limit, maxOut)
+}
+
+// run is shell as any account.
+func (s *Service) run(ctx context.Context, who account, command string, stdin io.Reader, limit time.Duration, maxOut int) (shellResult, error) {
 	if !s.Configured() {
 		return shellResult{}, errNotSetUp
 	}
-	cfg, err := s.clientConfig()
+	cfg, err := s.clientConfig(who)
 	if err != nil {
 		return shellResult{}, err
 	}
 	secs := int(limit.Round(time.Second) / time.Second)
-	remote := "DEBIAN_FRONTEND=noninteractive timeout --kill-after=5 " + strconv.Itoa(secs) + " bash -c " + quote(command)
+	remote := who.env + " timeout --kill-after=5 " + strconv.Itoa(secs) + " bash -c " + quote(command)
 	ctx, cancel := context.WithTimeout(ctx, limit+handshakeTimeout+10*time.Second)
 	defer cancel()
 
@@ -84,10 +100,10 @@ func (s *Service) shell(ctx context.Context, command string, stdin io.Reader, li
 	return res, nil
 }
 
-// clientConfig logs in with her key and accepts only the lab's own host key, written when the
-// lab was built: nothing is trusted on first use.
-func (s *Service) clientConfig() (*ssh.ClientConfig, error) {
-	keyPEM, err := readFile(s.keyPath())
+// clientConfig logs in with the account's key and accepts only the lab's own host key, written
+// when the lab was built: nothing is trusted on first use.
+func (s *Service) clientConfig(who account) (*ssh.ClientConfig, error) {
+	keyPEM, err := readFile(who.key)
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +120,7 @@ func (s *Service) clientConfig() (*ssh.ClientConfig, error) {
 		return nil, fmt.Errorf("the lab's host key: %w", err)
 	}
 	return &ssh.ClientConfig{
-		User:              User,
+		User:              who.user,
 		Auth:              []ssh.AuthMethod{ssh.PublicKeys(signer)},
 		HostKeyCallback:   ssh.FixedHostKey(hostKey),
 		HostKeyAlgorithms: []string{hostKey.Type()},

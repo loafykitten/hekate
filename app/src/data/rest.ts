@@ -22,6 +22,7 @@ import {
   asMessage,
   asReminder,
   asTask,
+  asReview,
   asThread,
   asThreadMessage,
   asThreadStep,
@@ -50,6 +51,7 @@ import {
   type Memory,
   type Message,
   type Task,
+  type Review,
   type Thread,
   type ThreadMessage,
   type ThreadModel,
@@ -386,6 +388,8 @@ export type ThreadFields = { title?: string; model?: ThreadModel; archived?: boo
 export interface ThreadPage {
   messages: ThreadMessage[]; // oldest first
   steps: ThreadStep[];
+  // Of the turns on this page, or that started them; one may show on two pages.
+  reviews: Review[];
 }
 
 export const threadsApi = {
@@ -397,6 +401,6 @@ export const threadsApi = {
   // `before` is the id of the oldest message already shown.
   messages: async (id: string, before?: string, signal?: AbortSignal): Promise<ThreadPage> => {
     const body = await request("GET", `/threads/${encodeURIComponent(id)}/messages`, { query: { before, limit: THREAD_PAGE }, signal });
-    return { messages: many(body, "messages", asThreadMessage), steps: many(body, "steps", asThreadStep) };
+    return { messages: many(body, "messages", asThreadMessage), steps: many(body, "steps", asThreadStep), reviews: many(body, "reviews", asReview) };
   },
 };

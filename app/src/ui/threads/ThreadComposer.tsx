@@ -11,12 +11,14 @@ const MAX_LINES = 6;
 interface Props {
   thread: string;
   running: boolean;
+  /** A second opinion on her work is being had: she's done, it's being checked. */
+  reviewing?: boolean;
   transcribing: boolean;
 }
 
 // The thread's message field: Enter sends, Shift+Enter starts a new line. The mic works like the
 // voice stage's talk button (tap to start, tap again to send), and P held down does the same.
-export function ThreadComposer({ thread, running, transcribing }: Props) {
+export function ThreadComposer({ thread, running, reviewing = false, transcribing }: Props) {
   const conversation = useConversation();
   const state = useConversationState();
   const live = useThreadLive(thread);
@@ -101,9 +103,11 @@ export function ThreadComposer({ thread, running, transcribing }: Props) {
       : "Opening the microphone…"
     : transcribing
       ? "Sending what you said…"
-      : running
-        ? "She's working. Send your next message when she's done, or stop her."
-        : "";
+      : reviewing
+        ? "Her work is being checked. Send your next message when that's done, or stop it."
+        : running
+          ? "She's working. Send your next message when she's done, or stop her."
+          : "";
 
   return (
     <form

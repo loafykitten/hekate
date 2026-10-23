@@ -1,3 +1,4 @@
+import { asReview, type Review } from "../data/model";
 import type { ThreadEvent, TurnEnd } from "./protocol";
 
 // What a thread's view shows of a turn happening now, built from its wrapped events. Text only:
@@ -26,13 +27,15 @@ export interface ThreadLive {
   error?: string;
   // The input the error refused, if it names one: the view can give its text back.
   failedInput?: string;
-  // Bumps when a turn ends, so the view refetches the saved transcript.
+  // Reviews of her lab work seen this session, newest state of each (by id), oldest first.
+  reviews: Review[];
+  // Bumps when a turn ends or a review ends, so the view refetches the saved transcript.
   epoch: number;
   // Speech was sent and the transcript hasn't come back yet.
   transcribing: boolean;
 }
 
-export const IDLE: ThreadLive = { epoch: 0, transcribing: false };
+export const IDLE: ThreadLive = { epoch: 0, transcribing: false, reviews: [] };
 
 // Errors that mean the service never took the input (PROTOCOL: a working thread or too many
 // running, an unknown thread, too long). Any other error is a turn that was taken and then failed:
@@ -44,6 +47,23 @@ export function refused(code: string | undefined): boolean {
 
 export function isRunning(live: ThreadLive): boolean {
   return !!live.turn && !live.turn.ended;
+}
+
+// A review of her work is under way: the thread is working and can be stopped, with no turn.
+export function reviewRunning(reviews: readonly Review[]): boolean {
+  return reviews.some((r) => r.status === "running");
+}
+
+// The reviews from the saved transcript and from live events, one per id. Live wins, unless it
+// still says running after the saved copy has ended (the end came while the app was away).
+export function mergeReviews(saved: readonly Review[], live: readonly Review[]): Review[] {
+  const byId = new Map<string, Review>();
+  for (const r of saved) byId.set(r.id, r);
+  for (const r of live) {
+    const old = byId.get(r.id);
+    if (!old || r.status !== "running" || old.status === "running") byId.set(r.id, r);
+  }
+  return [...byId.values()].sort((a, b) => a.started_at.localeCompare(b.started_at) || a.round - b.round);
 }
 
 // The step to name while she works: the tool running now, else the latest one.
@@ -95,6 +115,14 @@ export function reduceThreadEvent(state: ThreadLive, event: ThreadEvent): Thread
         failedInput: refused(event.code) ? event.input_id : undefined,
         transcribing: false,
       };
+    case "review": {
+      const review = asReview(event.review);
+      if (!review) return state;
+      const at = state.reviews.findIndex((r) => r.id === review.id);
+      const reviews = at < 0 ? [...state.reviews, review] : state.reviews.map((r, i) => (i === at ? review : r));
+      // An ended review changes the thread (running, her follow-up turn): refetch it.
+      return { ...state, reviews, epoch: review.status === "running" ? state.epoch : state.epoch + 1 };
+    }
     case "card":
       return state; // cards belong to the voice stage; a thread's reply is its text
   }
@@ -148,6 +176,7 @@ export class ThreadLiveStore {
 
 // The list shows a thread as running from what this device has seen of it, else from the server.
 export function threadRunning(serverRunning: boolean, live: ThreadLive): boolean {
+  if (reviewRunning(live.reviews)) return true;
   return live.turn ? !live.turn.ended : serverRunning;
 }
 
@@ -156,4 +185,32 @@ export function threadRunning(serverRunning: boolean, live: ThreadLive): boolean
 export function historyHolds(messages: readonly { role: string; turn_id: string }[], turn: LiveTurn): boolean {
   if (!turn.ended) return false;
   return messages.some((m) => m.turn_id === turn.id && (m.role === "assistant" || !turn.text.trim()));
+}
+
+// Where each review stands in the transcript. A review follows the last saved message of the turn
+// it reviewed (her reply). If that turn isn't on screen, it stands before the first message of the follow-up
+// turn (which has no owner message: the card is where it would be). Else it is `loose`: the
+// reviewed turn, or the follow-up, is still only live, so the view puts it beside the live turn.
+// Each review lands in exactly one place.
+export interface ReviewPlacement {
+  after: Map<string, Review[]>; // message id -> reviews that follow it
+  before: Map<string, Review[]>; // message id -> reviews that precede it
+  loose: Review[];
+}
+
+export function placeReviews(messages: readonly { id: string; role: string; turn_id: string }[], reviews: readonly Review[]): ReviewPlacement {
+  const placement: ReviewPlacement = { after: new Map(), before: new Map(), loose: [] };
+  const push = (map: Map<string, Review[]>, id: string, r: Review) => map.set(id, [...(map.get(id) ?? []), r]);
+  for (const r of reviews) {
+    // Her reply; or, for a turn that saved none, its last message unless that ends the transcript
+    // (then her reply is likely still being written, live).
+    const reply = messages.findLast((m) => m.turn_id === r.turn_id && m.role === "assistant");
+    const last = messages.findLastIndex((m) => m.turn_id === r.turn_id);
+    const reviewed = reply ?? (last >= 0 && last < messages.length - 1 ? messages[last] : undefined);
+    const followup = r.followup_turn_id ? messages.find((m) => m.turn_id === r.followup_turn_id) : undefined;
+    if (reviewed) push(placement.after, reviewed.id, r);
+    else if (followup) push(placement.before, followup.id, r);
+    else placement.loose.push(r);
+  }
+  return placement;
 }

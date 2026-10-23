@@ -90,15 +90,19 @@ created=1
 qemu-img convert -O qcow2 "$work/debian.qcow2" "$DISK"
 qemu-img resize -q "$DISK" "$SIZE"
 
-# Hekate's key to the lab (kept across rebuilds) and a fresh host key for the lab, which Hekate
-# pins instead of trusting on first use.
+# Hekate's key to the lab and the reviewer's (both kept across rebuilds), and a fresh host key for
+# the lab, which Hekate pins instead of trusting on first use.
 if [[ ! -f "$ssh_dir/id_ed25519" ]]; then
   ssh-keygen -q -t ed25519 -N "" -C hekate -f "$ssh_dir/id_ed25519"
 fi
+if [[ ! -f "$ssh_dir/reviewer_ed25519" ]]; then
+  ssh-keygen -q -t ed25519 -N "" -C reviewer -f "$ssh_dir/reviewer_ed25519"
+fi
 ssh-keygen -q -t ed25519 -N "" -C hekate-lab -f "$work/host_key"
 install -m 0644 "$work/host_key.pub" "$ssh_dir/host_key.pub"
-chown "$svc" "$ssh_dir/id_ed25519" "$ssh_dir/id_ed25519.pub" "$ssh_dir/host_key.pub"
-chmod 0600 "$ssh_dir/id_ed25519"
+chown "$svc" "$ssh_dir/id_ed25519" "$ssh_dir/id_ed25519.pub" "$ssh_dir/reviewer_ed25519" "$ssh_dir/reviewer_ed25519.pub" \
+  "$ssh_dir/host_key.pub"
+chmod 0600 "$ssh_dir/id_ed25519" "$ssh_dir/reviewer_ed25519"
 
 cat "$ssh_dir/id_ed25519.pub" >"$work/authorized_keys"
 [[ -n "$owner_key" ]] && cat "$owner_key" >>"$work/authorized_keys"
@@ -143,6 +147,9 @@ EOF
   file /etc/systemd/journald.conf.d/hekate-lab.conf 0644 vm/journald.conf
   file /usr/local/sbin/lab-audit 0755 vm/lab-audit
   file /usr/local/lib/hekate-lab/setup.sh 0755 vm/setup.sh
+  file /usr/local/lib/hekate-lab/reviewer-setup.sh 0755 vm/reviewer-setup.sh
+  file /usr/local/lib/hekate-lab/lab-docker-ro 0755 vm/lab-docker-ro
+  file /etc/hekate-lab/reviewer.pub 0644 "$ssh_dir/reviewer_ed25519.pub"
   printf 'runcmd:\n  - [/usr/local/lib/hekate-lab/setup.sh]\n'
 } >"$work/user-data"
 

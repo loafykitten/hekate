@@ -363,6 +363,53 @@ the system. Setup: `deploy/lab/README.md`. Service: `service/internal/lab`.
   - The VM's report can be forged by whoever owns the VM. The verdict is computed in Go from it and
     from what the host counts, never by the model, and the VM's text reaches her marked untrusted.
 
+### Reviewing her lab work (agreed 2026-10-23)
+
+GLM 5.3 says "done, it runs on :8080" more readily than the lab bears out, and a review by a model
+from another family catches what she misses. So a second model checks her lab work in threads,
+against the VM itself rather than her account of it. Service: `service/internal/review`, started
+by `service/internal/threads`. Contract: `PROTOCOL.md` (Threads, reviews).
+
+- **When:** on its own, after a thread turn that changed the lab finishes (`done`): it wrote a file
+  there, or ran a `lab_shell` command that isn't read-only by `lab.ReadOnly` (a fixed list of
+  reading commands; anything else counts as a change, so a doubtful case gets reviewed). Quick
+  looks don't. While a review runs the thread counts as working: new input waits, and stop
+  cancels the review.
+- **Who:** DeepSeek V4.1 Flash at max effort (`HEKATE_MODEL_REVIEW`). Picked on 2026-10-23 from
+  public benchmarks and a live trial on a real thread (a VPN-gated download stack), two runs each
+  against MiMo V2.6 Pro: DeepSeek found more of the real problems (a gluetun restart orphaning its
+  clients, bind-mount folders Docker would create as root) with fewer wrong fixes, at about 1.5 Wh
+  a review against MiMo's 5–8. Kimi K3 was ruled out on published precision. GLM is the strongest
+  open reviewer but shares her blind spots.
+- **What it sees:** the owner's messages in the thread, her replies, and the reviewed turn's tool
+  calls (commands and file paths, not their output or her reasoning), the lab's rules, and how the
+  lab is reached (only from the owner's tailnet devices). A second round also gets the first
+  round's findings. It checks every claim it can in the VM with `lab_inspect`: up to 40 read-only
+  commands of up to 60 s, numbered, run as the VM user `reviewer`.
+- **The boundary is the VM user,** not the prompt: `reviewer` has no sudo, isn't in the docker
+  group, and reads the journal through `systemd-journal`. Docker reads go through
+  `/usr/local/sbin/lab-docker-ro`, the only root command its sudoers entry allows besides listing
+  the firewall: `ps`, `inspect`, `logs` (not followed), `compose config/ps` for stacks under
+  `/opt/stacks`, `manifest inspect` and the like, nothing that changes state. `lab.ReadOnly` checks
+  each command in Go first, to refuse early with a reason. Its key is `lab/ssh/reviewer_ed25519`;
+  the VM allows it as a second SSH user, and the nightly check counts it as a known key. Renamon is
+  root on the VM and could tamper with this account; the review checks a careless model, not a
+  hostile one.
+- **Its report** is JSON: a verdict, a two-sentence summary, findings (severity, what she claimed,
+  the evidence, the fix) and what it checked and found true. Every finding cites the commands that
+  show it, and the service drops a finding that cites a command the reviewer never ran; one that
+  rests on knowledge it couldn't check in the VM is kept, marked unverified. The report is read
+  leniently (prose around it, a stray brace), and asked for once more if it can't be.
+- **What happens next:** the review shows in the thread as a card the owner reads as written, not
+  through her. With findings, she gets them as the start of a new turn (her prompt says: fix each
+  one, or say with evidence why it doesn't apply, then tell the owner what changed), and the card
+  stands where the owner's message would. That turn is reviewed again if it changed the lab; a
+  second round's findings go to her the same way but end the chain. No findings: just the card. A
+  failed review (model or lab unreachable, no readable report) says so on the card and stops there.
+- **Set up:** `deploy/lab/add-reviewer.sh` on the homelab adds the account to a running lab through
+  the guest agent; `build-vm.sh` sets it up in a new one. Without the key, reviews are off and
+  nothing pretends otherwise.
+
 ### M5 as built (2026-10-20)
 
 - **Viseme lip sync**: the service turns the voice's per-character timing into timed mouth shapes

@@ -25,6 +25,7 @@ import (
 	"github.com/loafykitten/hekate/service/internal/llm"
 	"github.com/loafykitten/hekate/service/internal/proto"
 	"github.com/loafykitten/hekate/service/internal/push"
+	"github.com/loafykitten/hekate/service/internal/review"
 	"github.com/loafykitten/hekate/service/internal/server"
 	"github.com/loafykitten/hekate/service/internal/store"
 )
@@ -68,6 +69,7 @@ type Thread struct {
 	ModelName string `json:"model_name"`
 	Origin    string `json:"origin"`
 	Running   bool   `json:"running"`
+	Reviewing bool   `json:"reviewing"`
 	Archived  bool   `json:"archived"`
 	Preview   string `json:"preview"`
 	CreatedAt string `json:"created_at"`
@@ -91,9 +93,11 @@ type Options struct {
 	// System builds a thread's system prompt from the owner's name.
 	System func(tamer string) string
 	// Hub carries the wrapped events to every client.
-	Hub      agent.Hub
-	Events   proto.Events
-	Push     Pusher // nil: in-app notifications only
+	Hub    agent.Hub
+	Events proto.Events
+	Push   Pusher // nil: in-app notifications only
+	// Reviewer reviews her lab work after a turn that changed the lab; nil: no reviews.
+	Reviewer *review.Reviewer
 	Tamer    string
 	Location *time.Location
 	Logger   *slog.Logger
@@ -118,6 +122,8 @@ type Service struct {
 
 	mu    sync.Mutex // guards convs, and makes "may this thread start?" and starting it one step
 	convs map[string]*conv
+
+	reviewsWG sync.WaitGroup // reviews in progress
 }
 
 // New builds the service. Call Start before use.
@@ -163,6 +169,11 @@ func (s *Service) Start(ctx context.Context) error {
 			return fmt.Errorf("threads start: %w", err)
 		}
 	}
+	if s.opts.Reviewer != nil {
+		if err := s.opts.Reviewer.AbortRunning(ctx); err != nil {
+			return fmt.Errorf("threads start: %w", err)
+		}
+	}
 	s.baseCtx = ctx
 	return nil
 }
@@ -177,7 +188,19 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	s.mu.Unlock()
 	var errs []error
 	for _, c := range convs {
+		c.mu.Lock()
+		if c.review != nil {
+			c.review.cancel(errShutdown)
+		}
+		c.mu.Unlock()
 		errs = append(errs, c.ag.Shutdown(ctx))
+	}
+	done := make(chan struct{})
+	go func() { s.reviewsWG.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		errs = append(errs, fmt.Errorf("reviews still running: %w", ctx.Err()))
 	}
 	return errors.Join(errs...)
 }
@@ -232,7 +255,7 @@ func (s *Service) scan(row interface{ Scan(...any) error }) (Thread, error) {
 	}
 	t.ModelName = s.modelFor(t.Model).Name
 	t.CreatedAt, t.UpdatedAt = s.display(created), s.display(updated)
-	t.Running = s.running(t.ID)
+	t.Running, t.Reviewing = s.running(t.ID)
 	return t, nil
 }
 
@@ -347,18 +370,24 @@ func (s *Service) Update(ctx context.Context, id string, p Patch) (Thread, error
 		}
 		if p.Archived != nil && *p.Archived {
 			c.ag.Stop()
+			c.stopReview()
 		}
 	}
 	s.events.Invalidate("threads")
 	return s.Get(ctx, id)
 }
 
-// running reports whether a thread's turn is in progress.
-func (s *Service) running(id string) bool {
+// running reports whether a thread is working: a turn, or a review of its work, in progress.
+// reviewing is the review alone.
+func (s *Service) running(id string) (running, reviewing bool) {
 	s.mu.Lock()
 	c := s.convs[id]
 	s.mu.Unlock()
-	return c != nil && c.ag.Busy()
+	if c == nil {
+		return false, false
+	}
+	reviewing = c.reviewing()
+	return reviewing || c.ag.Busy(), reviewing
 }
 
 // Input returns a thread's conversation for input; archived threads take none.
@@ -413,6 +442,7 @@ type conv struct {
 
 	mu     sync.Mutex
 	starts map[string]turnInfo // running turns, by id
+	review *reviewing          // a review of its work in progress
 }
 
 // turnInfo is what's needed when a turn ends.
@@ -436,6 +466,7 @@ func (c *conv) Say(origin, inputID, text string, _ bool) {
 // What a thread says when it can't take input now.
 const (
 	stillWorking = "I'm still working on your last message. Stop me first, or wait for me to finish."
+	inReview     = "My last piece of work is still being reviewed. Stop the review, or wait for it to finish."
 	tooMany      = "Three threads are already working. Let one finish first."
 )
 
@@ -447,9 +478,12 @@ func (c *conv) say(origin, inputID, text string) string {
 	if c.ag.Busy() {
 		return stillWorking
 	}
+	if c.reviewing() {
+		return inReview
+	}
 	running := 0
 	for _, other := range s.convs {
-		if other.ag.Busy() {
+		if other.ag.Busy() || other.reviewing() {
 			running++
 		}
 	}
@@ -482,9 +516,12 @@ func (s *Service) nameFromFirst(id, text string) {
 }
 
 // Interrupt implements server.Input: it stops the running turn, keeping what
-// she wrote. Nothing in a thread is "heard", so heard_seq is ignored, and a
-// finished reply is never trimmed.
-func (c *conv) Interrupt(string, int) { c.ag.Stop() }
+// she wrote, or the review of her work. Nothing in a thread is "heard", so
+// heard_seq is ignored, and a finished reply is never trimmed.
+func (c *conv) Interrupt(string, int) {
+	c.ag.Stop()
+	c.stopReview()
+}
 
 // Hush implements server.Input. A thread has no voice to stop, and starting to
 // talk in one doesn't end its work.
@@ -509,7 +546,8 @@ func (h threadHub) Broadcast(msg any) {
 		h.c.mu.Unlock()
 		text := m.Text
 		h.c.s.touched(h.c.id, &text)
-		if ok {
+		// A review that follows is part of the work: the owner hears when it ends instead.
+		if !h.c.maybeReview(m, info) && ok {
 			h.c.s.ended(h.c.id, info, m)
 		}
 	}
@@ -535,7 +573,8 @@ func (s *Service) touched(id string, reply *string) {
 // ended tells the owner a turn finished when they likely aren't watching: one
 // Renamon started from the main conversation, or one that ran a while.
 func (s *Service) ended(id string, info turnInfo, m proto.TurnEnd) {
-	if m.Status == proto.StatusInterrupted || (info.origin != OriginRenamon && s.now().Sub(info.at) < notifyAfter) {
+	if m.Status == proto.StatusInterrupted ||
+		(info.origin != OriginRenamon && info.origin != proto.OriginReview && s.now().Sub(info.at) < notifyAfter) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(s.baseCtx), 30*time.Second)

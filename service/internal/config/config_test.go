@@ -105,8 +105,10 @@ func TestModelAndVoiceDefaults(t *testing.T) {
 		"deep":       {"glm-5.3", "high"},
 		"background": {"glm-5.3-flex", "high"},
 		"bulk":       {"glm-5.3-flash-flex", "low"},
+		"review":     {"deepseek-v4.1-flash", "max"},
 	}
-	got := map[string]Model{"chat": cfg.ModelChat, "deep": cfg.ModelDeep, "background": cfg.ModelBackground, "bulk": cfg.ModelBulk}
+	got := map[string]Model{"chat": cfg.ModelChat, "deep": cfg.ModelDeep, "background": cfg.ModelBackground, "bulk": cfg.ModelBulk,
+		"review": cfg.ModelReview}
 	for k, w := range want {
 		if got[k] != w {
 			t.Errorf("model %s = %+v, want %+v", k, got[k], w)

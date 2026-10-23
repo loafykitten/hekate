@@ -25,8 +25,9 @@ const (
 
 // SystemPrompt builds a thread's system prompt: who she is, then how she
 // writes and works in a thread, then her lab when it's set up (lab is the name
-// the owner's devices reach it by; empty when there's no lab).
-func SystemPrompt(lab string) func(tamer string) string {
+// the owner's devices reach it by; empty when there's no lab), and how reviews
+// of her work there reach her while reviews reports they run (nil: never).
+func SystemPrompt(lab string, reviews func() bool) func(tamer string) string {
 	return func(tamer string) string {
 		parts := []string{
 			persona.Section(persona.Renamon, "Who you are"),
@@ -34,7 +35,10 @@ func SystemPrompt(lab string) func(tamer string) string {
 			strings.TrimSpace(persona.Thread),
 		}
 		if lab != "" {
-			parts = append(parts, strings.TrimSpace(persona.ThreadLab))
+			parts = append(parts, persona.Section(persona.ThreadLab, "Your lab"))
+			if reviews != nil && reviews() {
+				parts = append(parts, persona.Section(persona.ThreadLab, "Reviews of your lab work"))
+			}
 		}
 		return strings.NewReplacer("{{tamer}}", tamer, "{{lab}}", lab, "{{gestures}}", "").Replace(strings.Join(parts, "\n\n"))
 	}
@@ -216,7 +220,7 @@ func (s *Service) stopTool() agent.Tool {
 			if err != nil {
 				return agent.Result{}, err
 			}
-			c.ag.Stop()
+			c.Interrupt("", -1) // its turn, or the review of its work
 			return agent.Result{Content: fmt.Sprintf("Stopped thread %q.", t.Title)}, nil
 		},
 	}

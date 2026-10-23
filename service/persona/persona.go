@@ -23,8 +23,9 @@ var Rules string
 //go:embed thread.md
 var Thread string
 
-// ThreadLab is her lab, for threads when the lab is set up. It holds a {{lab}}
-// placeholder: the name the owner's devices reach it by.
+// ThreadLab is her lab, for threads when the lab is set up: "Your lab", and
+// "Reviews of your lab work" while those run. It holds a {{lab}} placeholder:
+// the name the owner's devices reach it by.
 //
 //go:embed thread_lab.md
 var ThreadLab string

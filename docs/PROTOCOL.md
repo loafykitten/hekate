@@ -581,7 +581,8 @@ read by the nightly reflection.
   "model": "deep",                  // "deep" (GLM 5.3, the default) | "chat" (GLM 5.3 Flash)
   "model_name": "glm-5.3",          // what "model" means on this server
   "origin": "owner",                // "owner": opened in the app | "renamon": she opened it for the owner
-  "running": false,                 // a turn is in progress
+  "running": false,                 // a turn or a review of her work is in progress
+  "reviewing": false,               // a review of her lab work is in progress (running is true too)
   "archived": false,
   "preview": "qBittorrent runs at http://hekate-lab:8080 …",  // her latest reply, ≤ 160 characters, "" before one
   "created_at": "…",
@@ -595,7 +596,7 @@ read by the nightly reflection.
 | `POST /api/threads` | `{ title?, model? }` | `Thread` (201). Without a title it's "New thread" until the first message names it (its first words, up to 60 characters). The first message is a `say` with `thread` on the socket. |
 | `GET /api/threads/{id}` | | `Thread` |
 | `PATCH /api/threads/{id}` | `{ title?, model?, archived? }` | `Thread`. Title 1–80 characters. Archiving stops a running turn. |
-| `GET /api/threads/{id}/messages?before=<message id>&limit=<n ≤ 100>` | | `{ messages: [{ id, role, text, turn_id, created_at }], steps: [{ turn_id, tool, label, status: "ok" \| "error", summary, created_at }] }`: messages as in `/api/conversation/messages` (newest last), and the tool steps of the turns those messages belong to, oldest first. `summary` is the start of the step's result (≤ 200 characters). |
+| `GET /api/threads/{id}/messages?before=<message id>&limit=<n ≤ 100>` | | `{ messages: [{ id, role, text, turn_id, created_at }], steps: [{ turn_id, tool, label, status: "ok" \| "error", summary, created_at }], reviews: [Review] }`: messages as in `/api/conversation/messages` (newest last), the tool steps of the turns those messages belong to, oldest first, and the reviews of those turns or that started them (`turn_id` or `followup_turn_id` on the page), oldest first. `summary` is the start of the step's result (≤ 200 characters). |
 
 Renamon reaches threads from the main conversation too: `thread_start` opens one with a first
 message and starts it working (e.g. "set up qBittorrent in the lab"), `thread_send` passes the
@@ -604,8 +605,49 @@ lists the threads active in the last three days ("Your threads"). When a turn in
 started or messaged ends, or any thread turn ends after running a minute or more, the owner gets a
 `notify` (kind `thread`, `id` the thread id) and a push that opens `/?thread=<id>`.
 
-Thread changes (created, renamed, archived, started or finished a turn) broadcast `invalidate`
-with `threads`.
+Thread changes (created, renamed, archived, started or finished a turn or a review) broadcast
+`invalidate` with `threads`.
+
+#### Reviews of her lab work
+
+When a thread turn that changed her lab finishes, a second model (from another family) reviews the
+work against the lab itself (see PLAN.md, "Reviewing her lab work"). The thread is `running` (and
+`reviewing`) meanwhile: a `say` to it gets `busy`, and `interrupt` stops the review. Each change of
+a review is a `thread_event` whose `event` is `{ type: "review", review: Review }`: once when it
+starts (`running`) and once when it ends.
+
+```jsonc
+// Review
+{
+  "id": "rv_5d2e9a10",
+  "thread_id": "th_3f9c2a71",
+  "turn_id": "t_…",                  // the turn whose work it reviews
+  "round": 1,                       // 1, or 2 for the review of her fixes (the last)
+  "status": "done",                 // "running" | "done" | "failed" | "stopped"
+  "model": "deepseek-v4.1-flash",
+  "verdict": "needs_changes",       // "looks_good" | "needs_changes" | "blocked"; "" until done
+  "summary": "The stack's design is sound, but …",   // two sentences for the owner; "" until done
+  "findings": [{
+    "severity": "high",             // "high" | "medium" | "low"
+    "title": "JDownloader's web UI has no login",
+    "claim": "…",                   // what she said or assumed; may be ""
+    "evidence": "…",                // what the lab showed, quoted, or what it knows but couldn't check
+    "fix": "…",
+    "unverified": false,            // true: rests on knowledge, not on a command it ran
+    "commands": ["cat /opt/stacks/downloads/compose.yaml"]  // the commands it cites
+  }],
+  "verified": ["All three image tags exist …"],              // claims it checked and found true
+  "commands": 23,                   // read-only commands it ran in the lab
+  "error": "",                      // why a failed review failed
+  "followup_turn_id": "t_…",        // the turn that handed her the findings; "" if none (yet)
+  "started_at": "…",
+  "finished_at": "…"                // "" while running
+}
+```
+
+With findings (a review that is `done` and has any), she gets them as the start of a new turn:
+that turn has no message from the owner (its `turn_start` `user_text` is "" and no user message is
+stored), so the app shows the review card in its place. Its `turn_start` `origin` is `"review"`.
 
 ## Cards
 

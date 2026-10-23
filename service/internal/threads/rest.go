@@ -107,7 +107,12 @@ func (s *Service) handleMessages(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, s.log, r, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"messages": msgs, "steps": steps})
+	reviews, err := s.reviews(r.Context(), id, msgs)
+	if err != nil {
+		httpx.Fail(w, s.log, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"messages": msgs, "steps": steps, "reviews": reviews})
 }
 
 // Messages returns a page of a thread's visible history, newest last, and the
@@ -159,4 +164,24 @@ func (s *Service) Messages(ctx context.Context, id string, before int64, limit i
 		return nil, nil, fmt.Errorf("thread steps: %w", err)
 	}
 	return msgs, steps, nil
+}
+
+// reviews returns the reviews of the turns on a page of messages, or that started them.
+func (s *Service) reviews(ctx context.Context, id string, msgs []proto.HistoryMessage) ([]proto.Review, error) {
+	if s.opts.Reviewer == nil {
+		return []proto.Review{}, nil
+	}
+	var turns []string
+	seen := map[string]bool{}
+	for _, m := range msgs {
+		if !seen[m.TurnID] {
+			seen[m.TurnID] = true
+			turns = append(turns, m.TurnID)
+		}
+	}
+	out, err := s.opts.Reviewer.ForTurns(ctx, id, turns)
+	if err != nil {
+		return nil, fmt.Errorf("thread reviews: %w", err)
+	}
+	return out, nil
 }

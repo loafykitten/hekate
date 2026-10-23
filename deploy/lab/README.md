@@ -27,16 +27,22 @@ What keeps it contained:
   being exploited; signs of a break-in inside the VM (`vm/lab-audit`) and as the host sees it
   (firewall counters, CPU). A strong sign cuts the VM's network by itself and alerts you.
 
+Her work there is checked by a second model (`service/internal/review`): after a thread turn
+that changed the lab, it logs in as `reviewer`, an account that can only look, and reviews what
+she did against what the lab shows. That account has no sudo beyond `vm/lab-docker-ro` (read-only
+docker commands) and listing the firewall, and isn't in the docker group.
+
 ## Files
 
 | File | What |
 |---|---|
 | `install.sh` | One-time host setup (libvirt, network, firewall, labctl, the stack's `lab/` dirs) |
 | `build-vm.sh` | Builds the VM from Debian's cloud image; `--replace` rebuilds it from scratch |
+| `add-reviewer.sh` | Adds the reviewer account to a lab built before reviews, through the guest agent |
 | `labctl.sh` | `hekate-labctl`: snapshots, rollback, cut off/reconnect, stats; answers Hekate's requests |
 | `firewall.nft`, `network.xml` | The VM's network and what it may reach |
 | `systemd/` | The firewall, the VM (started only after its firewall), and the path unit that wakes labctl |
-| `vm/` | What the VM gets at first boot: setup, `lab-audit`, sshd, nftables, upgrades, log limits |
+| `vm/` | What the VM gets at first boot: setup, `lab-audit`, the reviewer's account (`reviewer-setup.sh`, `lab-docker-ro`), sshd, nftables, upgrades, log limits |
 
 ## Setting it up
 
@@ -65,6 +71,10 @@ On the homelab, in a checkout of this repo (`git clone https://github.com/<owner
 
 After pulling changes to these files, run `install.sh` again (it's idempotent). Changes under
 `vm/` reach only a VM built after them: rebuild, or apply them in the VM by hand.
+
+A lab built before reviews of her work gets the reviewer account with `./add-reviewer.sh <stack
+dir>`, run as yourself (no sudo): it makes the reviewer's key in `<stack>/lab/ssh` and sets up the
+account in the running VM. Reviews start on their own once the key is there.
 
 ## By hand
 

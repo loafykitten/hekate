@@ -125,7 +125,13 @@ export interface ApprovalChanged {
 
 // What happens in a thread, wrapped so it never mixes with the main conversation's turn. The inner
 // event is shaped like the main one of the same type; thread segments carry no audio.
-export type ThreadEvent = TurnStart | Activity | Segment | Card | TurnEnd | ServerError;
+export type ThreadEvent = TurnStart | Activity | Segment | Card | TurnEnd | ServerError | ReviewEvent;
+
+// A review of her lab work started or changed. Unvalidated: the reducer parses it with asReview.
+export interface ReviewEvent {
+  type: "review";
+  review: unknown;
+}
 export interface ThreadEventMessage {
   type: "thread_event";
   thread: string;

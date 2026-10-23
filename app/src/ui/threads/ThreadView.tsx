@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { currentStep, historyHolds, isRunning } from "../../conversation/threadLive";
+import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { currentStep, historyHolds, isRunning, mergeReviews, placeReviews, reviewRunning } from "../../conversation/threadLive";
 import { useThread, useThreadMessages, usePatchThread } from "../../data/hooks";
-import type { Thread, ThreadModel, ThreadStep } from "../../data/model";
+import type { Review, Thread, ThreadModel, ThreadStep } from "../../data/model";
 import { ApiError } from "../../data/rest";
 import { useConversation, useThreadLive } from "../ConversationContext";
 import { ArchiveIcon, BackIcon, EditIcon } from "../icons";
@@ -10,6 +10,7 @@ import { useMenuActive } from "../menu/MenuContext";
 import { setActiveThread } from "../menu/threadTarget";
 import { Markdown } from "./Markdown";
 import { MODEL_LABEL } from "./labels";
+import { ReviewCard } from "./ReviewCard";
 import { ThreadComposer } from "./ThreadComposer";
 import { ThreadSteps, type StepView } from "./ThreadSteps";
 import styles from "./threads.module.css";
@@ -61,6 +62,10 @@ export function ThreadView({ id, onBack }: { id: string; onBack: () => void }) {
   const pages = history.data?.pages;
   const messages = useMemo(() => [...(pages ?? [])].reverse().flatMap((p) => p.messages), [pages]);
   const steps = useMemo(() => (pages ?? []).flatMap((p) => p.steps), [pages]);
+  // Saved reviews (a page may repeat one) and the ones seen live, one card each.
+  const liveReviews = live.reviews;
+  const reviews = useMemo(() => mergeReviews((pages ?? []).flatMap((p) => p.reviews ?? []), liveReviews), [pages, liveReviews]);
+  const placed = useMemo(() => placeReviews(messages, reviews), [messages, reviews]);
 
   const turn = live.turn;
   // The copy that was streaming goes only once the saved transcript holds the turn; if the refetch
@@ -73,12 +78,13 @@ export function ThreadView({ id, onBack }: { id: string; onBack: () => void }) {
   const savedUser = turn && messages.some((m) => m.role === "user" && m.turn_id === turn.id);
   const savedReply = turn && messages.some((m) => m.role === "assistant" && m.turn_id === turn.id);
 
-  const running = isRunning(live) || (!turn && !!thread.data?.running);
+  const reviewing = reviewRunning(reviews);
+  const running = isRunning(live) || reviewing || (!turn && !!thread.data?.running);
   const lastText = turn?.text;
   useEffect(() => {
     const list = listRef.current;
     if (list && stickToBottom.current) list.scrollTop = list.scrollHeight;
-  }, [messages.length, lastText, turn?.steps.length, running, live.error]);
+  }, [messages.length, lastText, turn?.steps.length, running, live.error, reviews]);
 
   if (thread.isError && !thread.data) {
     const gone = thread.error instanceof ApiError && thread.error.status === 404;
@@ -100,6 +106,8 @@ export function ThreadView({ id, onBack }: { id: string; onBack: () => void }) {
     );
   }
   const t = thread.data;
+  const looseBefore = placed.loose.filter((r) => turn && r.followup_turn_id === turn.id);
+  const looseAfter = placed.loose.filter((r) => !looseBefore.includes(r));
   const shownSteps = new Set<string>();
 
   return (
@@ -139,24 +147,36 @@ export function ThreadView({ id, onBack }: { id: string; onBack: () => void }) {
           </button>
         )}
         {messages.map((m) => {
+          // A review stands after the reply it checked, or before the reply to its findings.
+          const cards = (list: Review[] | undefined) => list?.map((r) => <ReviewCard key={r.id} review={r} />);
+          let body;
           if (m.role === "user") {
-            return (
-              <p key={m.id} className={styles.mine}>
-                {m.text}
-              </p>
+            // A turn started by a review has no owner message; never an empty bubble.
+            body = m.text ? <p className={styles.mine}>{m.text}</p> : null;
+          } else {
+            // A turn's steps sit under its first reply.
+            const own = shownSteps.has(m.turn_id) ? [] : savedSteps(steps, m.turn_id);
+            shownSteps.add(m.turn_id);
+            body = (
+              <div className={styles.hers}>
+                <Markdown text={m.text} />
+                <ThreadSteps steps={own} />
+              </div>
             );
           }
-          // A turn's steps sit under its first reply.
-          const own = shownSteps.has(m.turn_id) ? [] : savedSteps(steps, m.turn_id);
-          shownSteps.add(m.turn_id);
           return (
-            <div key={m.id} className={styles.hers}>
-              <Markdown text={m.text} />
-              <ThreadSteps steps={own} />
-            </div>
+            <Fragment key={m.id}>
+              {cards(placed.before.get(m.id))}
+              {body}
+              {cards(placed.after.get(m.id))}
+            </Fragment>
           );
         })}
         {turn && !savedUser && turn.userText && <p className={styles.mine}>{turn.userText}</p>}
+        {/* Reviews whose turn isn't saved yet come before the reply being written to their findings, else after. */}
+        {looseBefore.map((r) => (
+          <ReviewCard key={r.id} review={r} />
+        ))}
         {turn && !savedReply && (turn.text || !turn.ended || turn.steps.length > 0) && (
           <div className={styles.hers} data-live={!turn.ended || undefined}>
             {turn.text && <Markdown text={turn.text} />}
@@ -164,7 +184,10 @@ export function ThreadView({ id, onBack }: { id: string; onBack: () => void }) {
             {!turn.ended && <Working label={currentStep(turn)?.label} />}
           </div>
         )}
-        {!turn && running && (
+        {looseAfter.map((r) => (
+          <ReviewCard key={r.id} review={r} />
+        ))}
+        {!turn && running && !reviewing && (
           <div className={styles.hers} data-live>
             <Working />
           </div>
@@ -189,7 +212,7 @@ export function ThreadView({ id, onBack }: { id: string; onBack: () => void }) {
           </Button>
         </div>
       ) : (
-        <ThreadComposer thread={id} running={running} transcribing={live.transcribing} />
+        <ThreadComposer thread={id} running={running} reviewing={reviewing && !isRunning(live)} transcribing={live.transcribing} />
       )}
     </section>
   );

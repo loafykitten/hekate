@@ -880,6 +880,8 @@ export interface Thread {
   model: ThreadModel;
   origin: "owner" | "renamon";
   running: boolean;
+  // A second model is reviewing her lab work (running is true too).
+  reviewing: boolean;
   archived: boolean;
   preview: string;
   created_at: string;
@@ -915,6 +917,7 @@ export function asThread(v: unknown): Thread | undefined {
     model: v.model === "chat" ? "chat" : "deep",
     origin: v.origin === "renamon" ? "renamon" : "owner",
     running: v.running === true,
+    reviewing: v.reviewing === true,
     archived: v.archived === true,
     preview: strOr(v.preview),
     created_at: strOr(v.created_at),
@@ -938,5 +941,80 @@ export function asThreadStep(v: unknown): ThreadStep | undefined {
     status: v.status === "error" ? "error" : "ok",
     summary: strOr(v.summary),
     created_at: strOr(v.created_at),
+  };
+}
+
+// A second model's review of her lab work (PROTOCOL: "Reviews of her lab work").
+export type ReviewStatus = "running" | "done" | "failed" | "stopped";
+export type ReviewVerdict = "looks_good" | "needs_changes" | "blocked";
+export type Severity = "high" | "medium" | "low";
+
+export interface ReviewFinding {
+  severity: Severity;
+  title: string;
+  claim: string;
+  evidence: string;
+  fix: string;
+  // Rests on what the reviewer knows, not on a command it ran.
+  unverified: boolean;
+  commands: string[];
+}
+
+export interface Review {
+  id: string;
+  thread_id: string;
+  turn_id: string;
+  round: number;
+  status: ReviewStatus;
+  model: string;
+  verdict: ReviewVerdict | "";
+  summary: string;
+  findings: ReviewFinding[];
+  verified: string[];
+  commands: number;
+  error: string;
+  // The turn that handed her the findings; "" if none (yet).
+  followup_turn_id: string;
+  started_at: string;
+  finished_at: string;
+}
+
+const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter(isStr) : []);
+
+function asFinding(v: unknown): ReviewFinding | undefined {
+  if (!isRec(v) || !isStr(v.title)) return undefined;
+  return {
+    // A severity this app doesn't know sorts and shows as the middle one.
+    severity: v.severity === "high" || v.severity === "low" ? v.severity : "medium",
+    title: v.title,
+    claim: strOr(v.claim),
+    evidence: strOr(v.evidence),
+    fix: strOr(v.fix),
+    unverified: v.unverified === true,
+    commands: strings(v.commands),
+  };
+}
+
+export function asReview(v: unknown): Review | undefined {
+  if (!isRec(v)) return undefined;
+  const id = idOf(v.id);
+  if (id === undefined) return undefined;
+  const verdict = v.verdict === "looks_good" || v.verdict === "needs_changes" || v.verdict === "blocked" ? v.verdict : "";
+  return {
+    id,
+    thread_id: strOr(v.thread_id),
+    turn_id: strOr(v.turn_id),
+    round: numOr(v.round, 1),
+    status: v.status === "done" || v.status === "failed" || v.status === "stopped" ? v.status : "running",
+    model: strOr(v.model),
+    verdict,
+    summary: strOr(v.summary),
+    findings: (Array.isArray(v.findings) ? v.findings : []).map(asFinding).filter((f): f is ReviewFinding => f !== undefined),
+    verified: strings(v.verified),
+    commands: numOr(v.commands, 0),
+    error: strOr(v.error),
+    followup_turn_id: strOr(v.followup_turn_id),
+    started_at: strOr(v.started_at),
+    finished_at: strOr(v.finished_at),
   };
 }

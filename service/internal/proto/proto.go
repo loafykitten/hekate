@@ -24,6 +24,7 @@ const (
 	TypeInvalidate   = "invalidate"
 	TypeApproval     = "approval"
 	TypeThreadEvent  = "thread_event"
+	TypeReview       = "review"
 )
 
 // Error codes the service sends.
@@ -256,3 +257,53 @@ type ThreadEvent struct {
 func NewThreadEvent(thread string, event any) ThreadEvent {
 	return ThreadEvent{TypeThreadEvent, thread, event}
 }
+
+// Review states.
+const (
+	ReviewRunning = "running"
+	ReviewDone    = "done"
+	ReviewFailed  = "failed"
+	ReviewStopped = "stopped"
+)
+
+// OriginReview is the origin of the turn that hands her a review's findings.
+const OriginReview = "review"
+
+// Review is a second model's review of her lab work in a thread (PROTOCOL.md, Threads).
+type Review struct {
+	ID             string          `json:"id"`
+	ThreadID       string          `json:"thread_id"`
+	TurnID         string          `json:"turn_id"`
+	Round          int             `json:"round"`
+	Status         string          `json:"status"`
+	Model          string          `json:"model"`
+	Verdict        string          `json:"verdict"`
+	Summary        string          `json:"summary"`
+	Findings       []ReviewFinding `json:"findings"`
+	Verified       []string        `json:"verified"`
+	Commands       int             `json:"commands"`
+	Error          string          `json:"error"`
+	FollowupTurnID string          `json:"followup_turn_id"`
+	StartedAt      string          `json:"started_at"`
+	FinishedAt     string          `json:"finished_at"`
+}
+
+// ReviewFinding is one problem a review found.
+type ReviewFinding struct {
+	Severity   string   `json:"severity"`
+	Title      string   `json:"title"`
+	Claim      string   `json:"claim"`
+	Evidence   string   `json:"evidence"`
+	Fix        string   `json:"fix"`
+	Unverified bool     `json:"unverified"`
+	Commands   []string `json:"commands"`
+}
+
+// ReviewMsg is a review starting or ending, as a thread's event.
+type ReviewMsg struct {
+	Type   string `json:"type"`
+	Review Review `json:"review"`
+}
+
+// NewReview builds a review event.
+func NewReview(r Review) ReviewMsg { return ReviewMsg{TypeReview, r} }

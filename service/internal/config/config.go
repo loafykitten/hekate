@@ -52,6 +52,7 @@ type Config struct {
 	ModelDeep         Model // conversation that needs depth (think_deeper)
 	ModelBackground   Model // reflection; not latency sensitive
 	ModelBulk         Model // many small calls, e.g. mail classification
+	ModelReview       Model // reviews her lab work; from another family than her own
 
 	// Voice. Empty ElevenLabs key means text-only replies.
 	ElevenLabsAPIKey  Secret
@@ -218,6 +219,7 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 	cfg.ModelDeep = model("HEKATE_MODEL_DEEP", "glm-5.3", "high")
 	cfg.ModelBackground = model("HEKATE_MODEL_BACKGROUND", "glm-5.3-flex", "high")
 	cfg.ModelBulk = model("HEKATE_MODEL_BULK", "glm-5.3-flash-flex", "low")
+	cfg.ModelReview = model("HEKATE_MODEL_REVIEW", "deepseek-v4.1-flash", "max")
 
 	switch v := strings.ToLower(str("HEKATE_STT", "on")); v {
 	case "on":
@@ -294,6 +296,7 @@ func (c Config) LogValue() slog.Value {
 		slog.String("model_deep", c.ModelDeep.String()),
 		slog.String("model_background", c.ModelBackground.String()),
 		slog.String("model_bulk", c.ModelBulk.String()),
+		slog.String("model_review", c.ModelReview.String()),
 		slog.Bool("tts_configured", c.ElevenLabsAPIKey != ""),
 		slog.Bool("telegram_configured", c.TelegramBotToken != ""),
 		slog.String("elevenlabs_voice_id", c.ElevenLabsVoiceID),

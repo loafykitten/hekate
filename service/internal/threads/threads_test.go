@@ -214,9 +214,11 @@ func newFixture(t *testing.T, with ...func(*Options)) *fixture {
 	return f
 }
 
+// waitFor polls cond for up to 30 seconds: a chain of turns and reviews does several database
+// writes a step, and CI runs every package at once under the race detector (10 s ran out there).
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for !cond() {
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for %s", what)

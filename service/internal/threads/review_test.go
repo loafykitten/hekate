@@ -313,9 +313,8 @@ func TestQuietThreadIsReviewed(t *testing.T) {
 	if got := reviews(t, rv, th.ID, turnIDs(t, f, th.ID)...); got[0].Round != 1 || got[0].TurnID != turnIDs(t, f, th.ID)[0] {
 		t.Errorf("quiet review %+v", got[0])
 	}
-	if n := len(f.events.notified()); n == 0 {
-		t.Error("the owner wasn't told the quiet review found nothing")
-	}
+	// The owner hears it found nothing, just after it's recorded.
+	waitFor(t, "the owner told", func() bool { return len(f.events.notified()) > 0 })
 }
 
 // A turn that only hands over (the changes came in earlier turns) starts the review.

@@ -435,6 +435,13 @@ the result back. Contract: `PROTOCOL.md` (Threads, Files). Service: `service/int
   leaves them.
 - **Reviews:** an upload isn't her work and isn't reviewed; what she does with it is, as any lab
   change. The reviewer reads the owner's messages as she did, file locations included.
+- **Images (2026-10-28):** pasting into a thread attaches the clipboard's images as files, and
+  the app shows image files inline. GLM 5.3 can't see, so `look_at_image` sends an image from the
+  lab to a vision model (`HEKATE_MODEL_VISION`, GLM 5.3 Flash by default) with her question, and
+  hands her its answer wrapped as untrusted (text in an image can be written to manipulate her).
+  Neuralwatt's hosted `nw_look` does the same inside the gateway, but it's a private preview, caps a
+  conversation at 4 images (the 5th fails every later request in that thread), uses a smaller
+  delegate model, and sees only images sent in messages, not ones in her lab.
 
 ### M5 as built (2026-10-20)
 

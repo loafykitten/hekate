@@ -34,7 +34,7 @@ const (
 	defaultMaxCalls        = 12
 	maxParallelReads       = 4
 	defaultTurnTimeout     = 90 * time.Second
-	maxReplyTokens         = 4096
+	defaultReplyTokens     = 4096
 	defaultToolResultChars = 8000
 	dbTimeout              = 5 * time.Second
 )
@@ -48,6 +48,8 @@ type Limits struct {
 	TurnTimeout time.Duration
 	// ToolResultChars cuts each tool result sent back to the model.
 	ToolResultChars int
+	// ReplyTokens caps what the model writes per round, its reasoning included.
+	ReplyTokens int
 	// Window is the history sent with each turn.
 	Window Window
 }
@@ -237,6 +239,9 @@ func New(o Options) (*Agent, error) {
 	}
 	if a.limits.ToolResultChars <= 0 {
 		a.limits.ToolResultChars = defaultToolResultChars
+	}
+	if a.limits.ReplyTokens <= 0 {
+		a.limits.ReplyTokens = defaultReplyTokens
 	}
 	if a.limits.Window == (Window{}) {
 		a.limits.Window = DefaultWindow

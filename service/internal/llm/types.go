@@ -20,6 +20,9 @@ type Message struct {
 	Content    string
 	ToolCalls  []ToolCall
 	ToolCallID string
+	// Images are data: URLs a user message shows the model, after Content. Only vision models
+	// take them.
+	Images []string
 }
 
 // ToolCall is a fully assembled function call requested by the model.
@@ -85,9 +88,19 @@ type Event struct {
 
 type wireMessage struct {
 	Role       string         `json:"role"`
-	Content    *string        `json:"content"`
+	Content    any            `json:"content"` // nil, a string, or []wirePart with images
 	ToolCalls  []wireToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string         `json:"tool_call_id,omitempty"`
+}
+
+type wirePart struct {
+	Type     string   `json:"type"`
+	Text     string   `json:"text,omitempty"`
+	ImageURL *wireURL `json:"image_url,omitempty"`
+}
+
+type wireURL struct {
+	URL string `json:"url"`
 }
 
 type wireToolCall struct {
@@ -137,9 +150,15 @@ func (r Request) wire() wireRequest {
 	for _, m := range r.Messages {
 		wm := wireMessage{Role: m.Role, ToolCallID: m.ToolCallID}
 		// An assistant turn that is only tool calls has null content.
-		if m.Content != "" || len(m.ToolCalls) == 0 {
-			c := m.Content
-			wm.Content = &c
+		switch {
+		case len(m.Images) > 0:
+			parts := []wirePart{{Type: "text", Text: m.Content}}
+			for _, url := range m.Images {
+				parts = append(parts, wirePart{Type: "image_url", ImageURL: &wireURL{URL: url}})
+			}
+			wm.Content = parts
+		case m.Content != "" || len(m.ToolCalls) == 0:
+			wm.Content = m.Content
 		}
 		for _, tc := range m.ToolCalls {
 			args := tc.Arguments

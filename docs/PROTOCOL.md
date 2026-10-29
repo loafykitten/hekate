@@ -89,8 +89,10 @@ An `interrupt` that arrives after the turn already ended (the client was still p
 - Text input ≤ 4000 characters. Push-to-talk ≤ 60 s of audio (longer is cut and transcribed).
 - One turn at a time per conversation (each thread is one), and at most three threads running at
   once.
-- Thread turns: up to 30 minutes, 40 model rounds and 80 tool calls each (the main conversation's
-  are 90 s, 6 rounds and 12 calls).
+- Thread turns: up to 30 minutes, 40 model rounds and 80 tool calls each, and up to 32,768 tokens
+  written per round, reasoning included (the main conversation's are 90 s, 6 rounds, 12 calls and
+  4,096 tokens). A round that runs out before writing anything ends the turn with `empty_reply`,
+  saying so.
 - The socket is pinged every 20 s. Clients reconnect with backoff, and on reconnect they get a
   fresh `ready` and refetch history over REST.
 
@@ -572,7 +574,7 @@ each run is recorded and kept 90 days.
 A thread is a conversation of its own for longer work: research, lab work, anything that would
 crowd the main conversation. Renamon answers in writing (markdown), as herself, with work tools
 only: web search and reading, her lab (`lab_shell` with up to 10-minute commands,
-`lab_write_file`, `lab_status`, a guarded `lab_snapshot`, `lab_share_file`) and `think_deeper`. What she knows about
+`lab_write_file`, `lab_status`, a guarded `lab_snapshot`, `lab_share_file`, `look_at_image`) and `think_deeper`. What she knows about
 the owner comes along as context; mail, money, calendar, tasks and reminders don't. Threads aren't
 read by the nightly reflection.
 
@@ -634,11 +636,15 @@ download straight out of it.
 | Method & path | Body | Returns |
 |---|---|---|
 | `POST /api/threads/{id}/files?name=<file name>` | the file's bytes (any content type); `Content-Length` required | `ThreadFile` (201), not yet sent. 413 over 2 GiB, 507 when the lab would be left with under 4 GB free, 503 without a lab, 409 for an archived thread. The name is reduced to a plain file name (no folders; control characters and `/` replaced). |
-| `GET /api/threads/{id}/files/{file}` | | The file, as an attachment download with its name and size. 410 `{ error }` when it's gone from the lab, or (a shared file) changed since she shared it. |
+| `GET /api/threads/{id}/files/{file}?inline=1` | | The file, as an attachment download with its name and size. 410 `{ error }` when it's gone from the lab, or (a shared file) changed since she shared it. With `inline=1`, a PNG, JPEG, GIF or WebP image (by its name's extension) of at most 20 MiB comes as itself to show in the page: its image type, `inline`, and cacheable by the browser (a file id never names different bytes: a changed file is refused). Other files ignore `inline`. |
 
 To send files, upload each, then `say` with their ids in `files`. Her message is the owner's words
 (`text` stays exactly what they typed; a `say` still needs words) and she reads where each file is.
 Uploads that are never sent stay in the lab until she or the owner clears them.
+
+Images are files like any other (the app attaches pasted images too). Her model can't see, so she
+looks at an image in her lab with `look_at_image`: a vision model (`HEKATE_MODEL_VISION`) answers
+her question about it in text.
 
 She shares a file with `lab_share_file`: it must be a regular file in her lab of at most 2 GiB. It
 becomes a `ThreadFile` with `direction: "out"` and the sharing turn's `turn_id`; the app shows it

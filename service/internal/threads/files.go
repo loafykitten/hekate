@@ -204,10 +204,18 @@ func (s *Service) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h := w.Header()
-	h.Set("Content-Type", "application/octet-stream")
 	h.Set("Content-Length", fmt.Sprint(f.Size))
-	h.Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": f.Name}))
-	h.Set("Cache-Control", "no-store")
+	if kind := imageExts[strings.ToLower(path.Ext(f.Name))]; r.URL.Query().Get("inline") == "1" && kind != "" && f.Size <= maxImageBytes {
+		// An image to show in the page. A file id never names other bytes (a changed file is
+		// refused above), so the browser may keep it.
+		h.Set("Content-Type", kind)
+		h.Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": f.Name}))
+		h.Set("Cache-Control", "private, max-age=31536000, immutable")
+	} else {
+		h.Set("Content-Type", "application/octet-stream")
+		h.Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": f.Name}))
+		h.Set("Cache-Control", "no-store")
+	}
 	w.WriteHeader(http.StatusOK)
 	if err := s.opts.Lab.Download(ctx, f.Path, w); err != nil && ctx.Err() == nil {
 		// The headers are gone: a short body is how the client learns it failed.
@@ -257,7 +265,11 @@ func filesNote(tamer string, fs []proto.ThreadFile) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "(%s sent %s with this message, now in your lab:", tamer, what)
 	for _, f := range fs {
-		fmt.Fprintf(&b, "\n- %s (%s)", f.Path, humanSize(f.Size))
+		fmt.Fprintf(&b, "\n- %s (%s", f.Path, humanSize(f.Size))
+		if isImage(f.Name) {
+			b.WriteString("; an image: look_at_image shows it to you")
+		}
+		b.WriteString(")")
 	}
 	b.WriteString(")")
 	return b.String()

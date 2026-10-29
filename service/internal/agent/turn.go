@@ -50,6 +50,7 @@ type turnRun struct {
 	lastUsed string
 	firstSeg time.Duration
 	settle   func(given bool) // the opener's, told how the turn ended
+	cutOff   bool             // a round hit the output cap
 }
 
 func (a *Agent) runTurn(t *turn, prev *turn) {
@@ -233,7 +234,7 @@ func (r *turnRun) llmRound(ctx context.Context, rd *roundRec, specs []llm.Tool) 
 	a := r.a
 	began := time.Now()
 	st, err := a.llm.Stream(ctx, llm.Request{
-		Model: r.model.Name, Effort: r.model.Effort, Messages: r.msgs, Tools: specs, MaxTokens: maxReplyTokens,
+		Model: r.model.Name, Effort: r.model.Effort, Messages: r.msgs, Tools: specs, MaxTokens: r.a.limits.ReplyTokens,
 	})
 	if err != nil {
 		return err //nolint:wrapcheck // classified llm.Error or context error, inspected by end
@@ -267,6 +268,9 @@ func (r *turnRun) llmRound(ctx context.Context, rd *roundRec, specs []llm.Tool) 
 			rd.calls = append(rd.calls, ev.ToolCall)
 		case llm.EventDone:
 			r.recordUsage(rd, ev.Result, time.Since(began))
+			if ev.Result != nil && ev.Result.FinishReason == "length" {
+				r.cutOff = true
+			}
 		}
 	}
 	// Text before a tool call is spoken too.
@@ -466,7 +470,11 @@ func (r *turnRun) end(ctx context.Context, loopErr error) {
 
 	switch cause := context.Cause(ctx); {
 	case loopErr == nil && cause == nil && ctx.Err() == nil:
-		if len(segs) == 0 {
+		switch {
+		case len(segs) == 0 && r.cutOff:
+			// The model spent its whole allowance thinking: nothing was said, but not for want of words.
+			status, errCode, errMsg = proto.StatusError, proto.CodeEmptyReply, "I ran out of room thinking it through before I wrote anything. Try again?"
+		case len(segs) == 0:
 			status, errCode, errMsg = proto.StatusError, proto.CodeEmptyReply, "I had nothing to say. Try asking again?"
 		}
 	case errors.Is(cause, context.DeadlineExceeded):

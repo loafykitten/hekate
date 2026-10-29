@@ -233,6 +233,7 @@ func TestRequestShape(t *testing.T) {
 			{Role: RoleUser, Content: "hi"},
 			{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "c1", Name: "f", Arguments: ""}}},
 			{Role: RoleTool, ToolCallID: "c1", Content: "result"},
+			{Role: RoleUser, Content: "what's this?", Images: []string{"data:image/png;base64,iVBO"}},
 		},
 		Tools: []Tool{{Name: "f", Description: "d", Parameters: json.RawMessage(`{"type":"object"}`)}},
 	})
@@ -261,6 +262,13 @@ func TestRequestShape(t *testing.T) {
 	}
 	if msgs[3].(map[string]any)["tool_call_id"] != "c1" {
 		t.Errorf("tool message = %v", msgs[3])
+	}
+	if msgs[1].(map[string]any)["content"] != "hi" {
+		t.Errorf("plain user message = %v", msgs[1])
+	}
+	parts, _ := json.Marshal(msgs[4].(map[string]any)["content"])
+	if string(parts) != `[{"text":"what's this?","type":"text"},{"image_url":{"url":"data:image/png;base64,iVBO"},"type":"image_url"}]` {
+		t.Errorf("image message content = %s", parts)
 	}
 	tool := got["tools"].([]any)[0].(map[string]any)
 	if tool["type"] != "function" || tool["function"].(map[string]any)["name"] != "f" {

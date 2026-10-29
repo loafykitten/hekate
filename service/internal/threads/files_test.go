@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/loafykitten/hekate/service/internal/agent"
+	"github.com/loafykitten/hekate/service/internal/config"
 	"github.com/loafykitten/hekate/service/internal/lab"
 	"github.com/loafykitten/hekate/service/internal/proto"
 )
@@ -241,5 +242,92 @@ func TestCleanName(t *testing.T) {
 		if got := cleanName(in); got != want {
 			t.Errorf("cleanName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestLookAtImage(t *testing.T) {
+	l := newMemLab()
+	png := "\x89PNG\r\n\x1a\n" + strings.Repeat("\x00", 64)
+	l.put("/srv/files/in/f_1/pasted.png", png, 1000)
+	l.put("/srv/files/in/f_1/notes.txt", "just text", 1000)
+	f := newFixture(t, withLab(l), func(o *Options) { o.Vision = config.Model{Name: "vis-model", Effort: "low"} })
+	srv := f.api(t)
+	th, _ := f.svc.Create(t.Context(), "Error", "", OriginOwner)
+	f.model.script = func(req modelReq) []string {
+		if req.Model == "vis-model" {
+			return reply("The dialog says: Payload failed (0x80020001).")
+		}
+		last := req.Messages[len(req.Messages)-1]
+		if last["role"] != "tool" {
+			return callTool("look_at_image", `{"path":"/srv/files/in/f_1/pasted.png","question":"What does the dialog say?"}`)
+		}
+		return reply("It's error 0x80020001.")
+	}
+	f.say(t, th.ID, "what's this error?")
+	waitFor(t, "turn end", func() bool { return len(f.turnEnds(th.ID)) == 1 })
+
+	var vision, after *modelReq
+	for _, r := range f.model.requests() {
+		if r.Model == "vis-model" {
+			vision = &r
+		} else if r.Messages[len(r.Messages)-1]["role"] == "tool" {
+			after = &r
+		}
+	}
+	if vision == nil || after == nil {
+		t.Fatal("no look, or no answer after it")
+	}
+	parts, _ := json.Marshal(vision.Messages[1]["content"])
+	if !strings.Contains(string(parts), `"text":"What does the dialog say?"`) ||
+		!strings.Contains(string(parts), `"url":"data:image/png;base64,`) {
+		t.Errorf("vision request content %s", parts)
+	}
+	result, _ := after.Messages[len(after.Messages)-1]["content"].(string)
+	if !strings.Contains(result, "Payload failed (0x80020001)") || !strings.Contains(result, "<untrusted_image_description") {
+		t.Errorf("she read %q", result)
+	}
+	var n int
+	_ = f.db.DB().QueryRow(`SELECT count(*) FROM usage WHERE model = 'vis-model' AND turn_id = ?`, f.turnEnds(th.ID)[0].TurnID).Scan(&n)
+	if n != 1 {
+		t.Errorf("%d usage rows for the look", n)
+	}
+
+	look := func() agent.Tool {
+		for _, tool := range f.svc.tools {
+			if tool.Name == "look_at_image" {
+				return tool
+			}
+		}
+		t.Fatal("no look_at_image")
+		return agent.Tool{}
+	}()
+	if _, err := look.Run(t.Context(), json.RawMessage(`{"path":"/srv/files/in/f_1/notes.txt","question":"what?"}`)); err == nil ||
+		!strings.Contains(err.Error(), "isn't a PNG") {
+		t.Errorf("a text file: %v", err)
+	}
+
+	// The app shows images inline; other files and other asks download.
+	_, img := upload(t, srv, th.ID, "shot.PNG", png)
+	resp, err := http.Get(srv.URL + "/api/threads/" + th.ID + "/files/" + img.ID + "?inline=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.Header.Get("Content-Type") != "image/png" || !strings.HasPrefix(resp.Header.Get("Content-Disposition"), "inline") ||
+		!strings.Contains(resp.Header.Get("Cache-Control"), "immutable") {
+		t.Errorf("inline image headers %v", resp.Header)
+	}
+	_, txt := upload(t, srv, th.ID, "notes.txt", "hello")
+	resp, err = http.Get(srv.URL + "/api/threads/" + th.ID + "/files/" + txt.ID + "?inline=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.Header.Get("Content-Type") != "application/octet-stream" || !strings.HasPrefix(resp.Header.Get("Content-Disposition"), "attachment") {
+		t.Errorf("inline text headers %v", resp.Header)
+	}
+	if note := filesNote("Sam", []proto.ThreadFile{img, txt}); !strings.Contains(note, "shot.PNG (72 bytes; an image: look_at_image") ||
+		strings.Contains(note, "notes.txt (5 bytes;") {
+		t.Errorf("note %q", note)
 	}
 }

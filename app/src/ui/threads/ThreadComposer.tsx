@@ -3,9 +3,9 @@ import { MAX_TEXT_LENGTH } from "../../conversation/protocol";
 import { useAutoGrow } from "../kit/useAutoGrow";
 import { useConversation, useConversationState, useThreadLive } from "../ConversationContext";
 import { useMenuActive } from "../menu/MenuContext";
-import { formatSize, MAX_ATTACHMENTS } from "../../data/files";
+import { formatSize, isImageFile, MAX_ATTACHMENTS } from "../../data/files";
 import { CloseIcon, MicIcon, PaperclipIcon, SendIcon, StopIcon } from "../icons";
-import { FileName } from "./ThreadFiles";
+import { FileName, Thumb } from "./ThreadFiles";
 import type { Attachment, Attachments } from "./useAttachments";
 import styles from "./threads.module.css";
 
@@ -135,6 +135,7 @@ export function ThreadComposer({ thread, attachments, running, reviewing = false
           {attachments.items.map((a) => (
             <li key={a.key} className={styles.chip} data-status={a.status}>
               <div className={styles.chipMain}>
+                {a.local && isImageFile(a.local) && <Thumb file={a.local} />}
                 <FileName name={a.name} />
                 <span className={styles.fileSize}>{a.status === "error" ? "Failed" : a.status === "uploading" ? `${Math.round(a.progress * 100)}%` : formatSize(a.size)}</span>
               </div>
@@ -170,8 +171,8 @@ export function ThreadComposer({ thread, attachments, running, reviewing = false
         <button
           type="button"
           className={styles.sideButton}
-          aria-label="Attach files"
-          title="Attach files"
+          aria-label="Attach files (or paste an image)"
+          title="Attach files (or paste an image)"
           disabled={!connected || attachments.items.length >= MAX_ATTACHMENTS}
           onClick={() => fileRef.current?.click()}
         >

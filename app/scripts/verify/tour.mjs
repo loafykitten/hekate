@@ -5,6 +5,7 @@
 // Usage: node scripts/verify/tour.mjs [outDir]   (files: tour-<viewport>-<screen>.png)
 import { mkdirSync } from "node:fs";
 import path from "node:path";
+import { deflateSync } from "node:zlib";
 import { BASE, launch } from "./common.mjs";
 
 const out = process.argv[2] ?? "verify-out";
@@ -236,11 +237,57 @@ const review = (id, thread_id, turn_id, over = {}) => ({
 });
 // Files in a thread: the owner sends a zip with a message, she shares the updated one back.
 const tfile = (id, thread_id, turn_id, direction, name, size) => ({ id, thread_id, turn_id, direction, name, size, path: `/srv/files/${direction}/${id}/${name}`, created_at: ago(30) });
+// A small generated PNG (a soft gradient with a darker bar) standing in for a screenshot.
+function makePng(w, h) {
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc = (buf) => {
+    let c = 0xffffffff;
+    for (const b of buf) c = crcTable[(c ^ b) & 255] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type, data) => {
+    const body = Buffer.concat([Buffer.from(type), data]);
+    const out = Buffer.alloc(body.length + 8);
+    out.writeUInt32BE(data.length, 0);
+    body.copy(out, 4);
+    out.writeUInt32BE(crc(body), body.length + 4);
+    return out;
+  };
+  const raw = Buffer.alloc((w * 3 + 1) * h);
+  for (let y = 0; y < h; y++) {
+    raw[y * (w * 3 + 1)] = 0;
+    for (let x = 0; x < w; x++) {
+      const bar = y > h * 0.4 && y < h * 0.55 && x > w * 0.1 && x < w * 0.9;
+      const o = y * (w * 3 + 1) + 1 + x * 3;
+      raw[o] = bar ? 120 : 40 + (x * 60) / w;
+      raw[o + 1] = bar ? 40 : 60 + (y * 80) / h;
+      raw[o + 2] = bar ? 50 : 120 + (x * 80) / w;
+    }
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]);
+}
+const PNG = makePng(480, 300);
+
 const FILE_MESSAGES = [
   tmsg("p1", "user", "tf_1", "Here's my homebrew folder. Update the payloads to the latest versions and send it back zipped.", 30),
   tmsg("p2", "assistant", "tf_1", "I updated three payloads and left the rest alone. The updated folder is attached below; your original is untouched in `/srv/files/in`.", 12),
 ];
+const FILE_MESSAGES_2 = [
+  tmsg("p3", "user", "tf_2", "this error shows up when I launch the payload", 8),
+  tmsg("p4", "assistant", "tf_2", "That's the loader refusing the new version. I marked the failing line in your screenshot; the fix is to pin the loader to the older build.", 4),
+];
 const FILE_FILES = [
+  tfile("f_in3", "th_ff66", "tf_2", "in", "pasted-2026-10-28-141502.png", PNG.length),
+  tfile("f_out3", "th_ff66", "tf_2", "out", "error-marked.png", PNG.length),
   tfile("f_in1", "th_ff66", "tf_1", "in", "homebrew-backup.zip", 84_000_000),
   tfile("f_in2", "th_ff66", "tf_1", "in", "notes-from-the-forum-thread-about-the-new-payload-loader-version-2.txt", 4200),
   tfile("f_out1", "th_ff66", "tf_1", "out", "homebrew-updated.zip", 85_300_000),
@@ -349,6 +396,7 @@ async function open(browser, viewport, query, { mode = "full", onSay } = {}) {
     const one = p.match(/^\/api\/mail\/messages\/(\d+)$/);
     if (one) return json(route, { message: MAIL.find((m) => m.id === one[1]) ?? MAIL[0], body: { text: MAIL_BODY, truncated: false } });
     if (p === "/api/mail/rules") return json(route, { rules: MAIL_RULES });
+    if (/^\/api\/threads\/[^/]+\/files\/[^/]+$/.test(p) && q.get("inline") === "1") return route.fulfill({ status: 200, contentType: "image/png", body: PNG });
     if (route.request().method() === "POST" && /^\/api\/threads\/[^/]+\/files$/.test(p)) {
       const name = q.get("name") ?? "file";
       if (name.includes("iso")) return route.fulfill({ status: 507, contentType: "application/json", body: JSON.stringify({ error: "Her lab would have under 4 GB free." }) });
@@ -357,7 +405,7 @@ async function open(browser, viewport, query, { mode = "full", onSay } = {}) {
     if (p === "/api/threads") return json(route, { threads: empty ? [] : q.get("archived") === "true" ? [] : THREADS });
     if (/^\/api\/threads\/[^/]+$/.test(p)) return json(route, THREADS.find((t) => p.endsWith(t.id)) ?? THREADS[1]);
     if (/^\/api\/threads\/[^/]+\/messages$/.test(p)) {
-      if (p.includes("th_ff66")) return json(route, { messages: FILE_MESSAGES, steps: [], reviews: [], files: FILE_FILES });
+      if (p.includes("th_ff66")) return json(route, { messages: [...FILE_MESSAGES, ...FILE_MESSAGES_2], steps: [], reviews: [], files: FILE_FILES });
       if (p.includes("th_dd44")) return json(route, { messages: DL_MESSAGES, steps: [], reviews: DL_REVIEWS });
       if (p.includes("th_ee55")) return json(route, { messages: EE_MESSAGES, steps: [], reviews: EE_REVIEWS });
       const bb = p.includes("th_bb22");
@@ -526,6 +574,24 @@ for (const [name, viewport] of [
   await page.getByRole("button", { name: "Remove disk-image.iso" }).click();
   await page.getByRole("textbox", { name: "Message" }).fill("Same again, please.");
   await shot(page, "thread-attach-ready", 600);
+  await page.close();
+
+  // Pasting an image: a ClipboardEvent carrying a File, dispatched on the message field.
+  ({ page } = await open(browser, viewport, "thread=th_ff66"));
+  await page.getByText("I marked the failing line").waitFor({ timeout: 10_000 }).catch(() => {});
+  await page.locator("figcaption").last().scrollIntoViewIfNeeded();
+  await shot(page, "thread-image", 800);
+  await page.getByRole("textbox", { name: "Message" }).focus();
+  await page.evaluate((b64) => {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const dt = new DataTransfer();
+    dt.items.add(new File([bytes], "image.png", { type: "image/png" }));
+    document.activeElement.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+  }, PNG.toString("base64"));
+  await page.waitForTimeout(600);
+  await page.getByRole("textbox", { name: "Message" }).fill("Same error again.");
+  await page.locator("figcaption").last().scrollIntoViewIfNeeded();
+  await shot(page, "thread-paste", 600);
   await page.close();
 
   // A review with findings and her follow-up reply, its re-check, and a clean one.

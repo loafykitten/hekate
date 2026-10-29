@@ -2,8 +2,9 @@ import { Fragment, useEffect, useMemo, useRef, useState, type DragEvent, type Ke
 import { currentStep, historyHolds, isRunning, mergeReviews, placeReviews, reviewRunning } from "../../conversation/threadLive";
 import { useThread, useThreadMessages, usePatchThread } from "../../data/hooks";
 import type { Review, Thread, ThreadFile, ThreadModel, ThreadStep } from "../../data/model";
+import { clipboardFiles } from "../../data/files";
 import { ApiError } from "../../data/rest";
-import { useConversation, useThreadLive } from "../ConversationContext";
+import { useConversation, useConversationState, useThreadLive } from "../ConversationContext";
 import { ArchiveIcon, BackIcon, EditIcon } from "../icons";
 import { Button, IconButton, Segmented, StateMessage } from "../kit/kit";
 import { useMenuActive } from "../menu/MenuContext";
@@ -27,6 +28,7 @@ function savedSteps(steps: ThreadStep[], turnId: string): StepView[] {
 // turn's tool steps folded away, the turn happening now, and the composer.
 export function ThreadView({ id, onBack }: { id: string; onBack: () => void }) {
   const conversation = useConversation();
+  const online = useConversationState().connection === "open";
   const menuActive = useMenuActive();
   const thread = useThread(id);
   const history = useThreadMessages(id);
@@ -146,6 +148,13 @@ export function ThreadView({ id, onBack }: { id: string; onBack: () => void }) {
       }}
       onDragLeave={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+      }}
+      onPaste={(e) => {
+        if (!canAttach || !online) return;
+        const files = clipboardFiles(e.clipboardData);
+        if (files.length === 0) return; // text pastes as always
+        e.preventDefault();
+        attachments.add(files);
       }}
       onDrop={(e) => {
         if (!hasFiles(e)) return;

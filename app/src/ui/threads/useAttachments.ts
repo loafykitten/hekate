@@ -9,6 +9,7 @@ export interface Attachment {
   status: "uploading" | "done" | "error";
   progress: number; // 0..1 while uploading
   file?: ThreadFile; // once uploaded
+  local?: File; // the picked file, for a thumbnail
   error?: string;
 }
 
@@ -46,7 +47,7 @@ export function useAttachments(thread: string): Attachments {
       const take = files.slice(0, room);
       setNote(files.length > take.length ? `Up to ${MAX_ATTACHMENTS} files at a time.` : undefined);
       if (take.length === 0) return;
-      const fresh = take.map((f): Attachment => ({ key: `a${++counter}`, name: f.name, size: f.size, status: "uploading", progress: 0 }));
+      const fresh = take.map((f): Attachment => ({ key: `a${++counter}`, name: f.name, size: f.size, status: "uploading", progress: 0, local: f }));
       setItems((list) => [...list, ...fresh]);
       take.forEach((f, i) => {
         const key = fresh[i]!.key;

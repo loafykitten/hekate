@@ -244,7 +244,7 @@ func run() error {
 	threadSvc, err := threads.New(threads.Options{
 		Store: db, LLM: llmClient, Deep: cfg.ModelDeep, Chat: cfg.ModelChat, Tools: threadTools, Context: threadContext,
 		System: threads.SystemPrompt(labName, reviewer.Ready), Hub: hub, Events: hub, Push: notifier, Reviewer: reviewer, Tamer: cfg.TamerName,
-		Lab: threadLab, Location: cfg.Location, Logger: logger.Logger,
+		Lab: threadLab, Vision: cfg.ModelVision, Location: cfg.Location, Logger: logger.Logger,
 	})
 	if err != nil {
 		return fmt.Errorf("build threads: %w", err)

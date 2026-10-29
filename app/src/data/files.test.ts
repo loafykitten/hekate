@@ -123,3 +123,37 @@ describe("uploadThreadFile", () => {
     await expect(up.promise).rejects.toMatchObject({ name: "AbortError" });
   });
 });
+
+describe("pasted images", () => {
+  const now = new Date(2026, 9, 28, 14, 15, 2);
+  const img = (name: string, type = "image/png") => new File(["x"], name, { type });
+
+  it("names by local time and MIME type", async () => {
+    const { pastedName } = await import("./files");
+    expect(pastedName({ name: "image.png", type: "image/png" }, now)).toBe("pasted-2026-10-28-141502.png");
+    expect(pastedName({ name: "x", type: "image/jpeg" }, now)).toBe("pasted-2026-10-28-141502.jpg");
+    expect(pastedName({ name: "x", type: "image/webp" }, now)).toMatch(/\.webp$/);
+    expect(pastedName({ name: "doc.pdf", type: "application/pdf" }, now)).toBe("doc.pdf");
+  });
+
+  it("detects images by type or extension", async () => {
+    const { isImageFile, showsInline } = await import("./files");
+    expect(isImageFile({ name: "a", type: "image/gif" })).toBe(true);
+    expect(isImageFile({ name: "A.JPEG" })).toBe(true);
+    expect(isImageFile({ name: "a.svg", type: "image/svg+xml" })).toBe(false);
+    expect(showsInline({ name: "a.png", size: 1000 })).toBe(true);
+    expect(showsInline({ name: "a.png", size: 20 * 1024 * 1024 })).toBe(true);
+    expect(showsInline({ name: "a.png", size: 20 * 1024 * 1024 + 1 })).toBe(false);
+    expect(showsInline({ name: "a.zip", size: 10 })).toBe(false);
+  });
+
+  it("picks and renames files from a clipboard", async () => {
+    const { clipboardFiles } = await import("./files");
+    expect(clipboardFiles({ files: [] })).toEqual([]);
+    expect(clipboardFiles(null)).toEqual([]);
+    const out = clipboardFiles({ files: [img("image.png"), img("image.png"), img("report.pdf", "application/pdf")] }, now);
+    expect(out.map((f) => f.name)).toEqual(["pasted-2026-10-28-141502.png", "pasted-2026-10-28-141502-2.png", "report.pdf"]);
+    const viaItems = clipboardFiles({ files: [], items: [{ kind: "string", getAsFile: () => null }, { kind: "file", getAsFile: () => img("") }] }, now);
+    expect(viaItems.map((f) => f.name)).toEqual(["pasted-2026-10-28-141502.png"]);
+  });
+});

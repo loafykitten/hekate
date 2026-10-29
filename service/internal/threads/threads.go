@@ -59,7 +59,10 @@ const (
 // Limits are a thread turn's: long, since the owner isn't waiting on a voice.
 var Limits = agent.Limits{
 	MaxRounds: 40, MaxCalls: 80, TurnTimeout: 30 * time.Minute, ToolResultChars: 12000,
-	Window: agent.Window{MaxMessages: 400, MaxChars: 200000, LowMessages: 200, LowChars: 100000},
+	// The deep model reasons at length before it writes, and its replies are long: 4096 (the
+	// voice's) once ran out before it wrote a word.
+	ReplyTokens: 32768,
+	Window:      agent.Window{MaxMessages: 400, MaxChars: 200000, LowMessages: 200, LowChars: 100000},
 }
 
 // Thread is the API shape from PROTOCOL.md.
@@ -100,7 +103,9 @@ type Options struct {
 	// Reviewer reviews her lab work after a turn that changed the lab; nil: no reviews.
 	Reviewer *review.Reviewer
 	// Lab carries the files passed in threads, and gives her lab_share_file; nil: no files.
-	Lab      Lab
+	Lab Lab
+	// Vision looks at images in the lab for her (look_at_image), with the lab; zero: no looking.
+	Vision   config.Model
 	Tamer    string
 	Location *time.Location
 	Logger   *slog.Logger
@@ -155,6 +160,9 @@ func New(o Options) (*Service, error) {
 	s.tools = slices.Clone(o.Tools)
 	if o.Lab != nil {
 		s.tools = append(s.tools, s.shareTool())
+		if o.Vision.Name != "" {
+			s.tools = append(s.tools, s.lookTool())
+		}
 	}
 	if _, err := agent.NewRegistry(s.tools...); err != nil {
 		return nil, fmt.Errorf("threads: %w", err)

@@ -101,3 +101,70 @@ export function splitName(name: string): [string, string] {
   if (dot <= 0 || name.length - dot > 9) return [name, ""];
   return [name.slice(0, dot), name.slice(dot)];
 }
+
+// ---- images ----------------------------------------------------------------------------------
+
+/** The largest image the service serves inline (PROTOCOL: Files); bigger ones stay plain files. */
+export const MAX_INLINE_BYTES = 20 * 1024 * 1024; // 20 MiB, as the service counts
+
+const IMAGE_NAME = /\.(png|jpe?g|gif|webp)$/i;
+
+/** A name the service will serve inline as an image. */
+export function isImageName(name: string): boolean {
+  return IMAGE_NAME.test(name);
+}
+
+/** An attachment that is an image: by MIME type or by extension. */
+export function isImageFile(f: { name: string; type?: string }): boolean {
+  return /^image\/(png|jpe?g|gif|webp)$/i.test(f.type ?? "") || isImageName(f.name);
+}
+
+/** A thread file the transcript shows as a picture (either direction). */
+export function showsInline(f: { name: string; size: number }): boolean {
+  return isImageName(f.name) && f.size <= MAX_INLINE_BYTES;
+}
+
+export function inlineUrl(thread: string, file: string): string {
+  return `${fileUrl(thread, file)}?inline=1`;
+}
+
+const PASTE_EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
+
+const two = (n: number) => String(n).padStart(2, "0");
+
+/** "pasted-2026-10-28-141502.png" from local time; other types keep their own name. */
+export function pastedName(file: { name: string; type: string }, now: Date = new Date()): string {
+  const ext = PASTE_EXT[file.type.toLowerCase()];
+  if (!ext) return file.name;
+  const stamp = `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())}-${two(now.getHours())}${two(now.getMinutes())}${two(now.getSeconds())}`;
+  return `pasted-${stamp}.${ext}`;
+}
+
+interface ClipboardLike {
+  files?: ArrayLike<File> | null;
+  items?: ArrayLike<{ kind: string; getAsFile(): File | null }> | null;
+}
+
+/**
+ * The files on a clipboard, ready to attach: clipboard images (generic "image.png" or no name) are
+ * renamed by time, and several in one paste get unique names by a numeric
+ * suffix. Empty when the clipboard holds no files (plain text paste).
+ */
+export function clipboardFiles(data: ClipboardLike | null | undefined, now: Date = new Date()): File[] {
+  if (!data) return [];
+  let files = Array.from(data.files ?? []);
+  if (files.length === 0) {
+    files = Array.from(data.items ?? []).filter((i) => i.kind === "file").flatMap((i) => i.getAsFile() ?? []);
+  }
+  const seen = new Map<string, number>();
+  return files.map((f) => {
+    const generic = !f.name || /^image\.(png|jpe?g|gif|webp)$/i.test(f.name);
+    if (!generic) return f;
+    let name = pastedName({ name: f.name || "image", type: f.type }, now);
+    if (name === f.name) return f;
+    const n = (seen.get(name) ?? 0) + 1;
+    seen.set(name, n);
+    if (n > 1) name = name.replace(/(\.\w+)$/, `-${n}$1`);
+    return new File([f], name, { type: f.type, lastModified: f.lastModified });
+  });
+}

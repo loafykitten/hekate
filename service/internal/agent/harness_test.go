@@ -92,10 +92,11 @@ func describe(events []any) string {
 // fake LLM
 
 type llmReq struct {
-	Model    string           `json:"model"`
-	Effort   string           `json:"reasoning_effort"`
-	Messages []map[string]any `json:"messages"`
-	Tools    []struct {
+	Model     string           `json:"model"`
+	MaxTokens int              `json:"max_tokens"`
+	Effort    string           `json:"reasoning_effort"`
+	Messages  []map[string]any `json:"messages"`
+	Tools     []struct {
 		Function struct {
 			Name string `json:"name"`
 		} `json:"function"`

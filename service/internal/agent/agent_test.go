@@ -638,6 +638,24 @@ func TestEmptyReplyIsAnError(t *testing.T) {
 	}
 }
 
+// A round cut off at the output cap before any words is said to be that, and the cap is the turn's.
+func TestCutOffBeforeWords(t *testing.T) {
+	var asked int
+	e := newEnv(t, func(_ int, req llmReq) (int, []string) {
+		asked = req.MaxTokens
+		return 200, []string{fin("length"), usageChunk(10, 900), "[DONE]"}
+	}, envOpts{limits: Limits{ReplyTokens: 900}})
+	e.agent.Say("c", "i", "fix the review's findings", false)
+	ev := e.hub.waitTurnEnd(t, 1)
+	errs := ofType[proto.Error](ev)
+	if len(errs) != 1 || errs[0].Code != proto.CodeEmptyReply || !strings.Contains(errs[0].Message, "ran out of room") {
+		t.Fatalf("events: %s", describe(ev))
+	}
+	if asked != 900 {
+		t.Errorf("max_tokens = %d, want the turn's 900", asked)
+	}
+}
+
 func TestUnknownTagsAreNotSpoken(t *testing.T) {
 	synth := &fakeSynth{}
 	e := newEnv(t, func(int, llmReq) (int, []string) {

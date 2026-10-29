@@ -370,11 +370,25 @@ from another family catches what she misses. So a second model checks her lab wo
 against the VM itself rather than her account of it. Service: `service/internal/review`, started
 by `service/internal/threads`. Contract: `PROTOCOL.md` (Threads, reviews).
 
-- **When:** on its own, after a thread turn that changed the lab finishes (`done`): it wrote a file
-  there, or ran a `lab_shell` command that isn't read-only by `lab.ReadOnly` (a fixed list of
-  reading commands; anything else counts as a change, so a doubtful case gets reviewed). Quick
-  looks don't. While a review runs the thread counts as working: new input waits, and stop
-  cancels the review.
+- **When (revised 2026-10-28):** once per piece of finished work, as our own change flow reviews
+  once per change rather than per edit. She calls `finish_work` in the turn that hands the owner
+  finished work, with what she's claiming; when that turn ends, everything she changed in the lab
+  since the last review is reviewed. A change is a file written there, or a `lab_shell` command
+  that isn't read-only by `lab.ReadOnly` (a fixed list of reading commands; anything else counts,
+  so a doubtful case gets reviewed); quick looks aren't. Steps along the way (asking the owner
+  something, a draft) aren't reviewed on their own; if changes sit unreviewed and the thread goes
+  quiet for 10 minutes, they're reviewed then (the wait is rearmed after a failed or stopped turn
+  and after a restart). Her answer to a review's findings is reviewed when it ends, as before (two
+  rounds at most); her last answer in a chain waits for her next piece of work, and only changes
+  from the owner's turns start a quiet review, so a chain never restarts itself. While a review runs the thread counts as working: new
+  input waits, and stop cancels the review. Until 2026-10-28 every changing turn was reviewed: in
+  the first real thread that meant three reviews of 2 to 11.5 minutes for turns of 17 seconds to
+  5.5 minutes, each re-checking the whole stack with all 40 commands.
+- **How much:** the review gets what she changed since the last review, grouped by turn, as the
+  work to check; her handover; the thread's conversation; and the last review of her earlier work
+  (what it verified and found) for the bigger picture. Its command budget is sized to the work:
+  12, plus 2 per change, at most 40; it's told to batch related checks and stop once it has checked
+  what matters.
 - **Who:** DeepSeek V4.1 Flash at max effort (`HEKATE_MODEL_REVIEW`). Picked on 2026-10-23 from
   public benchmarks and a live trial on a real thread (a VPN-gated download stack), two runs each
   against MiMo V2.6 Pro: DeepSeek found more of the real problems (a gluetun restart orphaning its

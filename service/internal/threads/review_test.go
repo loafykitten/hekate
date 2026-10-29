@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/loafykitten/hekate/service/internal/agent"
 	"github.com/loafykitten/hekate/service/internal/config"
@@ -71,6 +72,12 @@ func reviewFixture(t *testing.T, hers, its [][]string) (*fixture, *review.Review
 	return f, rv
 }
 
+// handOver is her calling finish_work.
+func handOver(summary string) []string {
+	b, _ := json.Marshal(map[string]string{"summary": summary})
+	return callTool("finish_work", string(b))
+}
+
 func reviews(t *testing.T, rv *review.Reviewer, thread string, turns ...string) []proto.Review {
 	t.Helper()
 	got, err := rv.ForTurns(t.Context(), thread, turns)
@@ -101,7 +108,8 @@ func TestReviewChain(t *testing.T) {
  "verified_ok": ["WEB_AUTHENTICATION=1"]}` + "\n```"
 	f, rv := reviewFixture(t,
 		[][]string{
-			callTool("lab_write_file", `{"path":"/opt/stacks/dl/compose.yaml","content":"services: {}"}`), reply("It's ready."),
+			callTool("lab_write_file", `{"path":"/opt/stacks/dl/compose.yaml","content":"services: {}"}`), handOver("JDownloader runs at :5800."),
+			reply("It's ready."),
 			callTool("lab_write_file", `{"path":"/opt/stacks/dl/compose.yaml","content":"services: {}"}`), reply("Login added."),
 			reply("Noted: I'll say so."),
 		},
@@ -161,13 +169,20 @@ func TestReviewChain(t *testing.T) {
 			t.Errorf("a follow-up shows an owner message: %+v", m)
 		}
 	}
-	// The second round knows the first round's findings, and gets only what the turn did.
-	var second string
+	// The first round reads her handover and gets a budget for one change; the second knows the
+	// first round's findings, and gets only what her fixes did.
+	var first, second string
 	for _, r := range f.model.requests() {
 		if r.Model == reviewModel.Name {
 			b, _ := json.Marshal(r.Messages)
+			if first == "" {
+				first = string(b)
+			}
 			second = string(b)
 		}
+	}
+	if !strings.Contains(first, "JDownloader runs at :5800.") || !strings.Contains(first, "You have 14 commands") {
+		t.Errorf("the first review's request lacks her handover or its budget: %s", first)
 	}
 	if !strings.Contains(second, "first round") || !strings.Contains(second, "lab_write_file: wrote /opt/stacks/dl/compose.yaml") {
 		t.Errorf("the second review's request lacks the first round or her actions: %s", second)
@@ -197,7 +212,7 @@ func TestReadOnlyTurnIsNotReviewed(t *testing.T) {
 
 func TestStopAReview(t *testing.T) {
 	f, rv := reviewFixture(t,
-		[][]string{callTool("lab_shell", `{"command":"docker compose up -d"}`), reply("Started.")},
+		[][]string{callTool("lab_shell", `{"command":"docker compose up -d"}`), handOver("It runs."), reply("Started.")},
 		[][]string{{hang}},
 	)
 	th, _ := f.svc.Create(t.Context(), "", "", OriginOwner)
@@ -227,7 +242,7 @@ func TestStopAReview(t *testing.T) {
 
 func TestThreadStopToolStopsAReview(t *testing.T) {
 	f, rv := reviewFixture(t,
-		[][]string{callTool("lab_write_file", `{"path":"/opt/stacks/x/compose.yaml","content":"x"}`), reply("Written.")},
+		[][]string{callTool("lab_write_file", `{"path":"/opt/stacks/x/compose.yaml","content":"x"}`), handOver("x is set up."), reply("Written.")},
 		[][]string{{hang}},
 	)
 	th, _ := f.svc.Create(t.Context(), "Set up x", "", OriginOwner)
@@ -240,5 +255,174 @@ func TestThreadStopToolStopsAReview(t *testing.T) {
 	waitFor(t, "the review to stop", func() bool { r, _ := f.svc.running(th.ID); return !r })
 	if all := reviews(t, rv, th.ID, turnIDs(t, f, th.ID)...); len(all) != 1 || all[0].Status != proto.ReviewStopped {
 		t.Errorf("review after thread_stop %+v", all)
+	}
+}
+
+// Steps along the way wait; the turn that hands the work over has all of it reviewed at once.
+func TestStepsWaitForHandover(t *testing.T) {
+	f, rv := reviewFixture(t,
+		[][]string{
+			callTool("lab_write_file", `{"path":"/opt/stacks/dl/compose.yaml","content":"x"}`), reply("Drafted. Which VPN do you use?"),
+			callTool("lab_shell", `{"command":"docker compose up -d"}`), handOver("The stack runs behind the VPN."), reply("Done."),
+		},
+		[][]string{reply(`{"verdict":"looks_good","summary":"Fine.","findings":[],"verified_ok":["it runs"]}`)},
+	)
+	th, _ := f.svc.Create(t.Context(), "", "", OriginOwner)
+	f.say(t, th.ID, "set up downloads")
+	waitFor(t, "her first reply", func() bool { return len(f.turnEnds(th.ID)) == 1 && f.svc.idle(th.ID) })
+	if r, rev := f.svc.running(th.ID); r || rev {
+		t.Fatal("a step along the way was reviewed")
+	}
+	f.say(t, th.ID, "PIA")
+	waitFor(t, "the review", func() bool {
+		got := reviews(t, rv, th.ID, turnIDs(t, f, th.ID)...)
+		return len(got) == 1 && got[0].Status == proto.ReviewDone
+	})
+	ids := turnIDs(t, f, th.ID)
+	if got := reviews(t, rv, th.ID, ids...); got[0].TurnID != ids[1] || got[0].Round != 1 {
+		t.Errorf("review %+v, want round 1 of the handing-over turn", got[0])
+	}
+	var req string
+	for _, r := range f.model.requests() {
+		if r.Model == reviewModel.Name {
+			b, _ := json.Marshal(r.Messages)
+			req = string(b)
+		}
+	}
+	for _, want := range []string{"wrote /opt/stacks/dl/compose.yaml", "docker compose up -d", "The stack runs behind the VPN.",
+		`after the owner said \"PIA\"`, "You have 16 commands"} {
+		if !strings.Contains(req, want) {
+			t.Errorf("the review's request lacks %q: %s", want, req)
+		}
+	}
+}
+
+// Changes she never hands over are reviewed once the thread goes quiet.
+func TestQuietThreadIsReviewed(t *testing.T) {
+	f, rv := reviewFixture(t,
+		[][]string{callTool("lab_shell", `{"command":"docker compose up -d"}`), reply("Started it; tell me if the UI loads.")},
+		[][]string{reply(`{"verdict":"looks_good","summary":"Fine.","findings":[],"verified_ok":[]}`)},
+	)
+	f.svc.quietAfter = 300 * time.Millisecond
+	th, _ := f.svc.Create(t.Context(), "", "", OriginOwner)
+	f.say(t, th.ID, "start it")
+	waitFor(t, "the quiet review", func() bool {
+		got := reviews(t, rv, th.ID, turnIDs(t, f, th.ID)...)
+		return len(got) == 1 && got[0].Status == proto.ReviewDone
+	})
+	if got := reviews(t, rv, th.ID, turnIDs(t, f, th.ID)...); got[0].Round != 1 || got[0].TurnID != turnIDs(t, f, th.ID)[0] {
+		t.Errorf("quiet review %+v", got[0])
+	}
+	if n := len(f.events.notified()); n == 0 {
+		t.Error("the owner wasn't told the quiet review found nothing")
+	}
+}
+
+// A turn that only hands over (the changes came in earlier turns) starts the review.
+func TestHandoverAlone(t *testing.T) {
+	f, rv := reviewFixture(t,
+		[][]string{
+			callTool("lab_shell", `{"command":"docker compose up -d"}`), reply("Started; does the UI load for you?"),
+			handOver("It runs and you've seen the UI."), reply("Great, it's done."),
+		},
+		[][]string{reply(`{"verdict":"looks_good","summary":"Fine.","findings":[],"verified_ok":[]}`)},
+	)
+	th, _ := f.svc.Create(t.Context(), "", "", OriginOwner)
+	f.say(t, th.ID, "start it")
+	waitFor(t, "her first reply", func() bool { return len(f.turnEnds(th.ID)) == 1 && f.svc.idle(th.ID) })
+	f.say(t, th.ID, "it loads")
+	waitFor(t, "the review", func() bool {
+		got := reviews(t, rv, th.ID, turnIDs(t, f, th.ID)...)
+		return len(got) == 1 && got[0].Status == proto.ReviewDone && got[0].TurnID == turnIDs(t, f, th.ID)[1]
+	})
+}
+
+// Changes from a turn that failed, or that were left when the service stopped, still get the
+// quiet review.
+func TestPendingSurvivesFailureAndRestart(t *testing.T) {
+	f, rv := reviewFixture(t,
+		[][]string{callTool("lab_shell", `{"command":"docker compose up -d"}`), {hang}},
+		[][]string{reply(`{"verdict":"looks_good","summary":"Fine.","findings":[],"verified_ok":[]}`)},
+	)
+	f.svc.quietAfter = time.Hour
+	th, _ := f.svc.Create(t.Context(), "", "", OriginOwner)
+	f.say(t, th.ID, "start it")
+	waitFor(t, "her change", func() bool {
+		var n int
+		_ = f.db.DB().QueryRow(`SELECT count(*) FROM activity WHERE tool = 'lab_shell'`).Scan(&n)
+		return n == 1
+	})
+	in, _ := f.svc.Input(t.Context(), th.ID)
+	in.Interrupt("", -1)
+	waitFor(t, "the stop", func() bool { return len(f.turnEnds(th.ID)) == 1 && f.svc.idle(th.ID) })
+	f.svc.mu.Lock()
+	c := f.svc.convs[th.ID]
+	f.svc.mu.Unlock()
+	c.mu.Lock()
+	armed := c.quiet != nil
+	c.mu.Unlock()
+	if !armed {
+		t.Fatal("a stopped turn's changes aren't waiting for review")
+	}
+
+	// A new service on the same database, as after a restart, arms the wait again.
+	opts := f.svc.opts
+	opts.ReviewQuiet = 200 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	again, err := New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := again.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		sctx, scancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer scancel()
+		_ = again.Shutdown(sctx)
+	})
+	waitFor(t, "the review after the restart", func() bool {
+		got := reviews(t, rv, th.ID, turnIDs(t, f, th.ID)...)
+		return len(got) == 1 && got[0].Status == proto.ReviewDone
+	})
+}
+
+// The last answer to a chain of reviews isn't reviewed: not when it ends, not once the thread is
+// quiet, not after a restart. It goes with her next piece of work.
+func TestChainEndStaysEnded(t *testing.T) {
+	finding := reply(`{"verdict":"needs_changes","summary":"One thing.","findings":[{"severity":"medium","title":"Pin the tag",` +
+		`"evidence_call_ids":[],"evidence":"unverified knowledge: latest moves","fix":"pin it"}],"verified_ok":[]}`)
+	write := callTool("lab_write_file", `{"path":"/opt/stacks/x/compose.yaml","content":"x"}`)
+	f, rv := reviewFixture(t,
+		[][]string{write, handOver("x runs."), reply("Done."), write, reply("Pinned."), write, reply("Pinned again.")},
+		[][]string{finding, finding},
+	)
+	f.svc.quietAfter = 100 * time.Millisecond
+	th, _ := f.svc.Create(t.Context(), "", "", OriginOwner)
+	f.say(t, th.ID, "set up x")
+	waitFor(t, "two rounds and her last answer", func() bool {
+		r, _ := f.svc.running(th.ID)
+		return len(f.turnEnds(th.ID)) == 3 && !r
+	})
+	opts := f.svc.opts
+	opts.ReviewQuiet = 100 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	again, err := New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := again.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		sctx, scancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer scancel()
+		_ = again.Shutdown(sctx)
+	})
+	time.Sleep(600 * time.Millisecond)
+	if got := reviews(t, rv, th.ID, turnIDs(t, f, th.ID)...); len(got) != 2 {
+		t.Errorf("%d reviews, want the two rounds only", len(got))
 	}
 }

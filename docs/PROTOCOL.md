@@ -656,8 +656,11 @@ page, oldest first.
 
 #### Reviews of her lab work
 
-When a thread turn that changed her lab finishes, a second model (from another family) reviews the
-work against the lab itself (see PLAN.md, "Reviewing her lab work"). The thread is `running` (and
+When she hands over finished lab work (her `finish_work`; or her lab changes have sat unreviewed
+while the thread was quiet for 10 minutes; or she's answered a review's findings), a second model
+(from another family) reviews everything she changed since the last review against the lab itself
+(see PLAN.md, "Reviewing her lab work"). Its `turn_id` is the turn that handed the work over, or
+the thread's latest. The thread is `running` (and
 `reviewing`) meanwhile: a `say` to it gets `busy`, and `interrupt` stops the review. Each change of
 a review is a `thread_event` whose `event` is `{ type: "review", review: Review }`: once when it
 starts (`running`) and once when it ends.

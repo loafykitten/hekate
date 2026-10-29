@@ -7,6 +7,7 @@
 package threads
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -51,6 +52,7 @@ const (
 	maxPreview     = 160
 	placeholder    = "New thread"
 	notifyAfter    = time.Minute // a turn this long ends with a notification: the owner has likely looked away
+	reviewQuiet    = 10 * time.Minute
 	notifyBody     = 240
 	defaultHistory = 50
 	maxHistory     = 100
@@ -105,29 +107,33 @@ type Options struct {
 	// Lab carries the files passed in threads, and gives her lab_share_file; nil: no files.
 	Lab Lab
 	// Vision looks at images in the lab for her (look_at_image), with the lab; zero: no looking.
-	Vision   config.Model
-	Tamer    string
-	Location *time.Location
-	Logger   *slog.Logger
-	Now      func() time.Time // tests replace the clock
-	Limits   agent.Limits     // zero: Limits
+	Vision config.Model
+	// ReviewQuiet is how long a thread stays quiet before lab changes she didn't hand over are
+	// reviewed anyway; zero: reviewQuiet.
+	ReviewQuiet time.Duration
+	Tamer       string
+	Location    *time.Location
+	Logger      *slog.Logger
+	Now         func() time.Time // tests replace the clock
+	Limits      agent.Limits     // zero: Limits
 }
 
 // Service keeps the threads and their agents.
 type Service struct {
-	store   *store.Store
-	db      *sql.DB
-	opts    Options
-	hub     agent.Hub
-	events  proto.Events
-	pusher  Pusher
-	log     *slog.Logger
-	loc     *time.Location
-	now     func() time.Time
-	limits  agent.Limits
-	tools   []agent.Tool      // a thread agent's
-	labels  map[string]string // tool name -> its label, for steps
-	baseCtx context.Context   //nolint:containedctx // the service's lifetime, set by Start
+	store      *store.Store
+	db         *sql.DB
+	opts       Options
+	hub        agent.Hub
+	events     proto.Events
+	pusher     Pusher
+	log        *slog.Logger
+	loc        *time.Location
+	now        func() time.Time
+	limits     agent.Limits
+	tools      []agent.Tool      // a thread agent's
+	labels     map[string]string // tool name -> its label, for steps
+	quietAfter time.Duration
+	baseCtx    context.Context //nolint:containedctx // the service's lifetime, set by Start
 
 	mu    sync.Mutex // guards convs, and makes "may this thread start?" and starting it one step
 	convs map[string]*conv
@@ -157,7 +163,11 @@ func New(o Options) (*Service, error) {
 	if s.limits == (agent.Limits{}) {
 		s.limits = Limits
 	}
+	s.quietAfter = cmp.Or(o.ReviewQuiet, reviewQuiet)
 	s.tools = slices.Clone(o.Tools)
+	if o.Reviewer != nil {
+		s.tools = append(s.tools, s.finishTool())
+	}
 	if o.Lab != nil {
 		s.tools = append(s.tools, s.shareTool())
 		if o.Vision.Name != "" {
@@ -191,7 +201,7 @@ func (s *Service) Start(ctx context.Context) error {
 		}
 	}
 	s.baseCtx = ctx
-	return nil
+	return s.armPending(ctx)
 }
 
 // Shutdown stops the running thread turns and waits for them to wind down.
@@ -204,6 +214,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	s.mu.Unlock()
 	var errs []error
 	for _, c := range convs {
+		c.stopQuiet()
 		c.mu.Lock()
 		if c.review != nil {
 			c.review.cancel(errShutdown)
@@ -387,6 +398,7 @@ func (s *Service) Update(ctx context.Context, id string, p Patch) (Thread, error
 		if p.Archived != nil && *p.Archived {
 			c.ag.Stop()
 			c.stopReview()
+			c.stopQuiet()
 		}
 	}
 	s.events.Invalidate("threads")
@@ -459,6 +471,7 @@ type conv struct {
 	mu      sync.Mutex
 	starts  map[string]turnInfo           // running turns, by id
 	review  *reviewing                    // a review of its work in progress
+	quiet   *time.Timer                   // reviews her unreviewed lab changes if the thread stays quiet
 	sending map[string][]proto.ThreadFile // files sent with input whose turn hasn't started, by input id
 }
 
@@ -567,6 +580,7 @@ type threadHub struct{ c *conv }
 func (h threadHub) Broadcast(msg any) {
 	switch m := msg.(type) {
 	case proto.TurnStart:
+		h.c.stopQuiet() // she's working again: her next turn's end decides
 		h.c.claimFiles(&m)
 		msg = m
 	case proto.Error:

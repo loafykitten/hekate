@@ -81,3 +81,18 @@ func TestFollowupNote(t *testing.T) {
 		}
 	}
 }
+
+func TestUserMessageBiggerPicture(t *testing.T) {
+	msg := userMessage(Request{Round: 1, Owner: []string{"set it up"}, Replies: []string{"done"}, Actions: []string{"lab_shell: x"},
+		Handover: "It runs at :8080.", Budget: Budget(3), Earlier: &Report{Verified: []string{"gluetun is healthy"},
+			Findings: []Finding{{Severity: "high", Title: "Wrong password"}}}}, "rules")
+	for _, want := range []string{"It runs at :8080.", "gluetun is healthy", "Wrong password", "last review of her earlier work",
+		"You have 18 commands"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message lacks %q:\n%s", want, msg)
+		}
+	}
+	if Budget(0) != MinBudget || Budget(100) != MaxBudget {
+		t.Errorf("budget bounds: %d %d", Budget(0), Budget(100))
+	}
+}

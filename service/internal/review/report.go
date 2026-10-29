@@ -46,7 +46,10 @@ func userMessage(req Request, rules string) string {
 	}
 	b.WriteString("## The rules she must follow in her lab\n\n")
 	b.WriteString(strings.TrimSpace(rules) + "\n\n")
-	b.WriteString("## What she did in the work you're reviewing (her tool calls; their output and her reasoning are left out on purpose)\n\n")
+	if h := strings.TrimSpace(req.Handover); h != "" {
+		b.WriteString("## What she's handing over as done (her words)\n\n> " + strings.ReplaceAll(clipText(h, replyMax), "\n", "\n> ") + "\n\n")
+	}
+	b.WriteString("## What she did since the last review: the work you're reviewing (her tool calls, oldest first; their output and her reasoning are left out on purpose)\n\n")
 	if len(req.Actions) == 0 {
 		b.WriteString("(nothing recorded)\n")
 	}
@@ -60,12 +63,21 @@ func userMessage(req Request, rules string) string {
 		}
 		b.WriteString(clipText(m, replyMax) + "\n")
 	}
+	if req.Earlier != nil {
+		earlier, _ := json.MarshalIndent(struct {
+			Verified []string  `json:"verified_ok"`
+			Findings []Finding `json:"findings"`
+		}{req.Earlier.Verified, req.Earlier.Findings}, "", "  ")
+		b.WriteString("\n## The last review of her earlier work in this thread\n\nFor the bigger picture: what it checked and " +
+			"found true, and what it found wrong (she was given those and answered them). Don't redo that work, but say so " +
+			"when the new work breaks something it verified, or leaves one of its findings standing.\n\n```json\n" + string(earlier) + "\n```\n")
+	}
 	if req.Previous != nil {
 		prev, _ := json.MarshalIndent(req.Previous.Findings, "", "  ")
 		b.WriteString("\n## The first round's findings\n\nThis is the second round: she was given these and says she dealt with them. " +
 			"Check each, and review what her fixes changed.\n\n```json\n" + string(prev) + "\n```\n")
 	}
-	b.WriteString("\nReview this work. What the lab shows now is what counts.")
+	fmt.Fprintf(&b, "\nReview this work. What the lab shows now is what counts. You have %d commands for it.", req.Budget)
 	return b.String()
 }
 

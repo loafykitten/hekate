@@ -29,8 +29,9 @@ var systemPrompt string
 
 // Limits of one review.
 const (
-	MaxRounds  = 2 // the review of her fixes is the last
-	maxCalls   = 40
+	MaxRounds  = 2  // the review of her fixes is the last
+	MinBudget  = 12 // commands for the smallest piece of work
+	MaxBudget  = 40 // and for the largest
 	maxSteps   = 30 // model requests that may run commands
 	runTimeout = 15 * time.Minute
 	resultMax  = 8 << 10 // of one command's result, for the model
@@ -100,8 +101,17 @@ type Request struct {
 	Round    int
 	Owner    []string // the owner's messages in the thread, oldest first
 	Replies  []string // her replies, oldest first, the reviewed turn's last
-	Actions  []string // what the reviewed turn did: its commands, the files it wrote, its searches
+	Actions  []string // what she did since the last review: her commands, the files she wrote, her searches
+	Handover string   // what she said she's handing over as done, if she did
 	Previous *Report  // the first round's report, for the review of her fixes
+	Earlier  *Report  // the last review of earlier work in the thread, for the bigger picture
+	Budget   int      // commands it may run; 0 is MaxBudget
+}
+
+// Budget is how many commands a review of changes many lab changes gets: enough to check each,
+// within MinBudget and MaxBudget.
+func Budget(changes int) int {
+	return min(MaxBudget, max(MinBudget, MinBudget+2*changes))
 }
 
 // Report is what a review found.
@@ -146,12 +156,15 @@ var inspectTool = llm.Tool{
 func (r *Reviewer) Run(ctx context.Context, req Request) (Report, []Call, error) {
 	ctx, cancel := context.WithTimeout(ctx, runTimeout)
 	defer cancel()
+	if req.Budget <= 0 || req.Budget > MaxBudget {
+		req.Budget = MaxBudget
+	}
 	msgs := []llm.Message{{Role: llm.RoleSystem, Content: r.system}, {Role: llm.RoleUser, Content: userMessage(req, r.rules)}}
 	var calls []Call
 	fails := 0
 	final := ""
 	finished := false
-	for step := 0; step < maxSteps && !finished; step++ {
+	for step := 0; step < min(maxSteps, req.Budget) && !finished; step++ {
 		text, toolCalls, err := r.complete(ctx, msgs, true)
 		if err != nil {
 			return Report{}, calls, err
@@ -162,7 +175,7 @@ func (r *Reviewer) Run(ctx context.Context, req Request) (Report, []Call, error)
 		}
 		msgs = append(msgs, llm.Message{Role: llm.RoleAssistant, Content: text, ToolCalls: toolCalls})
 		for _, tc := range toolCalls {
-			content, call, err := r.inspect(ctx, tc, len(calls))
+			content, call, err := r.inspect(ctx, tc, len(calls), req.Budget)
 			switch {
 			case err != nil && ctx.Err() != nil:
 				return Report{}, calls, fmt.Errorf("review: %w", ctx.Err())
@@ -207,7 +220,7 @@ func (r *Reviewer) Run(ctx context.Context, req Request) (Report, []Call, error)
 
 // inspect runs one command the model asked for. A command that ran gets the next id and comes
 // back as a Call; one that was refused or couldn't be read doesn't.
-func (r *Reviewer) inspect(ctx context.Context, tc llm.ToolCall, ran int) (string, *Call, error) {
+func (r *Reviewer) inspect(ctx context.Context, tc llm.ToolCall, ran, budget int) (string, *Call, error) {
 	if tc.Name != inspectTool.Name {
 		return fmt.Sprintf("Not run: there's no tool %q; use %s.", tc.Name, inspectTool.Name), nil, nil
 	}
@@ -217,8 +230,8 @@ func (r *Reviewer) inspect(ctx context.Context, tc llm.ToolCall, ran int) (strin
 	if err := json.Unmarshal([]byte(tc.Arguments), &a); err != nil || strings.TrimSpace(a.Command) == "" {
 		return `Not run: the arguments must be {"command": "..."}.`, nil, nil
 	}
-	if ran >= maxCalls {
-		return "Not run: all 40 commands are used. Write your report now.", nil, nil
+	if ran >= budget {
+		return fmt.Sprintf("Not run: all %d commands are used. Write your report now.", budget), nil, nil
 	}
 	out, err := r.lab.Inspect(ctx, a.Command)
 	if err != nil {

@@ -410,6 +410,32 @@ by `service/internal/threads`. Contract: `PROTOCOL.md` (Threads, reviews).
   the guest agent; `build-vm.sh` sets it up in a new one. Without the key, reviews are off and
   nothing pretends otherwise.
 
+### Files in threads (agreed 2026-10-28)
+
+The owner wants to hand her things to work on (a PS5 homebrew folder, zipped, to update) and get
+the result back. Contract: `PROTOCOL.md` (Threads, Files). Service: `service/internal/threads`
+(`files.go`) and `service/internal/lab` (`files.go`).
+
+- **Where files live:** in her lab, never in the Hekate container next to mail and money. An
+  upload streams through the service over SSH into `/srv/files/in/<file id>/<name>` (written
+  beside it as `.part`, renamed once the size matches, removed if the transfer stops); a download
+  streams out the same way. At most 2 GiB each way, and an upload must leave 4 GB free on the lab's
+  disk.
+- **Sending:** the thread's composer uploads each file as it's attached, then `say` names them.
+  The owner's words are what's shown and saved as their message; she also reads where each file is
+  (a note after their words, in the model-facing copy only). The files are tied to the turn when it
+  starts, so `turn_start` and the saved history both carry them. A `say` still needs words: she
+  needs to know what to do with a file.
+- **Sharing back:** `lab_share_file` (threads only, with the lab) records a regular file in the lab
+  as a download under her reply. It points at the file in place rather than copying it (disk is
+  tight), with its size and modification time: a download of a file changed or removed since is
+  refused (410), and she shares it again.
+- **Clearing up:** her prompt tells her to work on a copy, delete an upload once she has what she
+  needs, and keep what she shares small. Nothing deletes files on its own; archiving a thread
+  leaves them.
+- **Reviews:** an upload isn't her work and isn't reviewed; what she does with it is, as any lab
+  change. The reviewer reads the owner's messages as she did, file locations included.
+
 ### M5 as built (2026-10-20)
 
 - **Viseme lip sync**: the service turns the voice's per-character timing into timed mouth shapes

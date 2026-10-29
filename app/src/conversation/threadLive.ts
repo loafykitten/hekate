@@ -1,4 +1,4 @@
-import { asReview, type Review } from "../data/model";
+import { asReview, asThreadFile, type Review, type ThreadFile } from "../data/model";
 import type { ThreadEvent, TurnEnd } from "./protocol";
 
 // What a thread's view shows of a turn happening now, built from its wrapped events. Text only:
@@ -15,6 +15,8 @@ export interface LiveTurn {
   id: string;
   // The owner's words for this turn, shown until saved history holds them.
   userText: string;
+  // The files the owner sent with it.
+  files: ThreadFile[];
   text: string;
   steps: LiveStep[];
   ended: boolean;
@@ -72,15 +74,20 @@ export function currentStep(turn: LiveTurn): LiveStep | undefined {
 }
 
 
+// The turn_start's files, tolerating a missing or odd list.
+export function liveFiles(v: unknown): ThreadFile[] {
+  return Array.isArray(v) ? v.flatMap((f) => asThreadFile(f) ?? []) : [];
+}
+
 function turnFor(state: ThreadLive, id: string): LiveTurn {
   // Joined mid-turn (the app opened while she was working): there was no turn_start to see.
-  return state.turn && state.turn.id === id && !state.turn.ended ? state.turn : { id, userText: "", text: "", steps: [], ended: false };
+  return state.turn && state.turn.id === id && !state.turn.ended ? state.turn : { id, userText: "", files: [], text: "", steps: [], ended: false };
 }
 
 export function reduceThreadEvent(state: ThreadLive, event: ThreadEvent): ThreadLive {
   switch (event.type) {
     case "turn_start":
-      return { ...state, error: undefined, failedInput: undefined, transcribing: false, turn: { id: event.turn_id, userText: event.user_text ?? "", text: "", steps: [], ended: false } };
+      return { ...state, error: undefined, failedInput: undefined, transcribing: false, turn: { id: event.turn_id, userText: event.user_text ?? "", files: liveFiles(event.files), text: "", steps: [], ended: false } };
     case "activity": {
       const turn = turnFor(state, event.turn_id);
       let steps: LiveStep[];

@@ -44,12 +44,28 @@ func (s *Service) shell(ctx context.Context, command string, stdin io.Reader, li
 
 // run is shell as any account.
 func (s *Service) run(ctx context.Context, who account, command string, stdin io.Reader, limit time.Duration, maxOut int) (shellResult, error) {
+	out := newCapWriter(maxOut)
+	exit, timedOut, err := s.exec(ctx, who, command, stdin, out, out, limit)
+	if err != nil {
+		return shellResult{}, err
+	}
+	res := shellResult{Exit: exit, TimedOut: timedOut}
+	res.Output, res.Cut = out.result()
+	return res, nil
+}
+
+// exec runs command with bash on the lab as who, its output to stdout and stderr, and returns
+// its exit status (-1: none, the connection dropped or it was cut off here) and whether its time
+// limit stopped it.
+func (s *Service) exec(ctx context.Context, who account, command string, stdin io.Reader, stdout, stderr io.Writer,
+	limit time.Duration,
+) (exit int, timedOut bool, err error) {
 	if !s.Configured() {
-		return shellResult{}, errNotSetUp
+		return 0, false, errNotSetUp
 	}
 	cfg, err := s.clientConfig(who)
 	if err != nil {
-		return shellResult{}, err
+		return 0, false, err
 	}
 	secs := int(limit.Round(time.Second) / time.Second)
 	remote := who.env + " timeout --kill-after=5 " + strconv.Itoa(secs) + " bash -c " + quote(command)
@@ -58,7 +74,7 @@ func (s *Service) run(ctx context.Context, who account, command string, stdin io
 
 	conn, err := s.dial(ctx, s.addr)
 	if err != nil {
-		return shellResult{}, fmt.Errorf("can't reach the lab: %w", err)
+		return 0, false, fmt.Errorf("can't reach the lab: %w", err)
 	}
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
@@ -66,38 +82,34 @@ func (s *Service) run(ctx context.Context, who account, command string, stdin io
 	c, chans, reqs, err := ssh.NewClientConn(conn, s.addr, cfg)
 	if err != nil {
 		_ = conn.Close()
-		return shellResult{}, fmt.Errorf("can't log in to the lab: %w", err)
+		return 0, false, fmt.Errorf("can't log in to the lab: %w", err)
 	}
 	_ = conn.SetDeadline(time.Time{})
 	client := ssh.NewClient(c, chans, reqs)
 	defer func() { _ = client.Close() }()
 	sess, err := client.NewSession()
 	if err != nil {
-		return shellResult{}, fmt.Errorf("open a session on the lab: %w", err)
+		return 0, false, fmt.Errorf("open a session on the lab: %w", err)
 	}
 	defer func() { _ = sess.Close() }()
 
-	out := newCapWriter(maxOut)
 	sess.Stdin = stdin
-	sess.Stdout = out
-	sess.Stderr = out
-	res := shellResult{Exit: 0}
+	sess.Stdout = stdout
+	sess.Stderr = stderr
 	runErr := sess.Run(remote)
 	var exitErr *ssh.ExitError
 	var missing *ssh.ExitMissingError
 	switch {
 	case runErr == nil:
 	case errors.As(runErr, &exitErr):
-		res.Exit = exitErr.ExitStatus()
+		exit = exitErr.ExitStatus()
 	case errors.As(runErr, &missing), ctx.Err() != nil:
-		res.Exit = -1
+		exit = -1
 	default:
-		return shellResult{}, fmt.Errorf("run on the lab: %w", runErr)
+		return 0, false, fmt.Errorf("run on the lab: %w", runErr)
 	}
 	// timeout(1) exits 124 when it stopped the command, 137 when it had to kill it.
-	res.TimedOut = ctx.Err() != nil || res.Exit == 124 || res.Exit == 137
-	res.Output, res.Cut = out.result()
-	return res, nil
+	return exit, ctx.Err() != nil || exit == 124 || exit == 137, nil
 }
 
 // clientConfig logs in with the account's key and accepts only the lab's own host key, written

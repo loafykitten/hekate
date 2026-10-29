@@ -19,6 +19,8 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/threads/{id}", s.handleGet)
 	mux.HandleFunc("PATCH /api/threads/{id}", s.handlePatch)
 	mux.HandleFunc("GET /api/threads/{id}/messages", s.handleMessages)
+	mux.HandleFunc("POST /api/threads/{id}/files", s.handleUpload)
+	mux.HandleFunc("GET /api/threads/{id}/files/{file}", s.handleDownload)
 }
 
 func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
@@ -102,7 +104,7 @@ func (s *Service) handleMessages(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = n
 	}
-	msgs, steps, err := s.Messages(r.Context(), id, before, limit)
+	msgs, steps, files, err := s.Messages(r.Context(), id, before, limit)
 	if err != nil {
 		httpx.Fail(w, s.log, r, err)
 		return
@@ -112,18 +114,18 @@ func (s *Service) handleMessages(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, s.log, r, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"messages": msgs, "steps": steps, "reviews": reviews})
+	httpx.JSON(w, http.StatusOK, map[string]any{"messages": msgs, "steps": steps, "reviews": reviews, "files": files})
 }
 
 // Messages returns a page of a thread's visible history, newest last, and the
-// tool steps of the turns on that page, oldest first.
-func (s *Service) Messages(ctx context.Context, id string, before int64, limit int) ([]proto.HistoryMessage, []Step, error) {
+// tool steps and files of the turns on that page, oldest first.
+func (s *Service) Messages(ctx context.Context, id string, before int64, limit int) ([]proto.HistoryMessage, []Step, []proto.ThreadFile, error) {
 	if _, err := s.Get(ctx, id); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	stored, err := s.store.VisibleMessages(ctx, id, before, limit)
 	if err != nil {
-		return nil, nil, fmt.Errorf("thread messages: %w", err)
+		return nil, nil, nil, fmt.Errorf("thread messages: %w", err)
 	}
 	msgs := make([]proto.HistoryMessage, len(stored))
 	turns := map[string]bool{}
@@ -137,21 +139,25 @@ func (s *Service) Messages(ctx context.Context, id string, before int64, limit i
 		}
 	}
 	steps := []Step{}
+	files, err := s.turnFiles(ctx, id, turnIDs)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	if len(turnIDs) == 0 {
-		return msgs, steps, nil
+		return msgs, steps, files, nil
 	}
 	marks := strings.Repeat(", ?", len(turnIDs)-1)
 	query := `SELECT turn_id, tool, status, result, created_at FROM activity WHERE turn_id IN (?` + marks + `) ORDER BY id` //nolint:gosec // only placeholders are joined; every value is bound
 	rows, err := s.db.QueryContext(ctx, query, turnIDs...)
 	if err != nil {
-		return nil, nil, fmt.Errorf("thread steps: %w", err)
+		return nil, nil, nil, fmt.Errorf("thread steps: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var st Step
 		var at string
 		if err := rows.Scan(&st.TurnID, &st.Tool, &st.Status, &st.Summary, &at); err != nil {
-			return nil, nil, fmt.Errorf("thread steps: %w", err)
+			return nil, nil, nil, fmt.Errorf("thread steps: %w", err)
 		}
 		st.Label = s.labels[st.Tool]
 		if st.Label == "" {
@@ -161,9 +167,9 @@ func (s *Service) Messages(ctx context.Context, id string, before int64, limit i
 		steps = append(steps, st)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, nil, fmt.Errorf("thread steps: %w", err)
+		return nil, nil, nil, fmt.Errorf("thread steps: %w", err)
 	}
-	return msgs, steps, nil
+	return msgs, steps, files, nil
 }
 
 // reviews returns the reviews of the turns on a page of messages, or that started them.

@@ -20,7 +20,7 @@ client whose input started a turn (`origin` matches its `client_id`) plays the a
 | `ready` | `client_id`, `conversation_id`, `capabilities: { stt, tts }`, `gestures: string[]`, `timezone` | Sent once on connect. `stt`/`tts` are false when unconfigured. `timezone` is the IANA zone the service schedules in; clients display times in it. |
 | `capabilities` | `capabilities: { stt, tts }` | What the service can do changed after connecting (e.g. speech-to-text finished loading). |
 | `transcript` | `id`, `text`, `superseded?` | Push-to-talk result for input `id`. An empty `text` means nothing was heard, and no turn follows. `superseded: true` means newer input (from any device) arrived while it was transcribed, so it was dropped. |
-| `turn_start` | `turn_id`, `input_id`, `origin`, `user_text` | She's answering `user_text`. |
+| `turn_start` | `turn_id`, `input_id`, `origin`, `user_text`, `files?` | She's answering `user_text`. In a thread, `files` lists the files the owner sent with it (`ThreadFile`, see Threads, Files); absent when none. |
 | `activity` | `turn_id`, `tool`, `label`, `state: "start" \| "done" \| "error"` | A tool is running, e.g. label "Checking your calendar". |
 | `segment` | see below | One sentence of her reply, ready to perform. |
 | `card` | `turn_id`, `card: { kind, id, title, data }` | Something to show on screen (M2+). |
@@ -71,7 +71,10 @@ shape is made; with no visemes the mouth follows loudness alone.
 | `checkin` | `id`, `day?`, `quiet?` | The owner tapped the evening check-in (see Routines). `day` (YYYY-MM-DD) is the day its notification asked about; without it, the current one. Starts a turn with an empty `user_text`, opened with an `evening_checkin` call, unless there's nothing to start: then nothing is sent back. `quiet` as for `say`. |
 
 `say`, `ptt_start`, `ptt_end`, `ptt_cancel` and `interrupt` take an optional `thread` (a thread id,
-see Threads): the input goes to that thread instead of the main conversation. A thread's
+see Threads): the input goes to that thread instead of the main conversation. A `say` to a thread
+also takes `files`: the ids of up to 10 files uploaded to that thread and not yet sent (see
+Threads, Files). Files that don't belong to the thread, were already sent, or a `say` with files
+outside a thread get `error` `bad_message`, and nothing starts. A thread's
 push-to-talk doesn't hush the main conversation, and thread replies are text only (no audio). A
 `say` to an unknown or archived thread gets `error` `bad_message`. A thread doesn't cut its own
 work short for new input: a `say` (typed or transcribed) while it's working, or one that would
@@ -569,7 +572,7 @@ each run is recorded and kept 90 days.
 A thread is a conversation of its own for longer work: research, lab work, anything that would
 crowd the main conversation. Renamon answers in writing (markdown), as herself, with work tools
 only: web search and reading, her lab (`lab_shell` with up to 10-minute commands,
-`lab_write_file`, `lab_status`, a guarded `lab_snapshot`) and `think_deeper`. What she knows about
+`lab_write_file`, `lab_status`, a guarded `lab_snapshot`, `lab_share_file`) and `think_deeper`. What she knows about
 the owner comes along as context; mail, money, calendar, tasks and reminders don't. Threads aren't
 read by the nightly reflection.
 
@@ -596,7 +599,7 @@ read by the nightly reflection.
 | `POST /api/threads` | `{ title?, model? }` | `Thread` (201). Without a title it's "New thread" until the first message names it (its first words, up to 60 characters). The first message is a `say` with `thread` on the socket. |
 | `GET /api/threads/{id}` | | `Thread` |
 | `PATCH /api/threads/{id}` | `{ title?, model?, archived? }` | `Thread`. Title 1–80 characters. Archiving stops a running turn. |
-| `GET /api/threads/{id}/messages?before=<message id>&limit=<n ≤ 100>` | | `{ messages: [{ id, role, text, turn_id, created_at }], steps: [{ turn_id, tool, label, status: "ok" \| "error", summary, created_at }], reviews: [Review] }`: messages as in `/api/conversation/messages` (newest last), the tool steps of the turns those messages belong to, oldest first, and the reviews of those turns or that started them (`turn_id` or `followup_turn_id` on the page), oldest first. `summary` is the start of the step's result (≤ 200 characters). |
+| `GET /api/threads/{id}/messages?before=<message id>&limit=<n ≤ 100>` | | `{ messages: [{ id, role, text, turn_id, created_at }], steps: [{ turn_id, tool, label, status: "ok" \| "error", summary, created_at }], reviews: [Review], files: [ThreadFile] }`: messages as in `/api/conversation/messages` (newest last), the tool steps of the turns those messages belong to, oldest first, and the reviews of those turns or that started them (`turn_id` or `followup_turn_id` on the page), oldest first. `summary` is the start of the step's result (≤ 200 characters). |
 
 Renamon reaches threads from the main conversation too: `thread_start` opens one with a first
 message and starts it working (e.g. "set up qBittorrent in the lab"), `thread_send` passes the
@@ -607,6 +610,43 @@ started or messaged ends, or any thread turn ends after running a minute or more
 
 Thread changes (created, renamed, archived, started or finished a turn or a review) broadcast
 `invalidate` with `threads`.
+
+#### Files
+
+The owner can send her files in a thread, and she can hand files back. Files live in her lab (they
+need it set up), never in the service: an upload streams straight into the lab over SSH, a
+download straight out of it.
+
+```jsonc
+// ThreadFile
+{
+  "id": "f_9a3c51e2b7d0",
+  "thread_id": "th_3f9c2a71",
+  "turn_id": "t_…",                 // the turn it came with or from; "" for an upload not sent yet
+  "direction": "in",               // "in": the owner sent it | "out": she shared it
+  "name": "ps5-homebrew.zip",
+  "size": 88211456,                // bytes
+  "path": "/srv/files/in/f_9a3c51e2b7d0/ps5-homebrew.zip",  // where it is in the lab
+  "created_at": "…"
+}
+```
+
+| Method & path | Body | Returns |
+|---|---|---|
+| `POST /api/threads/{id}/files?name=<file name>` | the file's bytes (any content type); `Content-Length` required | `ThreadFile` (201), not yet sent. 413 over 2 GiB, 507 when the lab would be left with under 4 GB free, 503 without a lab, 409 for an archived thread. The name is reduced to a plain file name (no folders; control characters and `/` replaced). |
+| `GET /api/threads/{id}/files/{file}` | | The file, as an attachment download with its name and size. 410 `{ error }` when it's gone from the lab, or (a shared file) changed since she shared it. |
+
+To send files, upload each, then `say` with their ids in `files`. Her message is the owner's words
+(`text` stays exactly what they typed; a `say` still needs words) and she reads where each file is.
+Uploads that are never sent stay in the lab until she or the owner clears them.
+
+She shares a file with `lab_share_file`: it must be a regular file in her lab of at most 2 GiB. It
+becomes a `ThreadFile` with `direction: "out"` and the sharing turn's `turn_id`; the app shows it
+as a download under that turn's reply. It refers to the file in place (no copy), so the download
+is refused (410) once she changes or removes it.
+
+`GET /api/threads/{id}/messages` also returns `files: [ThreadFile]`: the files of the turns on the
+page, oldest first.
 
 #### Reviews of her lab work
 

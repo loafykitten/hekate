@@ -502,7 +502,7 @@ export class Conversation {
 
   // Types into a thread. It runs beside the main conversation: nothing here is interrupted.
   // Returns the input's id, which a later rejection (`threads.get(thread).failedInput`) names.
-  sendThreadText(thread: string, text: string): string | undefined {
+  sendThreadText(thread: string, text: string, files?: string[]): string | undefined {
     const trimmed = text.trim();
     if (!trimmed || this.threadWorking(thread)) return undefined;
     if (trimmed.length > MAX_TEXT_LENGTH) {
@@ -513,7 +513,7 @@ export class Conversation {
       this.toast("error", "Not connected to Hekate yet.", "offline-send");
       return undefined;
     }
-    const id = this.client.say(trimmed, false, thread);
+    const id = this.client.say(trimmed, false, thread, files);
     if (!id) return undefined;
     this.rememberThreadInput(id, thread);
     this.threads.sent(thread);

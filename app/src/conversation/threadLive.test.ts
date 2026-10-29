@@ -36,6 +36,18 @@ const review = (over: Partial<Review> = {}): ThreadEvent => ({ type: "review", r
 const run = (...events: ThreadEvent[]) => events.reduce(reduceThreadEvent, IDLE);
 
 describe("reduceThreadEvent", () => {
+  it("keeps the files sent with the turn, and tolerates a missing or odd list", () => {
+    const file = { id: "f1", thread_id: "th", turn_id: "t1", direction: "in", name: "backup.zip", size: 84, path: "/x", created_at: "" };
+    const withFiles = run({ ...start(), files: [file, { nope: true }] } as ThreadEvent);
+    expect(withFiles.turn?.files).toEqual([expect.objectContaining({ id: "f1", name: "backup.zip", direction: "in" })]);
+    expect(run(start()).turn?.files).toEqual([]);
+    expect(run({ ...start(), files: "x" } as unknown as ThreadEvent).turn?.files).toEqual([]);
+    // Joined mid-turn: no turn_start, no files.
+    expect(run(segment("hi")).turn?.files).toEqual([]);
+    // They stay with the turn as it goes on.
+    expect(reduceThreadEvent(withFiles, segment("ok")).turn?.files).toHaveLength(1);
+  });
+
   it("starts a turn with the owner's words", () => {
     const s = run(start());
     expect(isRunning(s)).toBe(true);

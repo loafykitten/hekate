@@ -85,6 +85,9 @@ type Service struct {
 	checking sync.Mutex // one security check at a time
 	snapping sync.Mutex // one snapshot at a time, its checks included
 
+	uploadMu  sync.Mutex
+	uploading int64 // bytes of the uploads in progress, which the disk may not show yet
+
 	bgMu  sync.Mutex
 	bgCtx context.Context //nolint:containedctx // Run's context, for background work started by tools
 	bg    sync.WaitGroup

@@ -899,10 +899,18 @@ func TestPTTStartHushIsAtomicWithInputOrdering(t *testing.T) {
 	}
 }
 
-// threadConv is a thread for the socket: a fakeConv with its own id.
-type threadConv struct{ *fakeConv }
+// threadConv is a thread for the socket: a fakeConv with its own id, which takes files.
+type threadConv struct {
+	*fakeConv
+	files chan []string
+}
 
 func (threadConv) ConversationID() string { return "th_1" }
+
+func (c threadConv) SayWithFiles(origin, id, text string, files []string, quiet bool) {
+	c.files <- files
+	c.Say(origin, id, text, quiet)
+}
 
 type fakeThreads struct{ th threadConv }
 
@@ -917,7 +925,7 @@ func (f fakeThreads) Input(_ context.Context, id string) (Input, error) {
 // A thread's push-to-talk doesn't hush the main conversation, and an unknown
 // thread is an error for the sender.
 func TestThreadInput(t *testing.T) {
-	main, thread := newFakeConv(), threadConv{newFakeConv()}
+	main, thread := newFakeConv(), threadConv{newFakeConv(), make(chan []string, 4)}
 	hub := NewHub(nil)
 	srv := httptest.NewServer(New(Options{Conversation: main, Threads: fakeThreads{thread}, Hub: hub,
 		STT: &fakeSTT{ready: true, text: "use port 8090"}}).Routes())
@@ -928,6 +936,22 @@ func TestThreadInput(t *testing.T) {
 	send(t, c, map[string]any{"type": "say", "id": "s1", "text": "set up qbit", "thread": "th_1"})
 	if got := <-thread.sayCh; got.text != "set up qbit" || got.id != "s1" {
 		t.Errorf("thread got %+v", got)
+	}
+	send(t, c, map[string]any{"type": "say", "id": "s1f", "text": "update these", "thread": "th_1", "files": []string{"f_1", "f_2"}})
+	if got := <-thread.files; !slices.Equal(got, []string{"f_1", "f_2"}) {
+		t.Errorf("thread got files %v", got)
+	}
+	if got := <-thread.sayCh; got.text != "update these" || got.id != "s1f" {
+		t.Errorf("thread got %+v with files", got)
+	}
+	// Files go only to a thread, and at most ten at once.
+	send(t, c, map[string]any{"type": "say", "id": "s1m", "text": "here", "files": []string{"f_1"}})
+	if m := readUntil(t, c, "error"); m[len(m)-1]["code"] != proto.CodeBadMessage || m[len(m)-1]["input_id"] != "s1m" {
+		t.Errorf("files to the main conversation: %v", m[len(m)-1])
+	}
+	send(t, c, map[string]any{"type": "say", "id": "s1x", "text": "here", "thread": "th_1", "files": make([]string, 11)})
+	if m := readUntil(t, c, "error"); m[len(m)-1]["code"] != proto.CodeBadMessage || m[len(m)-1]["input_id"] != "s1x" {
+		t.Errorf("eleven files: %v", m[len(m)-1])
 	}
 	send(t, c, map[string]any{"type": "say", "id": "s2", "text": "hello", "thread": "th_9"})
 	if m := readUntil(t, c, "error"); m[len(m)-1]["code"] != proto.CodeBadMessage || m[len(m)-1]["input_id"] != "s2" {

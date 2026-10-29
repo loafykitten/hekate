@@ -625,6 +625,16 @@ describe("Conversation: threads", () => {
     expect(t.state().caption?.text).toBe("hi"); // not "go on"
   });
 
+  it("sends a thread message with the ids of its uploaded files, and none otherwise", () => {
+    const t = setup();
+    expect(t.conversation.sendThreadText("th1", "update it", ["f_1", "f_2"])).toBeTruthy();
+    expect(t.socket.json.at(-1)).toMatchObject({ type: "say", text: "update it", thread: "th1", files: ["f_1", "f_2"] });
+    t.conversation.sendThreadText("th1", "no files", []);
+    expect(t.socket.json.at(-1)).not.toHaveProperty("files");
+    t.conversation.sendThreadText("th1", "plain");
+    expect(t.socket.json.at(-1)).not.toHaveProperty("files");
+  });
+
   it("talks to a thread with the same microphone, without hushing the main conversation", async () => {
     const t = setup();
     t.socket.receive({ type: "turn_start", turn_id: "m1", input_id: "x", origin: "c1", user_text: "hi" });

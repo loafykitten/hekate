@@ -35,7 +35,7 @@ func SystemPrompt(lab string, reviews func() bool) func(tamer string) string {
 			strings.TrimSpace(persona.Thread),
 		}
 		if lab != "" {
-			parts = append(parts, persona.Section(persona.ThreadLab, "Your lab"))
+			parts = append(parts, persona.Section(persona.ThreadLab, "Your lab"), persona.Section(persona.ThreadLab, "Files"))
 			if reviews != nil && reviews() {
 				parts = append(parts, persona.Section(persona.ThreadLab, "Reviews of your lab work"))
 			}
@@ -88,7 +88,7 @@ func (s *Service) startTool() agent.Tool {
 			if err != nil {
 				return agent.Result{}, err
 			}
-			if busy := c.say(OriginRenamon, "renamon-"+t.ID, msg); busy != "" {
+			if _, busy := c.say(OriginRenamon, "renamon-"+t.ID, msg, nil); busy != "" {
 				return agent.Result{Content: fmt.Sprintf("Opened thread %s %q, but it couldn't start: %s", t.ID, t.Title, busy)}, nil
 			}
 			return agent.Result{Content: fmt.Sprintf("Opened thread %s %q and it's working on it. The owner hears when it's done.", t.ID, t.Title)}, nil
@@ -126,7 +126,7 @@ func (s *Service) sendTool() agent.Tool {
 			if err != nil {
 				return agent.Result{}, err
 			}
-			if busy := c.say(OriginRenamon, "renamon-"+newID(), msg); busy != "" {
+			if _, busy := c.say(OriginRenamon, "renamon-"+newID(), msg, nil); busy != "" {
 				return agent.Result{Content: fmt.Sprintf("Thread %q didn't take it: %s", t.Title, busy)}, nil
 			}
 			return agent.Result{Content: fmt.Sprintf("Passed it to thread %q; it's working on it. The owner hears when it's done.", t.Title)}, nil
@@ -160,7 +160,7 @@ func (s *Service) readTool() agent.Tool {
 			if n <= 0 {
 				n = 2
 			}
-			msgs, _, err := s.Messages(ctx, t.ID, 0, min(n, maxRead))
+			msgs, _, _, err := s.Messages(ctx, t.ID, 0, min(n, maxRead))
 			if err != nil {
 				return agent.Result{}, err
 			}

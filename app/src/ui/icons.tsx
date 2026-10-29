@@ -26,6 +26,24 @@ export const MicIcon = (p: SVGProps<SVGSVGElement>) => (
   </Icon>
 );
 
+export const PaperclipIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="m20 11.5-8.2 8.2a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8" />
+  </Icon>
+);
+
+export const DownloadIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14" />
+  </Icon>
+);
+
+export const FileIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M6.5 3h7l4.5 4.5V20a1 1 0 0 1-1 1H6.5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM13.5 3v4.5H18" />
+  </Icon>
+);
+
 export const KeyboardIcon = (p: SVGProps<SVGSVGElement>) => (
   <Icon {...p}>
     <rect x="2.5" y="6" width="19" height="12" rx="2.5" />

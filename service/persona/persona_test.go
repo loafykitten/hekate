@@ -28,6 +28,11 @@ func TestThreadSectionsExist(t *testing.T) {
 			t.Errorf("renamon.md has no %q section", h)
 		}
 	}
+	for _, h := range []string{"Your lab", "Reviews of your lab work", "Files"} {
+		if !strings.Contains(Section(ThreadLab, h), "\n") {
+			t.Errorf("thread_lab.md has no %q section", h)
+		}
+	}
 	if !strings.Contains(ThreadLab, "{{lab}}") || !strings.Contains(Thread, "{{tamer}}") {
 		t.Error("thread prompts lost their placeholders")
 	}

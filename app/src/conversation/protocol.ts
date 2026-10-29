@@ -28,6 +28,8 @@ export interface TurnStart {
   input_id: string;
   origin: string;
   user_text: string;
+  // In a thread: the files the owner sent with the message.
+  files?: unknown;
 }
 
 export interface Activity {
@@ -157,7 +159,7 @@ export type ServerMessageType = ServerMessage["type"];
 export type ClientMessage =
   // quiet: this device has her voice off, so the turn is answered without speech.
   // thread: the input goes to that thread instead of the main conversation.
-  | { type: "say"; id: string; text: string; quiet?: boolean; thread?: string }
+  | { type: "say"; id: string; text: string; quiet?: boolean; thread?: string; files?: string[] }
   | { type: "ptt_start"; id: string; sample_rate: number; thread?: string }
   | { type: "ptt_end"; id: string; quiet?: boolean; thread?: string }
   | { type: "ptt_cancel"; id: string; thread?: string }

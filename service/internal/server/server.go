@@ -82,6 +82,13 @@ type Input interface {
 	Hush()
 }
 
+// FileInput is an Input that takes files with the words: a thread.
+type FileInput interface {
+	Input
+	// SayWithFiles starts a turn with the files (uploaded, not yet sent) the words came with.
+	SayWithFiles(origin, inputID, text string, files []string, quiet bool)
+}
+
 // Threads finds a thread for socket input.
 type Threads interface {
 	// Input returns the thread's conversation, or an error for an unknown or
@@ -128,6 +135,14 @@ func (s *Server) say(in Input, origin, id, text string, quiet bool) {
 	defer s.inputMu.Unlock()
 	s.inputs[in.ConversationID()]++
 	in.Say(origin, id, text, quiet)
+}
+
+// sayWithFiles is say for words sent with files.
+func (s *Server) sayWithFiles(in FileInput, origin, id, text string, files []string, quiet bool) {
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	s.inputs[in.ConversationID()]++
+	in.SayWithFiles(origin, id, text, files, quiet)
 }
 
 // checkIn starts the evening check-in: input like any other.

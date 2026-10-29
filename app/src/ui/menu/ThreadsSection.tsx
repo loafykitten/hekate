@@ -41,7 +41,8 @@ export function ThreadsSection() {
   if (openId) {
     return (
       <Suspense fallback={<StateMessage kind="loading" />}>
-        <ThreadView id={openId} onBack={() => setOpenId(undefined)} />
+        {/* Keyed: another thread is a fresh view, with its own draft and attachments. */}
+        <ThreadView key={openId} id={openId} onBack={() => setOpenId(undefined)} />
       </Suspense>
     );
   }

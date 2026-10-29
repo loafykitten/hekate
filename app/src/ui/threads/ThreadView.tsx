@@ -1,7 +1,7 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
 import { currentStep, historyHolds, isRunning, mergeReviews, placeReviews, reviewRunning } from "../../conversation/threadLive";
 import { useThread, useThreadMessages, usePatchThread } from "../../data/hooks";
-import type { Review, Thread, ThreadModel, ThreadStep } from "../../data/model";
+import type { Review, Thread, ThreadFile, ThreadModel, ThreadStep } from "../../data/model";
 import { ApiError } from "../../data/rest";
 import { useConversation, useThreadLive } from "../ConversationContext";
 import { ArchiveIcon, BackIcon, EditIcon } from "../icons";
@@ -12,6 +12,8 @@ import { Markdown } from "./Markdown";
 import { MODEL_LABEL } from "./labels";
 import { ReviewCard } from "./ReviewCard";
 import { ThreadComposer } from "./ThreadComposer";
+import { ThreadFiles } from "./ThreadFiles";
+import { useAttachments } from "./useAttachments";
 import { ThreadSteps, type StepView } from "./ThreadSteps";
 import styles from "./threads.module.css";
 
@@ -33,6 +35,8 @@ export function ThreadView({ id, onBack }: { id: string; onBack: () => void }) {
   const rootRef = useRef<HTMLElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
+  const attachments = useAttachments(id);
+  const [dragging, setDragging] = useState(false);
 
   // The thread view is what's on screen: P talks to it, the menu makes room, focus moves in.
   useEffect(() => {
@@ -65,6 +69,19 @@ export function ThreadView({ id, onBack }: { id: string; onBack: () => void }) {
   // Saved reviews (a page may repeat one) and the ones seen live, one card each.
   const liveReviews = live.reviews;
   const reviews = useMemo(() => mergeReviews((pages ?? []).flatMap((p) => p.reviews ?? []), liveReviews), [pages, liveReviews]);
+  // The files of the turns on screen, once each (a page may repeat one), by turn and direction.
+  const files = useMemo(() => {
+    const byTurn = new Map<string, { in: ThreadFile[]; out: ThreadFile[] }>();
+    const seen = new Set<string>();
+    for (const f of (pages ?? []).flatMap((p) => p.files ?? [])) {
+      if (seen.has(f.id) || !f.turn_id) continue;
+      seen.add(f.id);
+      const entry = byTurn.get(f.turn_id) ?? { in: [], out: [] };
+      entry[f.direction].push(f);
+      byTurn.set(f.turn_id, entry);
+    }
+    return byTurn;
+  }, [pages]);
   const placed = useMemo(() => placeReviews(messages, reviews), [messages, reviews]);
 
   const turn = live.turn;
@@ -109,9 +126,34 @@ export function ThreadView({ id, onBack }: { id: string; onBack: () => void }) {
   const looseBefore = placed.loose.filter((r) => turn && r.followup_turn_id === turn.id);
   const looseAfter = placed.loose.filter((r) => !looseBefore.includes(r));
   const shownSteps = new Set<string>();
+  const canAttach = !t.archived;
+  // Files dropped anywhere on the thread attach to the next message (desktop; a phone has the button).
+  const hasFiles = (e: DragEvent) => canAttach && e.dataTransfer.types.includes("Files");
 
   return (
-    <section ref={rootRef} className={styles.view} role="region" aria-label={`Thread: ${t.title}`} tabIndex={-1} onKeyDown={onKeyDown}>
+    <section
+      ref={rootRef}
+      className={styles.view}
+      role="region"
+      aria-label={`Thread: ${t.title}`}
+      tabIndex={-1}
+      onKeyDown={onKeyDown}
+      data-dropping={dragging || undefined}
+      onDragOver={(e) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+      }}
+      onDrop={(e) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        setDragging(false);
+        attachments.add([...e.dataTransfer.files]);
+      }}
+    >
       <header className={styles.head}>
         <div className={styles.headRow}>
           <BackButton onBack={onBack} />
@@ -152,15 +194,17 @@ export function ThreadView({ id, onBack }: { id: string; onBack: () => void }) {
           let body;
           if (m.role === "user") {
             // A turn started by a review has no owner message; never an empty bubble.
-            body = m.text ? <p className={styles.mine}>{m.text}</p> : null;
+            body = m.text ? <Mine thread={id} text={m.text} files={files.get(m.turn_id)?.in ?? []} /> : null;
           } else {
             // A turn's steps sit under its first reply.
-            const own = shownSteps.has(m.turn_id) ? [] : savedSteps(steps, m.turn_id);
+            const first = !shownSteps.has(m.turn_id);
+            const own = first ? savedSteps(steps, m.turn_id) : [];
             shownSteps.add(m.turn_id);
             body = (
               <div className={styles.hers}>
                 <Markdown text={m.text} />
                 <ThreadSteps steps={own} />
+                {first && <ThreadFiles thread={id} files={files.get(m.turn_id)?.out ?? []} direction="out" />}
               </div>
             );
           }
@@ -172,7 +216,7 @@ export function ThreadView({ id, onBack }: { id: string; onBack: () => void }) {
             </Fragment>
           );
         })}
-        {turn && !savedUser && turn.userText && <p className={styles.mine}>{turn.userText}</p>}
+        {turn && !savedUser && turn.userText && <Mine thread={id} text={turn.userText} files={turn.files} />}
         {/* Reviews whose turn isn't saved yet come before the reply being written to their findings, else after. */}
         {looseBefore.map((r) => (
           <ReviewCard key={r.id} review={r} />
@@ -212,7 +256,12 @@ export function ThreadView({ id, onBack }: { id: string; onBack: () => void }) {
           </Button>
         </div>
       ) : (
-        <ThreadComposer thread={id} running={running} reviewing={reviewing && !isRunning(live)} transcribing={live.transcribing} />
+        <ThreadComposer thread={id} attachments={attachments} running={running} reviewing={reviewing && !isRunning(live)} transcribing={live.transcribing} />
+      )}
+      {dragging && (
+        <div className={styles.dropHint} aria-hidden="true">
+          Drop files to attach them
+        </div>
       )}
     </section>
   );
@@ -239,6 +288,17 @@ function BackButton({ onBack }: { onBack: () => void }) {
       <BackIcon />
       Threads
     </Button>
+  );
+}
+
+// The owner's message: their words in a bubble, the files they sent beneath it.
+function Mine({ thread, text, files }: { thread: string; text: string; files: readonly ThreadFile[] }) {
+  if (files.length === 0) return <p className={styles.mine}>{text}</p>;
+  return (
+    <div className={styles.mineGroup}>
+      <p className={styles.mine}>{text}</p>
+      <ThreadFiles thread={thread} files={files} direction="in" />
+    </div>
   );
 }
 

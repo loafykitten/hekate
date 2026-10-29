@@ -235,8 +235,9 @@ func (s *Service) turnActions(ctx context.Context, turnID string) ([]string, boo
 // conversationText is what the owner wrote in the thread and her replies, a turn's reply as one,
 // oldest first.
 func (s *Service) conversationText(ctx context.Context, id string) (owner, replies []string, err error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT turn_id, role, text FROM messages WHERE conversation_id = ?
-		AND role IN ('user', 'assistant') AND text != '' ORDER BY id`, id)
+	// The owner's side as she read it: their words, and where any files they sent are.
+	rows, err := s.db.QueryContext(ctx, `SELECT turn_id, role, CASE role WHEN 'user' THEN content ELSE text END
+		FROM messages WHERE conversation_id = ? AND role IN ('user', 'assistant') AND text != '' ORDER BY id`, id)
 	if err != nil {
 		return nil, nil, fmt.Errorf("thread text: %w", err)
 	}

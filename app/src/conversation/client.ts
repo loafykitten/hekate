@@ -165,11 +165,11 @@ export class ConversationClient {
 
   // `thread` sends the input to that thread. A thread has its own turn: the main conversation's
   // is left running, and the server restarts the thread's own on new input.
-  say(text: string, quiet = false, thread?: string): string | undefined {
+  say(text: string, quiet = false, thread?: string, files?: string[]): string | undefined {
     if (!this.canSend()) return undefined;
     if (!thread) this.interruptForNewInput();
     const id = newId();
-    return this.send({ type: "say", id, text, ...(quiet ? { quiet } : {}), ...(thread ? { thread } : {}) }) ? id : undefined;
+    return this.send({ type: "say", id, text, ...(quiet ? { quiet } : {}), ...(thread ? { thread } : {}), ...(thread && files?.length ? { files } : {}) }) ? id : undefined;
   }
 
   checkIn(day?: string, quiet = false): string | undefined {

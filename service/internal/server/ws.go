@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -276,9 +277,35 @@ func (ss *session) onSay(m proto.ClientMessage) {
 		ss.sendTo(proto.NewError(proto.CodeTooLong, "That's too long for me to take in at once.", m.ID))
 		return
 	}
+	if len(m.Files) > 0 {
+		ss.onSayWithFiles(m, text)
+		return
+	}
 	if in, ok := ss.input(m); ok {
 		ss.s.say(in, ss.id, m.ID, text, m.Quiet)
 	}
+}
+
+// onSayWithFiles sends words with files, which only a thread takes.
+func (ss *session) onSayWithFiles(m proto.ClientMessage, text string) {
+	if m.Thread == "" {
+		ss.sendTo(proto.NewError(proto.CodeBadMessage, "Files can only be sent in a thread.", m.ID))
+		return
+	}
+	if len(m.Files) > proto.MaxSayFiles {
+		ss.sendTo(proto.NewError(proto.CodeBadMessage, fmt.Sprintf("Send at most %d files at once.", proto.MaxSayFiles), m.ID))
+		return
+	}
+	in, ok := ss.input(m)
+	if !ok {
+		return
+	}
+	fi, ok := in.(FileInput)
+	if !ok {
+		ss.sendTo(proto.NewError(proto.CodeBadMessage, "Files can only be sent in a thread.", m.ID))
+		return
+	}
+	ss.s.sayWithFiles(fi, ss.id, m.ID, text, m.Files, m.Quiet)
 }
 
 // input is where m goes: its thread, or the main conversation. An unknown

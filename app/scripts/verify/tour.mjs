@@ -185,6 +185,7 @@ const THREADS = [
   thread("th_bb22", "Set up qBittorrent", { preview: "qBittorrent runs at http://lab.example.com:8080. The login is in the lab inventory.", updated_at: ago(42) }),
   thread("th_dd44", "Set up the downloads stack", { preview: "Fixed: the web UI now asks for a login and the ports are bound to the lab network.", updated_at: ago(20) }),
   thread("th_ee55", "Move the photo share to the NAS volume", { preview: "Done. The share mounts at /srv/photos and the old copy is still in place.", updated_at: ago(90) }),
+  thread("th_ff66", "Update the PS5 homebrew folder", { preview: "Done. I bumped the payload versions and zipped the folder; it's attached.", updated_at: ago(8) }),
   thread("th_cc33", "Which router should I buy?", { model: "chat", origin: "renamon", preview: "Short version: the middle one. It has the ports you listed and no cloud account.", updated_at: ago(60 * 26) }),
 ];
 const THREAD_TURN = "tt_1";
@@ -233,6 +234,18 @@ const review = (id, thread_id, turn_id, over = {}) => ({
   id, thread_id, turn_id, round: 1, status: "done", model: "deepseek-v4.1-flash", verdict: "looks_good", summary: "", findings: [], verified: [], commands: 12,
   error: "", followup_turn_id: "", started_at: ago(60), finished_at: ago(58), ...over,
 });
+// Files in a thread: the owner sends a zip with a message, she shares the updated one back.
+const tfile = (id, thread_id, turn_id, direction, name, size) => ({ id, thread_id, turn_id, direction, name, size, path: `/srv/files/${direction}/${id}/${name}`, created_at: ago(30) });
+const FILE_MESSAGES = [
+  tmsg("p1", "user", "tf_1", "Here's my homebrew folder. Update the payloads to the latest versions and send it back zipped.", 30),
+  tmsg("p2", "assistant", "tf_1", "I updated three payloads and left the rest alone. The updated folder is attached below; your original is untouched in `/srv/files/in`.", 12),
+];
+const FILE_FILES = [
+  tfile("f_in1", "th_ff66", "tf_1", "in", "homebrew-backup.zip", 84_000_000),
+  tfile("f_in2", "th_ff66", "tf_1", "in", "notes-from-the-forum-thread-about-the-new-payload-loader-version-2.txt", 4200),
+  tfile("f_out1", "th_ff66", "tf_1", "out", "homebrew-updated.zip", 85_300_000),
+  tfile("f_out2", "th_ff66", "tf_1", "out", "changes-since-the-last-backup-with-a-very-long-descriptive-name.md", 1800),
+];
 const DL_MESSAGES = [
   tmsg("d1", "user", "td_1", "Set up JDownloader and qBittorrent as one compose stack under /opt/stacks/downloads.", 80),
   tmsg("d2", "assistant", "td_1", "The stack is up in `/opt/stacks/downloads`. JDownloader's web UI is on **5800** and qBittorrent's on **8080**, both on the lab network.", 70),
@@ -336,9 +349,15 @@ async function open(browser, viewport, query, { mode = "full", onSay } = {}) {
     const one = p.match(/^\/api\/mail\/messages\/(\d+)$/);
     if (one) return json(route, { message: MAIL.find((m) => m.id === one[1]) ?? MAIL[0], body: { text: MAIL_BODY, truncated: false } });
     if (p === "/api/mail/rules") return json(route, { rules: MAIL_RULES });
+    if (route.request().method() === "POST" && /^\/api\/threads\/[^/]+\/files$/.test(p)) {
+      const name = q.get("name") ?? "file";
+      if (name.includes("iso")) return route.fulfill({ status: 507, contentType: "application/json", body: JSON.stringify({ error: "Her lab would have under 4 GB free." }) });
+      return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify(tfile(`f_${name.length}`, "th_ff66", "", "in", name, 84_000_000)) });
+    }
     if (p === "/api/threads") return json(route, { threads: empty ? [] : q.get("archived") === "true" ? [] : THREADS });
     if (/^\/api\/threads\/[^/]+$/.test(p)) return json(route, THREADS.find((t) => p.endsWith(t.id)) ?? THREADS[1]);
     if (/^\/api\/threads\/[^/]+\/messages$/.test(p)) {
+      if (p.includes("th_ff66")) return json(route, { messages: FILE_MESSAGES, steps: [], reviews: [], files: FILE_FILES });
       if (p.includes("th_dd44")) return json(route, { messages: DL_MESSAGES, steps: [], reviews: DL_REVIEWS });
       if (p.includes("th_ee55")) return json(route, { messages: EE_MESSAGES, steps: [], reviews: EE_REVIEWS });
       const bb = p.includes("th_bb22");
@@ -491,6 +510,22 @@ for (const [name, viewport] of [
   await page.getByText("7 steps").click().catch(() => console.log("no steps toggle"));
   await page.evaluate(() => document.querySelector("[class*=transcript]")?.scrollTo(0, 1e6));
   await shot(page, "thread-steps", 600);
+  await page.close();
+
+  // Files: chips under the owner's message, downloads under her reply, and the composer with
+  // attachments (uploads answered by the route mock: one lands, one is refused).
+  ({ page } = await open(browser, viewport, "thread=th_ff66"));
+  await page.getByText("I updated three payloads").waitFor({ timeout: 10_000 }).catch(() => {});
+  await shot(page, "thread-files", 800);
+  await page.locator("input[type=file]").setInputFiles([
+    { name: "ps5-homebrew-backup-2026-10-28-final-final-v2.zip", mimeType: "application/zip", buffer: Buffer.from("x") },
+    { name: "disk-image.iso", mimeType: "application/octet-stream", buffer: Buffer.from("x") },
+  ]);
+  await page.waitForTimeout(600);
+  await shot(page, "thread-attach", 600);
+  await page.getByRole("button", { name: "Remove disk-image.iso" }).click();
+  await page.getByRole("textbox", { name: "Message" }).fill("Same again, please.");
+  await shot(page, "thread-attach-ready", 600);
   await page.close();
 
   // A review with findings and her follow-up reply, its re-check, and a clean one.

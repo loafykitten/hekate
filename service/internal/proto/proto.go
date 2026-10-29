@@ -105,11 +105,31 @@ type TurnStart struct {
 	InputID  string `json:"input_id"`
 	Origin   string `json:"origin"`
 	UserText string `json:"user_text"`
+	// Files are what the owner sent with it, in a thread.
+	Files []ThreadFile `json:"files,omitempty"`
 }
 
 // NewTurnStart builds a turn_start message.
 func NewTurnStart(turnID, inputID, origin, userText string) TurnStart {
-	return TurnStart{TypeTurnStart, turnID, inputID, origin, userText}
+	return TurnStart{Type: TypeTurnStart, TurnID: turnID, InputID: inputID, Origin: origin, UserText: userText}
+}
+
+// File directions.
+const (
+	FileIn  = "in"  // the owner sent it
+	FileOut = "out" // she shared it
+)
+
+// ThreadFile is a file passed in a thread (PROTOCOL.md, Threads, Files).
+type ThreadFile struct {
+	ID        string `json:"id"`
+	ThreadID  string `json:"thread_id"`
+	TurnID    string `json:"turn_id"`
+	Direction string `json:"direction"`
+	Name      string `json:"name"`
+	Size      int64  `json:"size"`
+	Path      string `json:"path"`
+	CreatedAt string `json:"created_at"`
 }
 
 // Activity reports a tool starting, finishing or failing.
@@ -233,12 +253,15 @@ type ClientMessage struct {
 	// Thread sends say, push-to-talk and interrupt to that thread instead of
 	// the main conversation.
 	Thread string `json:"thread"`
+	// Files are uploaded files a say to a thread sends with its words.
+	Files []string `json:"files"`
 }
 
 // Limits from PROTOCOL.md.
 const (
 	MaxTextChars      = 4000
 	MaxTextFrameBytes = 16 << 10
+	MaxSayFiles       = 10
 	MaxBinaryFrame    = 64 << 10
 	PTTSampleRate     = 16000
 	MaxPTTSeconds     = 60

@@ -227,7 +227,10 @@ func run() error {
 	labName := ""
 	// A second model reviews her lab work in threads, once the lab has its reviewer account.
 	var reviewer *review.Reviewer
+	// Files passed in threads go through the lab.
+	var threadLab threads.Lab
 	if labSvc.Configured() {
+		threadLab = labSvc
 		threadTools = slices.Concat(threadTools, labSvc.ThreadTools())
 		threadContext = append(threadContext, labSource)
 		labName = cfg.LabName
@@ -241,7 +244,7 @@ func run() error {
 	threadSvc, err := threads.New(threads.Options{
 		Store: db, LLM: llmClient, Deep: cfg.ModelDeep, Chat: cfg.ModelChat, Tools: threadTools, Context: threadContext,
 		System: threads.SystemPrompt(labName, reviewer.Ready), Hub: hub, Events: hub, Push: notifier, Reviewer: reviewer, Tamer: cfg.TamerName,
-		Location: cfg.Location, Logger: logger.Logger,
+		Lab: threadLab, Location: cfg.Location, Logger: logger.Logger,
 	})
 	if err != nil {
 		return fmt.Errorf("build threads: %w", err)

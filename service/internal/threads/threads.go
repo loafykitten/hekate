@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -98,6 +99,8 @@ type Options struct {
 	Push   Pusher // nil: in-app notifications only
 	// Reviewer reviews her lab work after a turn that changed the lab; nil: no reviews.
 	Reviewer *review.Reviewer
+	// Lab carries the files passed in threads, and gives her lab_share_file; nil: no files.
+	Lab      Lab
 	Tamer    string
 	Location *time.Location
 	Logger   *slog.Logger
@@ -117,6 +120,7 @@ type Service struct {
 	loc     *time.Location
 	now     func() time.Time
 	limits  agent.Limits
+	tools   []agent.Tool      // a thread agent's
 	labels  map[string]string // tool name -> its label, for steps
 	baseCtx context.Context   //nolint:containedctx // the service's lifetime, set by Start
 
@@ -148,10 +152,14 @@ func New(o Options) (*Service, error) {
 	if s.limits == (agent.Limits{}) {
 		s.limits = Limits
 	}
-	if _, err := agent.NewRegistry(o.Tools...); err != nil {
+	s.tools = slices.Clone(o.Tools)
+	if o.Lab != nil {
+		s.tools = append(s.tools, s.shareTool())
+	}
+	if _, err := agent.NewRegistry(s.tools...); err != nil {
 		return nil, fmt.Errorf("threads: %w", err)
 	}
-	for _, t := range o.Tools {
+	for _, t := range s.tools {
 		s.labels[t.Name] = t.Label
 	}
 	return s, nil
@@ -413,8 +421,8 @@ func (s *Service) conv(ctx context.Context, id string) (*conv, error) {
 	if c := s.convs[id]; c != nil {
 		return c, nil
 	}
-	c := &conv{s: s, id: id, starts: map[string]turnInfo{}}
-	reg, err := agent.NewRegistry(s.opts.Tools...)
+	c := &conv{s: s, id: id, starts: map[string]turnInfo{}, sending: map[string][]proto.ThreadFile{}}
+	reg, err := agent.NewRegistry(s.tools...)
 	if err != nil {
 		return nil, fmt.Errorf("thread tools: %w", err)
 	}
@@ -440,9 +448,10 @@ type conv struct {
 	id string
 	ag *agent.Agent
 
-	mu     sync.Mutex
-	starts map[string]turnInfo // running turns, by id
-	review *reviewing          // a review of its work in progress
+	mu      sync.Mutex
+	starts  map[string]turnInfo           // running turns, by id
+	review  *reviewing                    // a review of its work in progress
+	sending map[string][]proto.ThreadFile // files sent with input whose turn hasn't started, by input id
 }
 
 // turnInfo is what's needed when a turn ends.
@@ -458,8 +467,8 @@ func (c *conv) ConversationID() string { return c.id }
 // a thread doesn't cut its own work short for new input, so that's an error
 // for the sender, as is a fourth thread running at once.
 func (c *conv) Say(origin, inputID, text string, _ bool) {
-	if busy := c.say(origin, inputID, text); busy != "" {
-		c.s.hub.Broadcast(proto.NewThreadEvent(c.id, proto.NewError(proto.CodeBusy, busy, inputID)))
+	if code, msg := c.say(origin, inputID, text, nil); msg != "" {
+		c.s.hub.Broadcast(proto.NewThreadEvent(c.id, proto.NewError(code, msg, inputID)))
 	}
 }
 
@@ -470,16 +479,16 @@ const (
 	tooMany      = "Three threads are already working. Let one finish first."
 )
 
-// say starts the turn, or says why it can't.
-func (c *conv) say(origin, inputID, text string) string {
+// say starts the turn, with the files sent with it, or says why it can't (an error code and message).
+func (c *conv) say(origin, inputID, text string, fileIDs []string) (code, msg string) {
 	s := c.s
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if c.ag.Busy() {
-		return stillWorking
+		return proto.CodeBusy, stillWorking
 	}
 	if c.reviewing() {
-		return inReview
+		return proto.CodeBusy, inReview
 	}
 	running := 0
 	for _, other := range s.convs {
@@ -488,11 +497,27 @@ func (c *conv) say(origin, inputID, text string) string {
 		}
 	}
 	if running >= maxRunning {
-		return tooMany
+		return proto.CodeBusy, tooMany
+	}
+	note := ""
+	if len(fileIDs) > 0 {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(s.baseCtx), 5*time.Second)
+		defer cancel()
+		fs, err := c.unsent(ctx, fileIDs)
+		if err != nil {
+			s.log.Warn("threads: files refused", "thread", c.id, "error", err)
+			return proto.CodeBadMessage, "Those files can't be sent: upload them to this thread again."
+		}
+		note = filesNote(s.opts.Tamer, fs)
+		c.mu.Lock()
+		c.sending[inputID] = fs
+		c.mu.Unlock()
 	}
 	s.nameFromFirst(c.id, text)
-	c.ag.Say(origin, inputID, text, true) // quiet: threads are text only
-	return ""
+	if !c.ag.SayNoted(origin, inputID, text, note, true) { // quiet: threads are text only
+		c.dropSending(inputID)
+	}
+	return "", ""
 }
 
 // nameFromFirst titles a placeholder thread with the start of its first message.
@@ -532,6 +557,14 @@ func (c *conv) Hush() {}
 type threadHub struct{ c *conv }
 
 func (h threadHub) Broadcast(msg any) {
+	switch m := msg.(type) {
+	case proto.TurnStart:
+		h.c.claimFiles(&m)
+		msg = m
+	case proto.Error:
+		// The turn didn't start: its files can be sent again.
+		h.c.dropSending(m.InputID)
+	}
 	h.c.s.hub.Broadcast(proto.NewThreadEvent(h.c.id, msg))
 	switch m := msg.(type) {
 	case proto.TurnStart:

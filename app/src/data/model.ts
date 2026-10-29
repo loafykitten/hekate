@@ -906,6 +906,33 @@ export interface ThreadStep {
   created_at: string;
 }
 
+// A file sent to her in a thread ("in") or shared back by her ("out"); see PROTOCOL: Threads, Files.
+export interface ThreadFile {
+  id: string;
+  thread_id: string;
+  // The turn it came with or from; "" for an upload not sent yet.
+  turn_id: string;
+  direction: "in" | "out";
+  name: string;
+  size: number;
+  created_at: string;
+}
+
+export function asThreadFile(v: unknown): ThreadFile | undefined {
+  if (!isRec(v)) return undefined;
+  const id = idOf(v.id);
+  if (id === undefined || !isStr(v.name) || (v.direction !== "in" && v.direction !== "out")) return undefined;
+  return {
+    id,
+    thread_id: strOr(v.thread_id),
+    turn_id: strOr(v.turn_id),
+    direction: v.direction,
+    name: v.name,
+    size: isNum(v.size) && v.size >= 0 ? v.size : 0,
+    created_at: strOr(v.created_at),
+  };
+}
+
 export function asThread(v: unknown): Thread | undefined {
   if (!isRec(v)) return undefined;
   const id = idOf(v.id);

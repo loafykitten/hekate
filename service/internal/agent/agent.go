@@ -137,7 +137,7 @@ type turn struct {
 	userText string
 	quiet    bool     // the device that asked has her voice off: no speech for this turn
 	opening  *Opening // set: the turn opens with this call instead of asking the opener
-	note     string   // stands in for userText for the model when the owner said nothing
+	note     string   // what the model reads after userText, or in its place when the owner said nothing
 
 	ctx    context.Context //nolint:containedctx // the turn's lifetime
 	cancel context.CancelCauseFunc
@@ -304,14 +304,21 @@ func (a *Agent) Gestures() []string {
 // as if the client had reported the last segment it was sent as heard. A quiet
 // turn is answered in text only: no speech is synthesized.
 func (a *Agent) Say(origin, inputID, text string, quiet bool) {
+	a.SayNoted(origin, inputID, text, "", quiet)
+}
+
+// SayNoted is Say with a note the model reads after the owner's words and the owner doesn't see,
+// such as where the files they sent with it are. It reports whether a turn started.
+func (a *Agent) SayNoted(origin, inputID, text, note string, quiet bool) bool {
 	if !a.llm.Configured() {
 		a.hub.Broadcast(proto.NewError(proto.CodeLLMUnavailable,
 			"I can't think right now: no language model is set up.", inputID))
-		return
+		return false
 	}
 	ctx, cancel := context.WithCancelCause(a.baseCtx)
-	a.start(&turn{id: newID("t_"), inputID: inputID, origin: origin, userText: text, quiet: quiet,
+	a.start(&turn{id: newID("t_"), inputID: inputID, origin: origin, userText: text, quiet: quiet, note: note,
 		ctx: ctx, cancel: cancel, done: make(chan struct{})})
+	return true
 }
 
 // Prompt starts a quiet turn the owner didn't type, such as handing her a review of her work:

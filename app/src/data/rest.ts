@@ -24,6 +24,7 @@ import {
   asTask,
   asReview,
   asThread,
+  asThreadFile,
   asThreadMessage,
   asThreadStep,
   asTaskList,
@@ -53,6 +54,7 @@ import {
   type Task,
   type Review,
   type Thread,
+  type ThreadFile,
   type ThreadMessage,
   type ThreadModel,
   type ThreadStep,
@@ -390,6 +392,8 @@ export interface ThreadPage {
   steps: ThreadStep[];
   // Of the turns on this page, or that started them; one may show on two pages.
   reviews: Review[];
+  // The files of the turns on this page. Optional: an older service sends none.
+  files?: ThreadFile[];
 }
 
 export const threadsApi = {
@@ -401,6 +405,6 @@ export const threadsApi = {
   // `before` is the id of the oldest message already shown.
   messages: async (id: string, before?: string, signal?: AbortSignal): Promise<ThreadPage> => {
     const body = await request("GET", `/threads/${encodeURIComponent(id)}/messages`, { query: { before, limit: THREAD_PAGE }, signal });
-    return { messages: many(body, "messages", asThreadMessage), steps: many(body, "steps", asThreadStep), reviews: many(body, "reviews", asReview) };
+    return { messages: many(body, "messages", asThreadMessage), steps: many(body, "steps", asThreadStep), reviews: many(body, "reviews", asReview), files: many(body, "files", asThreadFile) };
   },
 };

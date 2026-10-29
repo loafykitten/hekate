@@ -152,7 +152,7 @@ func TestReviewChain(t *testing.T) {
 	if !strings.Contains(content, "Not from Sam") || !strings.Contains(content, "JDownloader's UI has no login") {
 		t.Errorf("her follow-up input:\n%s", content)
 	}
-	msgs, _, err := f.svc.Messages(t.Context(), th.ID, 0, 50)
+	msgs, _, _, err := f.svc.Messages(t.Context(), th.ID, 0, 50)
 	if err != nil {
 		t.Fatal(err)
 	}

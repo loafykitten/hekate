@@ -100,10 +100,15 @@ func (r *turnRun) begin() error {
 		return fmt.Errorf("record turn: %w", err)
 	}
 	// A turn started without words (a tapped check-in) saves the note for the
-	// model and no display text, so the log doesn't show it.
+	// model and no display text, so the log doesn't show it. A note beside the
+	// owner's words follows them, for the model only.
+	content := cmp.Or(t.userText, t.note)
+	if t.userText != "" && t.note != "" {
+		content = t.userText + "\n\n" + t.note
+	}
 	if err := a.store.AddMessages(ctx, []store.Message{{
 		ConversationID: a.conv, TurnID: t.id, Role: store.RoleUser,
-		Text: t.userText, Content: cmp.Or(t.userText, t.note), CreatedAt: r.start,
+		Text: t.userText, Content: content, CreatedAt: r.start,
 	}}); err != nil {
 		return fmt.Errorf("record message: %w", err)
 	}

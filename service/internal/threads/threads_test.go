@@ -308,7 +308,7 @@ func TestThreadTurn(t *testing.T) {
 	}
 	// Stored in the thread, not the main conversation.
 	main, _ := f.db.VisibleMessages(t.Context(), agent.ConversationID, 0, 10)
-	msgs, _, _ := f.svc.Messages(t.Context(), th.ID, 0, 10)
+	msgs, _, _, _ := f.svc.Messages(t.Context(), th.ID, 0, 10)
 	if len(main) != 0 || len(msgs) != 2 || msgs[1].Text != "Done." {
 		t.Errorf("main %d messages, thread %+v", len(main), msgs)
 	}
@@ -373,7 +373,7 @@ func TestStepsAndModelSwitch(t *testing.T) {
 	f.say(t, th.ID, "echo please")
 	// turn_end goes out just before the turn lets go: wait for both, or "again" finds it busy.
 	waitFor(t, "turn end", func() bool { return len(f.turnEnds(th.ID)) == 1 && f.svc.idle(th.ID) })
-	msgs, steps, err := f.svc.Messages(t.Context(), th.ID, 0, 10)
+	msgs, steps, _, err := f.svc.Messages(t.Context(), th.ID, 0, 10)
 	if err != nil || len(msgs) != 2 || len(steps) != 1 || steps[0].Tool != "echo" || steps[0].Label != "Echoing" ||
 		steps[0].Status != "ok" || steps[0].Summary != "echoed" || steps[0].TurnID != msgs[1].TurnID {
 		t.Fatalf("messages %+v, steps %+v, %v", msgs, steps, err)
@@ -503,7 +503,7 @@ func TestWrittenRepliesArePreserved(t *testing.T) {
 	if got := f.turnEnds(th.ID)[0].Text; got != want {
 		t.Errorf("turn_end text\n got %q\nwant %q", got, want)
 	}
-	msgs, _, _ := f.svc.Messages(t.Context(), th.ID, 0, 10)
+	msgs, _, _, _ := f.svc.Messages(t.Context(), th.ID, 0, 10)
 	if got := msgs[1].Text; got != want {
 		t.Errorf("stored text\n got %q\nwant %q", got, want)
 	}
@@ -529,7 +529,7 @@ func TestStopKeepsWhatWasWritten(t *testing.T) {
 	if _, err := f.svc.Update(t.Context(), th.ID, Patch{Archived: &yes}); err != nil {
 		t.Fatal(err)
 	}
-	msgs, _, _ := f.svc.Messages(t.Context(), th.ID, 0, 10)
+	msgs, _, _, _ := f.svc.Messages(t.Context(), th.ID, 0, 10)
 	if len(msgs) != 2 || msgs[1].Text != "Done." || len(f.turnEnds(th.ID)) != 1 {
 		t.Errorf("after stop and archive: %+v, %d turn ends", msgs, len(f.turnEnds(th.ID)))
 	}
@@ -555,7 +555,7 @@ func TestEndWhileStopping(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if busy := c.say(OriginRenamon, "r", "go"); busy != "" {
+		if _, busy := c.say(OriginRenamon, "r", "go", nil); busy != "" {
 			t.Fatal(busy)
 		}
 		done := make(chan struct{})
@@ -581,7 +581,7 @@ func TestWrittenReplyKeepsLeadingIndentation(t *testing.T) {
 	th, _ := f.svc.Create(t.Context(), "", "", OriginOwner)
 	f.say(t, th.ID, "how do I start it")
 	waitFor(t, "turn end", func() bool { return len(f.turnEnds(th.ID)) == 1 })
-	msgs, _, _ := f.svc.Messages(t.Context(), th.ID, 0, 10)
+	msgs, _, _, _ := f.svc.Messages(t.Context(), th.ID, 0, 10)
 	if got := f.turnEnds(th.ID)[0].Text; got != text || msgs[1].Text != text {
 		t.Errorf("turn_end %q, stored %q, want %q", got, msgs[1].Text, text)
 	}
